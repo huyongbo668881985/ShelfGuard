@@ -1,0 +1,14 @@
+/* components/watermark-canvas/index.wxss */
+.watermark-canvas-wrapper {
+  position: fixed;
+  left: -9999rpx;
+  top: -9999rpx;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+.watermark-canvas {
+  width: 750px;
+  height: 1000px;
+}

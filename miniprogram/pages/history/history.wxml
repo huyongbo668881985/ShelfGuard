@@ -1,0 +1,181 @@
+<!--pages/history/history.wxml-->
+<view class="history-page">
+  <!-- 统计卡片 -->
+  <view class="stats-card">
+    <view class="stats-item">
+      <text class="stats-value">{{stats.total}}</text>
+      <text class="stats-label">总巡检</text>
+    </view>
+    <view class="stats-divider"></view>
+    <view class="stats-item">
+      <text class="stats-value">{{stats.avgScore}}</text>
+      <text class="stats-label">平均分</text>
+    </view>
+    <view class="stats-divider"></view>
+    <view class="stats-item">
+      <text class="stats-value">{{stats.thisWeek}}</text>
+      <text class="stats-label">本周</text>
+    </view>
+  </view>
+
+  <!-- 搜索栏 -->
+  <view class="search-bar">
+    <view class="search-input-wrapper">
+      <text class="search-icon">🔍</text>
+      <input
+        class="search-input"
+        placeholder="搜索门店或任务"
+        value="{{searchKeyword}}"
+        bindinput="onSearchInput"
+        bindconfirm="onSearch"
+      />
+      <text class="search-clear" wx:if="{{searchKeyword}}" bindtap="onClearSearch">✕</text>
+    </view>
+    <view class="filter-btn" bindtap="onShowFilter">
+      <text>筛选</text>
+      <text class="filter-badge" wx:if="{{filterDate || filterScore || filterUserName}}">•</text>
+    </view>
+  </view>
+
+  <!-- 当前筛选标签 -->
+  <view class="filter-tags" wx:if="{{filterDate || filterScore || filterUserName}}">
+    <view class="filter-tag" wx:if="{{filterUserName}}">
+      <text>业务员：{{filterUserName}}</text>
+      <text class="tag-close" bindtap="onClearUserNameFilter">✕</text>
+    </view>
+    <view class="filter-tag" wx:if="{{filterDate}}">
+      <text>{{filterDate === 'today' ? '今天' : filterDate === 'week' ? '近7天' : '近30天'}}</text>
+      <text class="tag-close" bindtap="onSelectDateFilter" data-value="{{filterDate}}">✕</text>
+    </view>
+    <view class="filter-tag" wx:if="{{filterScore}}">
+      <text>{{filterScore === 'high' ? '80分以上' : filterScore === 'medium' ? '60-79分' : '60分以下'}}</text>
+      <text class="tag-close" bindtap="onSelectScoreFilter" data-value="{{filterScore}}">✕</text>
+    </view>
+  </view>
+
+  <!-- 列表 -->
+  <view class="list-container" wx:if="{{list.length > 0}}">
+    <view
+      class="history-item"
+      wx:for="{{list}}"
+      wx:key="_id"
+      data-id="{{item._id}}"
+      bindtap="onTapItem"
+    >
+      <!-- 缩略图 -->
+      <view class="item-thumbnail">
+        <image
+          class="thumbnail-img"
+          src="{{item.thumbnailFileID}}"
+          mode="aspectFill"
+          wx:if="{{item.thumbnailFileID}}"
+        ></image>
+        <view class="thumbnail-placeholder" wx:else>
+          <text>📷</text>
+        </view>
+      </view>
+
+      <!-- 内容区 -->
+      <view class="item-content">
+        <view class="item-header">
+          <text class="item-title">{{item.storeName || item.taskName || '未命名'}}</text>
+          <view class="item-score" wx:if="{{item.aiReport && item.aiReport.score}}" style="background: {{item.scoreColor}}">
+            <text>{{item.aiReport.score}}</text>
+          </view>
+        </view>
+        
+        <text class="item-summary text-ellipsis" wx:if="{{item.aiReport && item.aiReport.summary}}">
+          {{item.aiReport.summary}}
+        </text>
+        
+        <view class="item-footer">
+          <text class="item-date">{{item.displayDate}}</text>
+          <text class="item-user" wx:if="{{item.userName}}">{{item.userName}}</text>
+          <text class="item-photos" wx:if="{{item.photoCount > 1}}">{{item.photoCount}}张</text>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 空状态 -->
+  <view class="empty-state" wx:if="{{!loading && list.length === 0}}">
+    <text class="empty-icon">📋</text>
+    <text class="empty-text">暂无巡检记录</text>
+    <text class="empty-hint" wx:if="{{searchKeyword || filterDate || filterScore}}">
+      尝试调整筛选条件
+    </text>
+    <text class="empty-hint" wx:else>去拍照开始第一次巡检吧</text>
+  </view>
+
+  <!-- 加载更多 -->
+  <view class="loading-more" wx:if="{{loading}}">
+    <text>加载中...</text>
+  </view>
+  <view class="no-more" wx:if="{{!hasMore && list.length > 0}}">
+    <text>— 没有更多了 —</text>
+  </view>
+
+  <!-- 筛选面板 -->
+  <view class="filter-mask" wx:if="{{showFilter}}" bindtap="onCloseFilter"></view>
+  <view class="filter-panel {{showFilter ? 'show' : ''}}">
+    <view class="filter-header">
+      <text class="filter-title">筛选条件</text>
+      <text class="filter-clear" bindtap="onClearFilter">清除</text>
+    </view>
+
+    <view class="filter-section">
+      <text class="filter-section-title">时间范围</text>
+      <view class="filter-options">
+        <view
+          class="filter-option {{filterDate === 'today' ? 'active' : ''}}"
+          data-value="today"
+          bindtap="onSelectDateFilter"
+        >今天</view>
+        <view
+          class="filter-option {{filterDate === 'week' ? 'active' : ''}}"
+          data-value="week"
+          bindtap="onSelectDateFilter"
+        >近7天</view>
+        <view
+          class="filter-option {{filterDate === 'month' ? 'active' : ''}}"
+          data-value="month"
+          bindtap="onSelectDateFilter"
+        >近30天</view>
+      </view>
+    </view>
+
+    <view class="filter-section">
+      <text class="filter-section-title">评分范围</text>
+      <view class="filter-options">
+        <view
+          class="filter-option {{filterScore === 'high' ? 'active' : ''}}"
+          data-value="high"
+          bindtap="onSelectScoreFilter"
+        >80分以上</view>
+        <view
+          class="filter-option {{filterScore === 'medium' ? 'active' : ''}}"
+          data-value="medium"
+          bindtap="onSelectScoreFilter"
+        >60-79分</view>
+        <view
+          class="filter-option {{filterScore === 'low' ? 'active' : ''}}"
+          data-value="low"
+          bindtap="onSelectScoreFilter"
+        >60分以下</view>
+      </view>
+    </view>
+    <view class="filter-section" wx:if="{{isManager}}">
+      <text class="filter-section-title">业务员（管理者视角，留空看全部）</text>
+      <view class="filter-username-row">
+        <input
+          class="filter-username-input"
+          placeholder="输入业务员姓名"
+          value="{{filterUserName}}"
+          bindinput="onFilterUserNameInput"
+          bindconfirm="onApplyUserNameFilter"
+        />
+        <text class="filter-username-apply" bindtap="onApplyUserNameFilter">确定</text>
+      </view>
+    </view>
+  </view>
+</view>

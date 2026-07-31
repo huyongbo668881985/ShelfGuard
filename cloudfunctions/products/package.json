@@ -1,0 +1,9 @@
+{
+  "name": "products",
+  "version": "1.0.0",
+  "description": "产品库（品牌/别名/参考照片）云函数",
+  "main": "index.js",
+  "dependencies": {
+    "wx-server-sdk": "~2.6.3"
+  }
+}

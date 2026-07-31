@@ -1,0 +1,186 @@
+<!--pages/camera/camera.wxml-->
+<view class="camera-page">
+  <!-- 相机预览区域 -->
+  <view class="camera-wrapper" wx:if="{{!showPreview && !showSettings}}">
+    <camera
+      class="camera"
+      device-position="{{devicePosition}}"
+      flash="{{flashMode}}"
+      resolution="high"
+      binderror="onCameraError"
+    >
+      <!-- 实时水印预览层
+           重要：camera 是原生组件，层级永远最高，普通 view/text 放在它里面
+           或者用 CSS 定位盖在它上面，在开发者工具模拟器里能看起来正常，
+           但真机上要么不显示、要么盖住了却收不到点击——必须用官方提供的
+           cover-view / cover-image 才能正确覆盖在原生组件上面。 -->
+      <cover-view class="watermark-preview">
+        <!-- 顶部信息 -->
+        <cover-view class="preview-top" wx:if="{{watermarkConfig.position === 'top' || watermarkConfig.position === 'full'}}">
+          <cover-view class="preview-task">{{taskName || '未设置任务'}}</cover-view>
+          <cover-view class="preview-store" wx:if="{{storeName}}">门店：{{storeName}}</cover-view>
+          <cover-view class="preview-info">{{userName}} {{address}}</cover-view>
+        </cover-view>
+
+        <!-- 底部信息 -->
+        <cover-view class="preview-bottom" wx:if="{{watermarkConfig.position === 'bottom'}}">
+          <cover-view class="preview-task">{{taskName || '未设置任务'}}</cover-view>
+          <cover-view class="preview-store" wx:if="{{storeName}}">门店：{{storeName}}</cover-view>
+          <cover-view class="preview-info">{{userName}}  {{address}}</cover-view>
+        </cover-view>
+      </cover-view>
+
+      <!-- 快捷设置按钮：之前是普通 view + position:absolute 悬浮在相机预览上方，
+           真机上会被相机的原生视图挡住，点击没有任何反应。挪进 camera 标签内部，
+           改成 cover-view 就能正常接收点击了。 -->
+      <cover-view class="settings-btn" bindtap="openSettings">
+        <cover-view>⚙️ 设置</cover-view>
+      </cover-view>
+
+      <!-- 连拍缩略图 + 完成按钮：拍1张时不强制拼图，多于1张才会在点"完成"后拼成一张大图 -->
+      <cover-view class="capture-strip" wx:if="{{!showPreview}}">
+        <cover-view class="capture-thumbs" wx:if="{{capturedPhotos.length > 0}}">
+          <cover-view
+            class="capture-thumb"
+            wx:for="{{capturedPhotos}}"
+            wx:key="*this"
+            wx:for-index="idx"
+            data-index="{{idx}}"
+            bindtap="removeCapturedPhoto"
+          >
+            <cover-image class="capture-thumb-img" src="{{item}}"></cover-image>
+            <cover-view class="capture-thumb-remove">✕</cover-view>
+          </cover-view>
+        </cover-view>
+
+        <cover-view class="capture-count">已拍 {{capturedPhotos.length}}/{{maxPhotos}}</cover-view>
+
+        <cover-view class="capture-finish-btn" wx:if="{{capturedPhotos.length > 0}}" bindtap="finishCapture">
+          <cover-view>{{capturedPhotos.length > 1 ? '完成拼图' : '完成'}}</cover-view>
+        </cover-view>
+      </cover-view>
+    </camera>
+
+    <!-- 相机控制栏：这部分本来就在 camera 标签外面、走的是正常文档流（不是
+         absolute 悬浮盖在相机上面），不受原生组件遮挡问题影响，不用改 -->
+    <view class="camera-controls">
+      <view class="control-btn" bindtap="switchFlash">
+        <text class="control-icon">{{flashMode === 'on' ? '⚡️' : flashMode === 'off' ? '🔦' : '⚡️'}}</text>
+        <text class="control-label">{{flashMode === 'on' ? '开' : flashMode === 'off' ? '关' : '自动'}}</text>
+      </view>
+
+      <view class="shutter-btn" bindtap="takePhoto">
+        <view class="shutter-inner"></view>
+      </view>
+
+      <view class="control-btn" bindtap="switchCamera">
+        <text class="control-icon">🔄</text>
+        <text class="control-label">翻转</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 照片预览区域 -->
+  <view class="preview-wrapper" wx:if="{{showPreview}}">
+    <image
+      class="preview-image"
+      src="{{watermarkedPath || photoTempPath}}"
+      mode="aspectFit"
+    ></image>
+
+    <!-- 合成中提示 -->
+    <view class="composing-mask" wx:if="{{composing}}">
+      <text class="composing-text">正在添加水印...</text>
+    </view>
+
+    <!-- 操作按钮 -->
+    <view class="preview-actions">
+      <button class="btn-secondary" bindtap="retakePhoto">重新拍照</button>
+      <button class="btn-primary" bindtap="confirmPhoto" disabled="{{composing}}">
+        下一步
+      </button>
+    </view>
+  </view>
+
+  <!-- 设置面板 -->
+  <view class="settings-mask" wx:if="{{showSettings}}" bindtap="closeSettings"></view>
+  <view class="settings-panel {{showSettings ? 'show' : ''}}">
+    <view class="settings-header">
+      <text class="settings-title">水印设置</text>
+      <text class="settings-close" bindtap="closeSettings">✕</text>
+    </view>
+
+    <scroll-view class="settings-content" scroll-y>
+      <!-- 任务名称 -->
+      <view class="setting-item">
+        <text class="setting-label">任务名称</text>
+        <input
+          class="setting-input"
+          placeholder="请输入任务名称"
+          value="{{taskName}}"
+          bindinput="onTaskNameInput"
+        />
+      </view>
+
+      <!-- 门店名称 -->
+      <view class="setting-item">
+        <view class="setting-label-row">
+          <text class="setting-label">门店名称</text>
+          <text class="choose-customer-btn" bindtap="chooseCustomer">📍从客户库选择</text>
+        </view>
+        <input
+          class="setting-input"
+          placeholder="请输入门店名称，或点上面从客户库选"
+          value="{{storeName}}"
+          bindinput="onStoreNameInput"
+        />
+      </view>
+
+      <!-- 业务员姓名 -->
+      <view class="setting-item">
+        <text class="setting-label">业务员姓名</text>
+        <input
+          class="setting-input"
+          placeholder="请输入姓名"
+          value="{{userName}}"
+          bindinput="onUserNameInput"
+        />
+      </view>
+
+      <!-- 水印位置 -->
+      <view class="setting-item">
+        <text class="setting-label">水印位置</text>
+        <view class="setting-value" bindtap="switchPosition">
+          <text>{{watermarkConfig.position === 'bottom' ? '底部' : watermarkConfig.position === 'top' ? '顶部' : '全屏'}}</text>
+          <text class="setting-arrow">›</text>
+        </view>
+      </view>
+
+      <!-- 产品库入口 -->
+      <view class="setting-item">
+        <text class="setting-label">产品库</text>
+        <view class="setting-value" bindtap="goToProducts">
+          <text>管理品牌产品资料</text>
+          <text class="setting-arrow">›</text>
+        </view>
+      </view>
+
+      <!-- 客户管理入口 -->
+      <view class="setting-item">
+        <text class="setting-label">客户管理</text>
+        <view class="setting-value" bindtap="goToCustomers">
+          <text>管理我的客户资料</text>
+          <text class="setting-arrow">›</text>
+        </view>
+      </view>
+    </scroll-view>
+  </view>
+
+  <!-- 隐藏的水印合成组件：始终挂载（组件自身用 CSS 移出屏幕外隐藏），
+       不要用 wx:if 控制显隐——setData 是异步的，拍照后立即调用 composeWatermark()
+       时组件可能还没被创建，selectComponent 会拿到 null 导致"水印组件未找到" -->
+  <watermark-canvas id="watermarkCanvas"></watermark-canvas>
+
+  <!-- 隐藏的拼图合成组件，同样始终挂载，原因跟上面一样 -->
+  <photo-grid-canvas id="photoGridCanvas"></photo-grid-canvas>
+</view>

@@ -1,0 +1,129 @@
+<!--pages/upload/upload.wxml-->
+<view class="upload-page">
+  <!-- 顶部信息栏 -->
+  <view class="header-bar">
+    <text class="header-title">确认上传</text>
+    <text class="header-count">共 {{totalPhotos}} 张照片</text>
+  </view>
+
+  <!-- 照片预览区域 -->
+  <scroll-view class="photo-scroll" scroll-x wx:if="{{photos.length > 0}}">
+    <view class="photo-list">
+      <view
+        class="photo-item {{item.status}}"
+        wx:for="{{photos}}"
+        wx:key="index"
+        data-index="{{index}}"
+        bindtap="previewImage"
+      >
+        <image
+          class="photo-img"
+          src="{{item.compressedPath || item.originalPath}}"
+          mode="aspectFill"
+        ></image>
+        <!-- 状态角标 -->
+        <view class="photo-badge" wx:if="{{item.status === 'compressed'}}">
+          <text>✓</text>
+        </view>
+        <view class="photo-badge badge-uploading" wx:if="{{item.status === 'uploaded'}}">
+          <text>↑</text>
+        </view>
+        <view class="photo-badge badge-error" wx:if="{{item.status === 'error'}}">
+          <text>!</text>
+        </view>
+        <!-- 大小信息 -->
+        <view class="photo-size" wx:if="{{item.compressedSizeText}}">
+          <text>{{item.compressedSizeText}}</text>
+        </view>
+      </view>
+    </view>
+  </scroll-view>
+
+  <!-- 巡检信息 -->
+  <view class="info-card card">
+    <view class="info-row">
+      <text class="info-label">任务名称</text>
+      <text class="info-value">{{taskName || '未填写'}}</text>
+    </view>
+    <view class="info-row">
+      <text class="info-label">门店名称</text>
+      <text class="info-value">{{storeName || '未填写'}}</text>
+    </view>
+    <view class="info-row">
+      <text class="info-label">业务员</text>
+      <text class="info-value">{{userName || '未设置'}}</text>
+    </view>
+    <view class="info-row">
+      <text class="info-label">位置</text>
+      <text class="info-value">{{address || '未知'}}</text>
+    </view>
+  </view>
+
+  <!-- 进度区域 -->
+  <view class="progress-section" wx:if="{{status !== 'ready' && status !== 'success' && status !== 'error'}}">
+    <!-- 压缩进度 -->
+    <view class="progress-item" wx:if="{{status === 'compressing'}}">
+      <view class="progress-header">
+        <text class="progress-label">压缩照片 {{currentPhotoIndex}}/{{totalPhotos}}</text>
+        <text class="progress-value">{{compressProgress}}%</text>
+      </view>
+      <view class="progress-bar">
+        <view class="progress-fill" style="width: {{compressProgress}}%"></view>
+      </view>
+    </view>
+
+    <!-- 上传进度 -->
+    <view class="progress-item" wx:if="{{status === 'uploading'}}">
+      <view class="progress-header">
+        <text class="progress-label">上传照片 {{currentPhotoIndex}}/{{totalPhotos}}</text>
+        <text class="progress-value">{{uploadProgress}}%</text>
+      </view>
+      <view class="progress-bar">
+        <view class="progress-fill" style="width: {{uploadProgress}}%"></view>
+      </view>
+    </view>
+
+    <!-- AI 分析中 -->
+    <view class="progress-item" wx:if="{{status === 'analyzing'}}">
+      <view class="progress-header">
+        <text class="progress-label">AI 正在分析陈列情况...</text>
+      </view>
+      <view class="progress-bar">
+        <view class="progress-fill progress-indeterminate"></view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 成功状态 -->
+  <view class="success-section" wx:if="{{status === 'success'}}">
+    <text class="success-icon">✓</text>
+    <text class="success-text">上传成功！即将跳转到报告页...</text>
+  </view>
+
+  <!-- 错误状态 -->
+  <view class="error-section" wx:if="{{status === 'error'}}">
+    <text class="error-icon">!</text>
+    <text class="error-text">{{errorMsg || '上传失败'}}</text>
+  </view>
+
+  <!-- 操作按钮 -->
+  <view class="actions">
+    <button
+      class="btn-secondary"
+      bindtap="goBack"
+      disabled="{{status === 'compressing' || status === 'uploading' || status === 'analyzing'}}"
+    >返回重拍</button>
+
+    <button
+      class="btn-primary"
+      bindtap="{{status === 'error' ? 'retryUpload' : 'handleUpload'}}"
+      disabled="{{status !== 'ready' && status !== 'error'}}"
+    >
+      <block wx:if="{{status === 'compressing'}}">压缩中...</block>
+      <block wx:elif="{{status === 'uploading'}}">上传中...</block>
+      <block wx:elif="{{status === 'analyzing'}}">AI 分析中...</block>
+      <block wx:elif="{{status === 'error'}}">重试上传</block>
+      <block wx:else>上传并分析</block>
+    </button>
+  </view>
+</view>

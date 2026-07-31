@@ -1,0 +1,137 @@
+// pages/report/report.js
+// 巡检报告详情页
+
+const { formatDate } = require('../../utils/date')
+
+Page({
+  data: {
+    inspectionId: '',
+    detail: null,
+    loading: true,
+    refreshTimer: null
+  },
+
+  onLoad(options) {
+    if (options.id) {
+      this.setData({ inspectionId: options.id })
+      this.loadDetail(options.id)
+    }
+  },
+
+  onUnload() {
+    // 清除轮询定时器
+    if (this.data.refreshTimer) {
+      clearInterval(this.data.refreshTimer)
+    }
+  },
+
+  // 底部操作栏：这两个页面都在 tabBar 里，必须用 switchTab 而不是 navigateTo
+  goToHistory() {
+    wx.switchTab({ url: '/pages/history/history' })
+  },
+
+  goToCamera() {
+    wx.switchTab({ url: '/pages/camera/camera' })
+  },
+
+  // 加载巡检详情
+  async loadDetail(id) {
+    this.setData({ loading: true })
+
+    try {
+      const res = await wx.cloud.callFunction({
+        name: 'getReport',
+        data: { inspectionId: id }
+      })
+      if (!res.result || !res.result.success) {
+        throw new Error((res.result && res.result.error) || '加载失败')
+      }
+      const detail = res.result.detail
+
+      // 格式化日期
+      if (detail.createdAt) {
+        detail.createdAtFormatted = formatDate(detail.createdAt, 'YYYY-MM-DD HH:mm')
+      }
+      if (detail.analyzedAt) {
+        detail.analyzedAtFormatted = formatDate(detail.analyzedAt, 'YYYY-MM-DD HH:mm')
+      }
+
+      // 获取图片临时链接
+      if (detail.photoFileIDs && detail.photoFileIDs.length > 0) {
+        const fileRes = await wx.cloud.getTempFileURL({
+          fileList: detail.photoFileIDs
+        })
+        detail.photoURLs = fileRes.fileList.map(f => f.tempFileURL)
+      }
+
+      this.setData({ detail, loading: false })
+
+      // 如果还在分析中，启动轮询
+      if (detail.status === 'uploaded' && !detail.aiReport) {
+        this.startPolling(id)
+      }
+
+    } catch (err) {
+      console.error('加载详情失败:', err)
+      this.setData({ loading: false })
+      wx.showToast({ title: '加载失败', icon: 'none' })
+    }
+  },
+
+  // 轮询检查分析状态
+  startPolling(id) {
+    let attempts = 0
+    const maxAttempts = 30 // 最多轮询 30 次（约 1 分钟）
+
+    const timer = setInterval(async () => {
+      attempts++
+      if (attempts >= maxAttempts) {
+        clearInterval(timer)
+        wx.showToast({ title: '分析耗时较长，请稍后下拉刷新查看', icon: 'none', duration: 3000 })
+        return
+      }
+
+      try {
+        const res = await wx.cloud.callFunction({
+          name: 'getReport',
+          data: { inspectionId: id }
+        })
+        if (!res.result || !res.result.success) return
+        const detail = res.result.detail
+
+        if (detail.status === 'analyzed' || detail.aiReport) {
+          clearInterval(timer)
+          // 重新加载完整详情
+          this.loadDetail(id)
+        }
+      } catch (err) {
+        console.error('轮询失败:', err)
+      }
+    }, 3000)
+
+    this.setData({ refreshTimer: timer })
+  },
+
+  // 预览图片
+  previewImage(e) {
+    const url = e.currentTarget.dataset.url
+    wx.previewImage({
+      current: url,
+      urls: this.data.detail.photoURLs
+    })
+  },
+
+  // 手动刷新
+  refresh() {
+    this.loadDetail(this.data.inspectionId)
+  },
+
+  // 分享报告
+  onShareAppMessage() {
+    const { detail } = this.data
+    return {
+      title: `巡检报告 - ${detail.taskName || '白酒终端巡检'}`,
+      path: `/pages/report/report?id=${this.data.inspectionId}`
+    }
+  }
+})

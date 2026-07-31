@@ -1,0 +1,142 @@
+<!--pages/products/products.wxml-->
+<view class="products-page">
+
+  <view class="page-hint">
+    <text>录入的品牌名、别名和参考照会用于 AI 识别货架照片时的比对，越准确，识别结果越可靠。</text>
+  </view>
+
+  <!-- 列表 -->
+  <view class="list-container" wx:if="{{list.length > 0}}">
+    <view class="product-card" wx:for="{{list}}" wx:key="_id">
+      <view class="card-photos">
+        <image
+          class="card-photo"
+          wx:for="{{['front','back','side']}}"
+          wx:for-item="slot"
+          wx:key="slot"
+          src="{{item.photos[slot]}}"
+          mode="aspectFill"
+          wx:if="{{item.photos[slot]}}"
+          data-url="{{item.photos[slot]}}"
+          bindtap="onPreviewPhoto"
+        ></image>
+        <view class="card-photo placeholder" wx:if="{{!item.photos.front}}">
+          <text>📦</text>
+        </view>
+      </view>
+
+      <view class="card-body">
+        <view class="card-header">
+          <text class="card-brand">{{item.brandName}}</text>
+          <text class="card-line" wx:if="{{item.productLine}}">{{item.productLine}}</text>
+        </view>
+
+        <view class="card-aliases" wx:if="{{item.aliases.length > 0}}">
+          <text class="alias-tag" wx:for="{{item.aliases}}" wx:key="*this" wx:for-item="alias">{{alias}}</text>
+        </view>
+
+        <view class="card-actions">
+          <text class="action-btn" data-item="{{item}}" bindtap="onEditProduct">编辑</text>
+          <text class="action-btn danger" data-item="{{item}}" bindtap="onRemoveProduct">下架</text>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 空状态 -->
+  <view class="empty-state" wx:if="{{!loading && list.length === 0}}">
+    <text class="empty-icon">📦</text>
+    <text class="empty-text">还没有录入产品</text>
+    <text class="empty-hint">先加一个产品，AI 识别货架时会优先参考</text>
+  </view>
+
+  <view class="loading-state" wx:if="{{loading}}">
+    <text>加载中...</text>
+  </view>
+
+  <!-- 悬浮新增按钮 -->
+  <view class="fab-btn" bindtap="onAddProduct">
+    <text>＋</text>
+  </view>
+
+  <!-- 编辑面板 -->
+  <view class="editor-mask" wx:if="{{showEditor}}" bindtap="closeEditor"></view>
+  <view class="editor-panel {{showEditor ? 'show' : ''}}">
+    <view class="editor-header">
+      <text class="editor-title">{{editingId ? '编辑产品' : '新增产品'}}</text>
+      <text class="editor-close" bindtap="closeEditor">✕</text>
+    </view>
+
+    <scroll-view class="editor-content" scroll-y>
+      <view class="form-item">
+        <text class="form-label">品牌名称 *</text>
+        <input
+          class="form-input"
+          placeholder="如：XX酒业"
+          value="{{form.brandName}}"
+          bindinput="onBrandNameInput"
+        />
+      </view>
+
+      <view class="form-item">
+        <text class="form-label">产品线 / 系列（可选）</text>
+        <input
+          class="form-input"
+          placeholder="如：经典系列"
+          value="{{form.productLine}}"
+          bindinput="onProductLineInput"
+        />
+      </view>
+
+      <view class="form-item">
+        <text class="form-label">别名（用中文逗号分隔，可选）</text>
+        <input
+          class="form-input"
+          placeholder="如：简称1，简称2"
+          value="{{form.aliasesText}}"
+          bindinput="onAliasesInput"
+        />
+        <text class="form-tip">AI 识别时可能用不同名字描述同一产品，填写别名有助于统计时正确归类</text>
+      </view>
+
+      <view class="form-item">
+        <text class="form-label">参考照片（可选，建议至少传正面照）</text>
+        <view class="photo-slots">
+          <view class="photo-slot" data-slot="front" bindtap="onChoosePhoto" wx:if="{{!form.photos.front}}">
+            <text class="slot-icon">📷</text>
+            <text class="slot-label">正面</text>
+          </view>
+          <view class="photo-slot filled" wx:else>
+            <image class="slot-img" src="{{form.photos.front}}" mode="aspectFill" data-url="{{form.photos.front}}" bindtap="onPreviewPhoto"></image>
+            <text class="slot-remove" data-slot="front" bindtap="onRemovePhoto">✕</text>
+          </view>
+
+          <view class="photo-slot" data-slot="back" bindtap="onChoosePhoto" wx:if="{{!form.photos.back}}">
+            <text class="slot-icon">📷</text>
+            <text class="slot-label">背面</text>
+          </view>
+          <view class="photo-slot filled" wx:else>
+            <image class="slot-img" src="{{form.photos.back}}" mode="aspectFill" data-url="{{form.photos.back}}" bindtap="onPreviewPhoto"></image>
+            <text class="slot-remove" data-slot="back" bindtap="onRemovePhoto">✕</text>
+          </view>
+
+          <view class="photo-slot" data-slot="side" bindtap="onChoosePhoto" wx:if="{{!form.photos.side}}">
+            <text class="slot-icon">📷</text>
+            <text class="slot-label">侧面</text>
+          </view>
+          <view class="photo-slot filled" wx:else>
+            <image class="slot-img" src="{{form.photos.side}}" mode="aspectFill" data-url="{{form.photos.side}}" bindtap="onPreviewPhoto"></image>
+            <text class="slot-remove" data-slot="side" bindtap="onRemovePhoto">✕</text>
+          </view>
+        </view>
+      </view>
+    </scroll-view>
+
+    <view class="editor-footer">
+      <button class="btn-primary" bindtap="onSave" disabled="{{saving}}">
+        {{saving ? '保存中...' : '保存'}}
+      </button>
+    </view>
+  </view>
+
+</view>

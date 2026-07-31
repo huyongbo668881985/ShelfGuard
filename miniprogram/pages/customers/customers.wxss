@@ -1,0 +1,270 @@
+/* pages/customers/customers.wxss */
+
+.customers-page {
+  min-height: 100vh;
+  background: #f5f5f5;
+  padding: 20rpx;
+  box-sizing: border-box;
+  padding-bottom: 160rpx;
+}
+
+.page-hint {
+  background: #eef2ff;
+  color: #4338ca;
+  font-size: 24rpx;
+  padding: 20rpx 24rpx;
+  border-radius: 12rpx;
+  margin-bottom: 20rpx;
+  line-height: 1.5;
+}
+
+.list-container {
+  display: flex;
+  flex-direction: column;
+  gap: 20rpx;
+}
+
+.customer-card {
+  background: #fff;
+  border-radius: 16rpx;
+  padding: 24rpx;
+  box-shadow: 0 2rpx 12rpx rgba(0, 0, 0, 0.05);
+}
+
+.customer-card.selectable {
+  border: 2rpx solid transparent;
+}
+
+.customer-card.selectable:active {
+  background: #f5f5ff;
+  border-color: #1a1a2e;
+}
+
+.card-distance {
+  font-size: 24rpx;
+  color: #1a1a2e;
+  background: #eef2ff;
+  padding: 4rpx 14rpx;
+  border-radius: 20rpx;
+  flex-shrink: 0;
+}
+
+.card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8rpx;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.card-store {
+  font-size: 32rpx;
+  font-weight: bold;
+  color: #1a1a2e;
+}
+
+.card-location-badge {
+  font-size: 22rpx;
+  color: #4caf50;
+  background: #e8f5e9;
+  padding: 4rpx 14rpx;
+  border-radius: 20rpx;
+  flex-shrink: 0;
+}
+
+.card-address {
+  font-size: 26rpx;
+  color: #666;
+}
+
+.card-contact {
+  font-size: 24rpx;
+  color: #999;
+}
+
+.card-actions {
+  display: flex;
+  gap: 24rpx;
+  margin-top: 6rpx;
+}
+
+.action-btn {
+  font-size: 26rpx;
+  color: #1a1a2e;
+}
+
+.action-btn.danger {
+  color: #d9534f;
+}
+
+.empty-state,
+.loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 160rpx 0;
+  color: #999;
+}
+
+.empty-icon {
+  font-size: 80rpx;
+  margin-bottom: 20rpx;
+}
+
+.empty-text {
+  font-size: 30rpx;
+  color: #666;
+  margin-bottom: 10rpx;
+}
+
+.empty-hint {
+  font-size: 24rpx;
+  color: #999;
+}
+
+.fab-btn {
+  position: fixed;
+  right: 40rpx;
+  bottom: 60rpx;
+  width: 96rpx;
+  height: 96rpx;
+  border-radius: 50%;
+  background: #1a1a2e;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 48rpx;
+  box-shadow: 0 4rpx 16rpx rgba(0, 0, 0, 0.25);
+}
+
+/* 编辑面板：跟相机页设置面板、产品库编辑面板保持一致的滑出样式 */
+.editor-mask {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 100;
+}
+
+.editor-panel {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #fff;
+  border-radius: 24rpx 24rpx 0 0;
+  transform: translateY(100%);
+  transition: transform 0.25s ease;
+  z-index: 101;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-panel.show {
+  transform: translateY(0);
+}
+
+.editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 30rpx;
+  border-bottom: 1rpx solid #eee;
+}
+
+.editor-title {
+  font-size: 32rpx;
+  font-weight: bold;
+  color: #1a1a2e;
+}
+
+.editor-close {
+  font-size: 36rpx;
+  color: #999;
+  padding: 0 10rpx;
+}
+
+.editor-content {
+  padding: 30rpx;
+  max-height: 60vh;
+}
+
+.form-item {
+  margin-bottom: 30rpx;
+}
+
+.form-label {
+  display: block;
+  font-size: 26rpx;
+  color: #333;
+  margin-bottom: 14rpx;
+}
+
+.form-input {
+  background: #f5f5f5;
+  border-radius: 10rpx;
+  padding: 20rpx;
+  font-size: 28rpx;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.form-tip {
+  display: block;
+  font-size: 22rpx;
+  color: #999;
+  margin-top: 10rpx;
+  margin-bottom: 16rpx;
+  line-height: 1.4;
+}
+
+.location-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+}
+
+.location-btn {
+  flex: 1;
+  height: 76rpx;
+  line-height: 76rpx;
+  text-align: center;
+  background: #f5f5f5;
+  border-radius: 10rpx;
+  font-size: 26rpx;
+  color: #1a1a2e;
+}
+
+.location-value {
+  flex: 1;
+  font-size: 24rpx;
+  color: #4caf50;
+}
+
+.location-clear {
+  font-size: 24rpx;
+  color: #999;
+  flex-shrink: 0;
+}
+
+.editor-footer {
+  padding: 20rpx 30rpx 40rpx;
+  border-top: 1rpx solid #eee;
+}
+
+.btn-primary {
+  background: #1a1a2e;
+  color: #fff;
+  border-radius: 12rpx;
+  font-size: 30rpx;
+}

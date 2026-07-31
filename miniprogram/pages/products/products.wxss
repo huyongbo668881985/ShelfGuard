@@ -1,0 +1,302 @@
+/* pages/products/products.wxss */
+
+.products-page {
+  min-height: 100vh;
+  background: #f5f5f5;
+  padding: 20rpx;
+  box-sizing: border-box;
+  padding-bottom: 160rpx;
+}
+
+.page-hint {
+  background: #eef2ff;
+  color: #4338ca;
+  font-size: 24rpx;
+  padding: 20rpx 24rpx;
+  border-radius: 12rpx;
+  margin-bottom: 20rpx;
+  line-height: 1.5;
+}
+
+.list-container {
+  display: flex;
+  flex-direction: column;
+  gap: 20rpx;
+}
+
+.product-card {
+  background: #fff;
+  border-radius: 16rpx;
+  padding: 24rpx;
+  display: flex;
+  gap: 20rpx;
+  box-shadow: 0 2rpx 12rpx rgba(0, 0, 0, 0.05);
+}
+
+.card-photos {
+  display: flex;
+  flex-direction: column;
+  gap: 8rpx;
+  flex-shrink: 0;
+}
+
+.card-photo {
+  width: 96rpx;
+  height: 96rpx;
+  border-radius: 8rpx;
+  background: #f0f0f0;
+}
+
+.card-photo.placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 36rpx;
+}
+
+.card-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10rpx;
+}
+
+.card-header {
+  display: flex;
+  align-items: baseline;
+  gap: 12rpx;
+}
+
+.card-brand {
+  font-size: 32rpx;
+  font-weight: bold;
+  color: #1a1a2e;
+}
+
+.card-line {
+  font-size: 24rpx;
+  color: #888;
+}
+
+.card-aliases {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8rpx;
+}
+
+.alias-tag {
+  font-size: 22rpx;
+  color: #666;
+  background: #f0f0f0;
+  padding: 4rpx 14rpx;
+  border-radius: 20rpx;
+}
+
+.card-actions {
+  display: flex;
+  gap: 24rpx;
+  margin-top: 6rpx;
+}
+
+.action-btn {
+  font-size: 26rpx;
+  color: #1a1a2e;
+}
+
+.action-btn.danger {
+  color: #d9534f;
+}
+
+.empty-state,
+.loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 160rpx 0;
+  color: #999;
+}
+
+.empty-icon {
+  font-size: 80rpx;
+  margin-bottom: 20rpx;
+}
+
+.empty-text {
+  font-size: 30rpx;
+  color: #666;
+  margin-bottom: 10rpx;
+}
+
+.empty-hint {
+  font-size: 24rpx;
+  color: #999;
+}
+
+.fab-btn {
+  position: fixed;
+  right: 40rpx;
+  bottom: 60rpx;
+  width: 96rpx;
+  height: 96rpx;
+  border-radius: 50%;
+  background: #1a1a2e;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 48rpx;
+  box-shadow: 0 4rpx 16rpx rgba(0, 0, 0, 0.25);
+}
+
+/* 编辑面板：跟相机页设置面板保持一致的滑出样式 */
+.editor-mask {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 100;
+}
+
+.editor-panel {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #fff;
+  border-radius: 24rpx 24rpx 0 0;
+  transform: translateY(100%);
+  transition: transform 0.25s ease;
+  z-index: 101;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-panel.show {
+  transform: translateY(0);
+}
+
+.editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 30rpx;
+  border-bottom: 1rpx solid #eee;
+}
+
+.editor-title {
+  font-size: 32rpx;
+  font-weight: bold;
+  color: #1a1a2e;
+}
+
+.editor-close {
+  font-size: 36rpx;
+  color: #999;
+  padding: 0 10rpx;
+}
+
+.editor-content {
+  padding: 30rpx;
+  max-height: 60vh;
+}
+
+.form-item {
+  margin-bottom: 30rpx;
+}
+
+.form-label {
+  display: block;
+  font-size: 26rpx;
+  color: #333;
+  margin-bottom: 14rpx;
+}
+
+.form-input {
+  background: #f5f5f5;
+  border-radius: 10rpx;
+  padding: 20rpx;
+  font-size: 28rpx;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.form-tip {
+  display: block;
+  font-size: 22rpx;
+  color: #999;
+  margin-top: 10rpx;
+  line-height: 1.4;
+}
+
+.photo-slots {
+  display: flex;
+  gap: 20rpx;
+}
+
+.photo-slot {
+  width: 160rpx;
+  height: 160rpx;
+  border-radius: 12rpx;
+  border: 2rpx dashed #ccc;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8rpx;
+  position: relative;
+  box-sizing: border-box;
+}
+
+.photo-slot.filled {
+  border-style: solid;
+  border-color: #eee;
+  padding: 0;
+  overflow: visible;
+}
+
+.slot-icon {
+  font-size: 40rpx;
+}
+
+.slot-label {
+  font-size: 22rpx;
+  color: #999;
+}
+
+.slot-img {
+  width: 100%;
+  height: 100%;
+  border-radius: 12rpx;
+}
+
+.slot-remove {
+  position: absolute;
+  top: -16rpx;
+  right: -16rpx;
+  width: 40rpx;
+  height: 40rpx;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24rpx;
+}
+
+.editor-footer {
+  padding: 20rpx 30rpx 40rpx;
+  border-top: 1rpx solid #eee;
+}
+
+.btn-primary {
+  background: #1a1a2e;
+  color: #fff;
+  border-radius: 12rpx;
+  font-size: 30rpx;
+}

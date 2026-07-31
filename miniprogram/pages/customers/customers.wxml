@@ -1,0 +1,126 @@
+<!--pages/customers/customers.wxml-->
+<view class="customers-page">
+
+  <view class="page-hint">
+    <text wx:if="{{selectMode}}">点一个客户直接带入水印信息，按距离由近到远排好序了（没填过位置的排最后）</text>
+    <text wx:else>这里录入的客户只有你自己能看到。填了位置的客户，拍照时可以按距离由近到远排序选择。</text>
+  </view>
+
+  <!-- 列表 -->
+  <view class="list-container" wx:if="{{list.length > 0}}">
+    <view
+      class="customer-card {{selectMode ? 'selectable' : ''}}"
+      wx:for="{{list}}"
+      wx:key="_id"
+      data-item="{{item}}"
+      bindtap="onSelectCustomer"
+    >
+      <view class="card-body">
+        <view class="card-header">
+          <text class="card-store">{{item.storeName}}</text>
+          <text class="card-distance" wx:if="{{selectMode && item.distanceText}}">{{item.distanceText}}</text>
+          <text class="card-location-badge" wx:elif="{{!selectMode && item.location}}">📍已定位</text>
+        </view>
+
+        <text class="card-address" wx:if="{{item.address}}">{{item.address}}</text>
+        <text class="card-contact" wx:if="{{item.contactName || item.contactPhone}}">
+          {{item.contactName}}{{item.contactName && item.contactPhone ? '  ' : ''}}{{item.contactPhone}}
+        </text>
+
+        <view class="card-actions" wx:if="{{!selectMode}}">
+          <text class="action-btn" data-item="{{item}}" catchtap="onEditCustomer">编辑</text>
+          <text class="action-btn danger" data-item="{{item}}" catchtap="onRemoveCustomer">删除</text>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 空状态 -->
+  <view class="empty-state" wx:if="{{!loading && list.length === 0}}">
+    <text class="empty-icon">🏬</text>
+    <text class="empty-text">还没有客户资料</text>
+    <text class="empty-hint">{{selectMode ? '先去客户管理里加一个客户' : '先加一个客户，拍照时就能直接选，不用每次手打门店名'}}</text>
+  </view>
+
+  <view class="loading-state" wx:if="{{loading}}">
+    <text>加载中...</text>
+  </view>
+
+  <!-- 悬浮新增按钮：选择模式下不显示，选客户和管理客户是两件事 -->
+  <view class="fab-btn" bindtap="onAddCustomer" wx:if="{{!selectMode}}">
+    <text>＋</text>
+  </view>
+
+  <!-- 编辑面板 -->
+  <view class="editor-mask" wx:if="{{showEditor}}" bindtap="closeEditor"></view>
+  <view class="editor-panel {{showEditor ? 'show' : ''}}">
+    <view class="editor-header">
+      <text class="editor-title">{{editingId ? '编辑客户' : '新增客户'}}</text>
+      <text class="editor-close" bindtap="closeEditor">✕</text>
+    </view>
+
+    <scroll-view class="editor-content" scroll-y>
+      <view class="form-item">
+        <text class="form-label">门店名称 *</text>
+        <input
+          class="form-input"
+          placeholder="如：XX超市XX店"
+          value="{{form.storeName}}"
+          bindinput="onStoreNameInput"
+        />
+      </view>
+
+      <view class="form-item">
+        <text class="form-label">地址（可选）</text>
+        <input
+          class="form-input"
+          placeholder="如：XX路XX号"
+          value="{{form.address}}"
+          bindinput="onAddressInput"
+        />
+      </view>
+
+      <view class="form-item">
+        <text class="form-label">联系人（可选）</text>
+        <input
+          class="form-input"
+          placeholder="如：王经理"
+          value="{{form.contactName}}"
+          bindinput="onContactNameInput"
+        />
+      </view>
+
+      <view class="form-item">
+        <text class="form-label">联系电话（可选）</text>
+        <input
+          class="form-input"
+          type="number"
+          placeholder="如：13800138000"
+          value="{{form.contactPhone}}"
+          bindinput="onContactPhoneInput"
+        />
+      </view>
+
+      <view class="form-item">
+        <text class="form-label">门店位置（可选，但强烈建议填）</text>
+        <text class="form-tip">建议站在门店门口点下面的按钮获取，拍照时的"就近排序"就是靠这个坐标算的，不填这个客户不会出现在就近排序里</text>
+        <view class="location-row" wx:if="{{!form.location}}">
+          <view class="location-btn" bindtap="onFetchLocation">
+            <text>{{locating ? '定位中...' : '📍 获取当前位置'}}</text>
+          </view>
+        </view>
+        <view class="location-row" wx:else>
+          <text class="location-value">📍 {{form.location.latitude}}, {{form.location.longitude}}</text>
+          <text class="location-clear" bindtap="onClearLocation">清除</text>
+        </view>
+      </view>
+    </scroll-view>
+
+    <view class="editor-footer">
+      <button class="btn-primary" bindtap="onSave" disabled="{{saving}}">
+        {{saving ? '保存中...' : '保存'}}
+      </button>
+    </view>
+  </view>
+
+</view>

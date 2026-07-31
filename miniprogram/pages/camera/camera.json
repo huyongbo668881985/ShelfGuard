@@ -1,0 +1,8 @@
+{
+  "navigationBarTitleText": "巡检拍照",
+  "disableScroll": true,
+  "usingComponents": {
+    "watermark-canvas": "/components/watermark-canvas/index",
+    "photo-grid-canvas": "/components/photo-grid-canvas/index"
+  }
+}

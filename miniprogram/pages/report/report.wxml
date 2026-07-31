@@ -1,0 +1,224 @@
+<!--pages/report/report.wxml-->
+<view class="report-page">
+  <!-- 加载中 -->
+  <view class="loading-state" wx:if="{{loading}}">
+    <text>加载中...</text>
+  </view>
+
+  <block wx:if="{{!loading && detail}}">
+    <!-- 状态栏 -->
+    <view class="status-bar status-{{detail.status}}">
+      <text class="status-icon" wx:if="{{detail.status === 'analyzed'}}">✓</text>
+      <text class="status-icon" wx:elif="{{detail.status === 'uploaded'}}">⏳</text>
+      <text class="status-icon" wx:elif="{{detail.status === 'analyze_failed'}}">!</text>
+      <text class="status-text">
+        <block wx:if="{{detail.status === 'analyzed'}}">分析完成</block>
+        <block wx:elif="{{detail.status === 'uploaded'}}">AI 分析中...</block>
+        <block wx:elif="{{detail.status === 'analyze_failed'}}">分析失败</block>
+        <block wx:else>已上传</block>
+      </text>
+    </view>
+
+    <!-- 基本信息 -->
+    <view class="card info-section">
+      <view class="section-title">巡检信息</view>
+      <view class="info-row">
+        <text class="info-label">任务名称</text>
+        <text class="info-value">{{detail.taskName || '未填写'}}</text>
+      </view>
+      <view class="info-row">
+        <text class="info-label">门店名称</text>
+        <text class="info-value">{{detail.storeName || '未填写'}}</text>
+      </view>
+      <view class="info-row">
+        <text class="info-label">业务员</text>
+        <text class="info-value">{{detail.userName || '未设置'}}</text>
+      </view>
+      <view class="info-row">
+        <text class="info-label">巡检时间</text>
+        <text class="info-value">{{detail.createdAtFormatted}}</text>
+      </view>
+      <view class="info-row">
+        <text class="info-label">位置</text>
+        <text class="info-value">{{detail.location.address || '未知'}}</text>
+      </view>
+    </view>
+
+    <!-- 陈列照片 -->
+    <view class="card photo-section">
+      <view class="section-title">陈列照片 ({{detail.photoCount || 1}}张)</view>
+      <view class="photo-grid">
+        <image
+          wx:for="{{detail.photoURLs}}"
+          wx:key="index"
+          class="photo-item"
+          src="{{item}}"
+          mode="aspectFill"
+          data-url="{{item}}"
+          bindtap="previewImage"
+        />
+      </view>
+    </view>
+
+    <!-- AI 分析报告 -->
+    <block wx:if="{{detail.aiReport}}">
+      <!-- 评分卡片 -->
+      <view class="card score-card">
+        <view class="score-circle score-{{detail.aiReport.score >= 80 ? 'high' : detail.aiReport.score >= 60 ? 'mid' : 'low'}}">
+          <text class="score-number">{{detail.aiReport.score}}</text>
+          <text class="score-level">{{detail.aiReport.scoreLevel || ''}}</text>
+        </view>
+        <view class="score-summary">
+          <text class="summary-text">{{detail.aiReport.summary}}</text>
+        </view>
+      </view>
+
+      <!-- 陈列规范度评分 -->
+      <view class="card compliance-card" wx:if="{{detail.aiReport.displayCompliance}}">
+        <view class="section-title">陈列规范度</view>
+        <view class="compliance-list">
+          <view class="compliance-item" wx:if="{{detail.aiReport.displayCompliance.labelOrientation}}">
+            <view class="compliance-header">
+              <text class="compliance-name">正标朝向</text>
+              <text class="compliance-score" style="color: {{getComplianceColor(detail.aiReport.displayCompliance.labelOrientation.score)}}">{{detail.aiReport.displayCompliance.labelOrientation.score}}分</text>
+            </view>
+            <view class="compliance-bar">
+              <view class="compliance-fill" style="width: {{detail.aiReport.displayCompliance.labelOrientation.score}}%; background: {{getComplianceColor(detail.aiReport.displayCompliance.labelOrientation.score)}}"></view>
+            </view>
+            <text class="compliance-detail">{{detail.aiReport.displayCompliance.labelOrientation.detail}}</text>
+          </view>
+          <view class="compliance-item" wx:if="{{detail.aiReport.displayCompliance.neatness}}">
+            <view class="compliance-header">
+              <text class="compliance-name">整齐度</text>
+              <text class="compliance-score" style="color: {{getComplianceColor(detail.aiReport.displayCompliance.neatness.score)}}">{{detail.aiReport.displayCompliance.neatness.score}}分</text>
+            </view>
+            <view class="compliance-bar">
+              <view class="compliance-fill" style="width: {{detail.aiReport.displayCompliance.neatness.score}}%; background: {{getComplianceColor(detail.aiReport.displayCompliance.neatness.score)}}"></view>
+            </view>
+            <text class="compliance-detail">{{detail.aiReport.displayCompliance.neatness.detail}}</text>
+          </view>
+          <view class="compliance-item" wx:if="{{detail.aiReport.displayCompliance.goldenPosition}}">
+            <view class="compliance-header">
+              <text class="compliance-name">黄金位置</text>
+              <text class="compliance-score" style="color: {{getComplianceColor(detail.aiReport.displayCompliance.goldenPosition.score)}}">{{detail.aiReport.displayCompliance.goldenPosition.score}}分</text>
+            </view>
+            <view class="compliance-bar">
+              <view class="compliance-fill" style="width: {{detail.aiReport.displayCompliance.goldenPosition.score}}%; background: {{getComplianceColor(detail.aiReport.displayCompliance.goldenPosition.score)}}"></view>
+            </view>
+            <text class="compliance-detail">{{detail.aiReport.displayCompliance.goldenPosition.detail}}</text>
+          </view>
+          <view class="compliance-item" wx:if="{{detail.aiReport.displayCompliance.priceTagMatch}}">
+            <view class="compliance-header">
+              <text class="compliance-name">价签对应</text>
+              <text class="compliance-score" style="color: {{getComplianceColor(detail.aiReport.displayCompliance.priceTagMatch.score)}}">{{detail.aiReport.displayCompliance.priceTagMatch.score}}分</text>
+            </view>
+            <view class="compliance-bar">
+              <view class="compliance-fill" style="width: {{detail.aiReport.displayCompliance.priceTagMatch.score}}%; background: {{getComplianceColor(detail.aiReport.displayCompliance.priceTagMatch.score)}}"></view>
+            </view>
+            <text class="compliance-detail">{{detail.aiReport.displayCompliance.priceTagMatch.detail}}</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 识别到的产品 -->
+      <view class="card products-card" wx:if="{{detail.aiReport.productIdentification.length > 0}}">
+        <view class="section-title">识别产品 ({{detail.aiReport.productIdentification.length}})</view>
+        <view class="product-list">
+          <view class="product-item" wx:for="{{detail.aiReport.productIdentification}}" wx:key="index">
+            <view class="product-main">
+              <text class="product-brand">{{item.brand}}</text>
+              <text class="product-line" wx:if="{{item.productLine}}">{{item.productLine}}</text>
+            </view>
+            <view class="product-meta">
+              <text class="product-tag">{{item.aromaType}}</text>
+              <text class="product-tag">{{item.priceRange}}</text>
+              <text class="product-facing" wx:if="{{item.facingCount}}">{{item.facingCount}}面</text>
+            </view>
+            <view class="product-position" wx:if="{{item.position}}">
+              <text class="position-text">{{item.position}}</text>
+            </view>
+          </view>
+        </view>
+      </view>
+
+      <!-- 竞品分析 -->
+      <view class="card competitive-card" wx:if="{{detail.aiReport.competitiveAnalysis && detail.aiReport.competitiveAnalysis.brands.length > 0}}">
+        <view class="section-title">竞品分析</view>
+        <view class="competitive-insight" wx:if="{{detail.aiReport.competitiveAnalysis.insight}}">
+          <text>{{detail.aiReport.competitiveAnalysis.insight}}</text>
+        </view>
+        <view class="brand-share-list">
+          <view class="brand-share-item" wx:for="{{detail.aiReport.competitiveAnalysis.brands}}" wx:key="brand">
+            <text class="brand-name">{{item.brand}}</text>
+            <view class="brand-bar-wrapper">
+              <view class="brand-bar" style="width: {{item.sharePercent}}%"></view>
+            </view>
+            <text class="brand-percent">{{item.sharePercent}}%</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 问题列表 -->
+      <view class="card issues-card" wx:if="{{detail.aiReport.issues.length > 0}}">
+        <view class="section-title">发现问题 ({{detail.aiReport.issues.length}})</view>
+        <view class="issue-list">
+          <view class="issue-item issue-{{item.severity || 'medium'}}" wx:for="{{detail.aiReport.issues}}" wx:key="index">
+            <view class="issue-header">
+              <text class="issue-severity">
+                {{item.severity === 'high' ? '严重' : item.severity === 'medium' ? '中等' : '轻微'}}
+              </text>
+              <text class="issue-category">{{item.category}}</text>
+            </view>
+            <text class="issue-desc">{{item.description}}</text>
+            <text class="issue-impact" wx:if="{{item.impact}}">影响：{{item.impact}}</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 改进建议 -->
+      <view class="card suggestions-card" wx:if="{{detail.aiReport.suggestions.length > 0}}">
+        <view class="section-title">改进建议 ({{detail.aiReport.suggestions.length}})</view>
+        <view class="suggestion-list">
+          <view class="suggestion-item suggestion-{{item.priority || 'medium'}}" wx:for="{{detail.aiReport.suggestions}}" wx:key="index">
+            <view class="suggestion-header">
+              <text class="suggestion-priority">
+                {{item.priority === 'high' ? '高优先' : item.priority === 'medium' ? '中优先' : '低优先'}}
+              </text>
+              <text class="suggestion-deadline" wx:if="{{item.deadline}}">{{item.deadline}}</text>
+            </view>
+            <text class="suggestion-action">{{item.action}}</text>
+            <text class="suggestion-effect" wx:if="{{item.expectedEffect}}">预期效果：{{item.expectedEffect}}</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 模拟报告标记 -->
+      <view class="mock-badge" wx:if="{{detail.aiReport.metadata.isMock}}">
+        <text>⚠️ 此为模拟报告，请配置 AI API Key 获取真实分析</text>
+      </view>
+    </block>
+
+    <!-- AI 分析中提示 -->
+    <view class="card analyzing-card" wx:if="{{detail.status === 'uploaded' && !detail.aiReport}}">
+      <text class="analyzing-icon">🔍</text>
+      <text class="analyzing-text">AI 正在分析陈列情况</text>
+      <text class="analyzing-hint">请稍候，通常 10-30 秒完成</text>
+      <button class="btn-secondary refresh-btn" bindtap="refresh">刷新</button>
+    </view>
+
+    <!-- 分析失败 -->
+    <view class="card fail-card" wx:if="{{detail.status === 'analyze_failed'}}">
+      <text class="fail-icon">!</text>
+      <text class="fail-text">AI 分析失败</text>
+      <text class="fail-error" wx:if="{{detail.analyzeError}}">{{detail.analyzeError}}</text>
+      <button class="btn-secondary refresh-btn" bindtap="refresh">重试</button>
+    </view>
+
+    <!-- 底部操作栏：报告页是流程的终点，之前没有明确的下一步入口，
+         只能靠系统默认的返回箭头退出，这里补上"再拍一张"和"查看历史"两个出口 -->
+    <view class="bottom-actions">
+      <button class="btn-outline" bindtap="goToHistory">查看历史</button>
+      <button class="btn-primary" bindtap="goToCamera">再拍一张</button>
+    </view>
+  </block>
+</view>

@@ -1,0 +1,431 @@
+/* pages/report/report.wxss */
+
+.report-page {
+  min-height: 100vh;
+  background: #f5f5f5;
+  padding-bottom: 60rpx;
+}
+
+.bottom-actions {
+  display: flex;
+  gap: 20rpx;
+  padding: 30rpx;
+  margin-top: 20rpx;
+}
+
+.bottom-actions .btn-outline {
+  flex: 1;
+  height: 88rpx;
+  line-height: 88rpx;
+  background: #fff;
+  color: #1a1a2e;
+  border: 1rpx solid #1a1a2e;
+  border-radius: 12rpx;
+  font-size: 30rpx;
+}
+
+.bottom-actions .btn-primary {
+  flex: 1;
+  height: 88rpx;
+  line-height: 88rpx;
+  background: #1a1a2e;
+  color: #fff;
+  border-radius: 12rpx;
+  font-size: 30rpx;
+}
+
+.loading-state {
+  text-align: center;
+  padding: 100rpx;
+  color: #999;
+}
+
+/* 状态栏 */
+.status-bar {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  padding: 24rpx 30rpx;
+  color: #fff;
+}
+
+.status-analyzed { background: linear-gradient(135deg, #4caf50 0%, #388e3c 100%); }
+.status-uploaded { background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%); }
+.status-analyze_failed { background: linear-gradient(135deg, #f44336 0%, #d32f2f 100%); }
+
+.status-icon { font-size: 32rpx; }
+.status-text { font-size: 30rpx; font-weight: 500; }
+
+/* 通用卡片 */
+.card {
+  background: #fff;
+  margin: 24rpx 30rpx;
+  border-radius: 16rpx;
+  padding: 30rpx;
+  box-shadow: 0 2rpx 12rpx rgba(0, 0, 0, 0.06);
+}
+
+.section-title {
+  font-size: 32rpx;
+  font-weight: bold;
+  color: #1a1a2e;
+  margin-bottom: 24rpx;
+}
+
+/* 信息行 */
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 16rpx 0;
+  border-bottom: 1rpx solid #f5f5f5;
+}
+.info-row:last-child { border-bottom: none; }
+.info-label { color: #999; font-size: 28rpx; }
+.info-value { color: #333; font-size: 28rpx; max-width: 60%; text-align: right; }
+
+/* 照片网格 */
+.photo-grid { display: flex; flex-wrap: wrap; gap: 16rpx; }
+.photo-item { width: calc(50% - 8rpx); height: 300rpx; border-radius: 12rpx; }
+
+/* 评分卡片 */
+.score-card {
+  display: flex;
+  align-items: center;
+  gap: 30rpx;
+}
+
+.score-circle {
+  width: 160rpx;
+  height: 160rpx;
+  border-radius: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.score-high { background: linear-gradient(135deg, #4caf50 0%, #2e7d32 100%); }
+.score-mid { background: linear-gradient(135deg, #ff9800 0%, #e65100 100%); }
+.score-low { background: linear-gradient(135deg, #f44336 0%, #c62828 100%); }
+
+.score-number { font-size: 56rpx; font-weight: bold; line-height: 1; }
+.score-level { font-size: 22rpx; margin-top: 4rpx; opacity: 0.9; }
+
+.score-summary { flex: 1; }
+.summary-text { font-size: 28rpx; color: #333; line-height: 1.7; }
+
+/* 陈列规范度 */
+.compliance-list {
+  display: flex;
+  flex-direction: column;
+  gap: 24rpx;
+}
+
+.compliance-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8rpx;
+}
+
+.compliance-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.compliance-name {
+  font-size: 28rpx;
+  color: #333;
+  font-weight: 500;
+}
+
+.compliance-score {
+  font-size: 28rpx;
+  font-weight: bold;
+}
+
+.compliance-bar {
+  height: 12rpx;
+  background: #f0f0f0;
+  border-radius: 6rpx;
+  overflow: hidden;
+}
+
+.compliance-fill {
+  height: 100%;
+  border-radius: 6rpx;
+  transition: width 0.5s ease;
+}
+
+.compliance-detail {
+  font-size: 24rpx;
+  color: #999;
+}
+
+/* 产品列表 */
+.product-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16rpx;
+}
+
+.product-item {
+  padding: 20rpx;
+  background: #f8f9fa;
+  border-radius: 12rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 12rpx;
+}
+
+.product-main {
+  display: flex;
+  align-items: baseline;
+  gap: 12rpx;
+}
+
+.product-brand {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #1a1a2e;
+}
+
+.product-line {
+  font-size: 26rpx;
+  color: #666;
+}
+
+.product-meta {
+  display: flex;
+  gap: 12rpx;
+  flex-wrap: wrap;
+}
+
+.product-tag {
+  font-size: 22rpx;
+  padding: 4rpx 14rpx;
+  background: #e3f2fd;
+  color: #1565c0;
+  border-radius: 16rpx;
+}
+
+.product-facing {
+  font-size: 22rpx;
+  padding: 4rpx 14rpx;
+  background: #f3e5f5;
+  color: #7b1fa2;
+  border-radius: 16rpx;
+}
+
+.product-position {
+  font-size: 24rpx;
+  color: #999;
+}
+
+/* 竞品分析 */
+.competitive-insight {
+  font-size: 26rpx;
+  color: #666;
+  padding: 16rpx 20rpx;
+  background: #fafafa;
+  border-radius: 8rpx;
+  margin-bottom: 20rpx;
+  line-height: 1.6;
+}
+
+.brand-share-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16rpx;
+}
+
+.brand-share-item {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+}
+
+.brand-name {
+  width: 140rpx;
+  font-size: 26rpx;
+  color: #333;
+  flex-shrink: 0;
+}
+
+.brand-bar-wrapper {
+  flex: 1;
+  height: 16rpx;
+  background: #f0f0f0;
+  border-radius: 8rpx;
+  overflow: hidden;
+}
+
+.brand-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #1a1a2e 0%, #16213e 100%);
+  border-radius: 8rpx;
+}
+
+.brand-percent {
+  width: 80rpx;
+  text-align: right;
+  font-size: 26rpx;
+  color: #666;
+  font-weight: 500;
+}
+
+/* 问题列表 */
+.issue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16rpx;
+}
+
+.issue-item {
+  padding: 20rpx;
+  border-radius: 12rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 8rpx;
+}
+
+.issue-high { background: #ffebee; border-left: 6rpx solid #f44336; }
+.issue-medium { background: #fff3e0; border-left: 6rpx solid #ff9800; }
+.issue-low { background: #e8f5e9; border-left: 6rpx solid #4caf50; }
+
+.issue-header {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.issue-severity {
+  font-size: 22rpx;
+  font-weight: 600;
+  padding: 2rpx 12rpx;
+  border-radius: 8rpx;
+}
+
+.issue-high .issue-severity { background: #f44336; color: #fff; }
+.issue-medium .issue-severity { background: #ff9800; color: #fff; }
+.issue-low .issue-severity { background: #4caf50; color: #fff; }
+
+.issue-category {
+  font-size: 24rpx;
+  color: #666;
+}
+
+.issue-desc {
+  font-size: 28rpx;
+  color: #333;
+  line-height: 1.5;
+}
+
+.issue-impact {
+  font-size: 24rpx;
+  color: #999;
+}
+
+/* 建议列表 */
+.suggestion-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16rpx;
+}
+
+.suggestion-item {
+  padding: 20rpx;
+  border-radius: 12rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 8rpx;
+}
+
+.suggestion-high { background: #fce4ec; border-left: 6rpx solid #e91e63; }
+.suggestion-medium { background: #e3f2fd; border-left: 6rpx solid #2196f3; }
+.suggestion-low { background: #f1f8e9; border-left: 6rpx solid #8bc34a; }
+
+.suggestion-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.suggestion-priority {
+  font-size: 22rpx;
+  font-weight: 600;
+  padding: 2rpx 12rpx;
+  border-radius: 8rpx;
+}
+
+.suggestion-high .suggestion-priority { background: #e91e63; color: #fff; }
+.suggestion-medium .suggestion-priority { background: #2196f3; color: #fff; }
+.suggestion-low .suggestion-priority { background: #8bc34a; color: #fff; }
+
+.suggestion-deadline {
+  font-size: 22rpx;
+  color: #999;
+}
+
+.suggestion-action {
+  font-size: 28rpx;
+  color: #333;
+  line-height: 1.5;
+}
+
+.suggestion-effect {
+  font-size: 24rpx;
+  color: #666;
+}
+
+/* 模拟报告标记 */
+.mock-badge {
+  margin: 24rpx 30rpx;
+  padding: 20rpx;
+  background: #fff3e0;
+  border-radius: 12rpx;
+  text-align: center;
+  font-size: 24rpx;
+  color: #e65100;
+}
+
+/* 分析中 */
+.analyzing-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 60rpx 30rpx;
+}
+
+.analyzing-icon { font-size: 80rpx; margin-bottom: 20rpx; }
+.analyzing-text { font-size: 30rpx; color: #333; margin-bottom: 12rpx; }
+.analyzing-hint { font-size: 24rpx; color: #999; margin-bottom: 30rpx; }
+.refresh-btn { width: 200rpx; padding: 16rpx 0; font-size: 28rpx; }
+
+/* 分析失败 */
+.fail-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 60rpx 30rpx;
+}
+
+.fail-icon {
+  width: 80rpx;
+  height: 80rpx;
+  border-radius: 50%;
+  background: #f44336;
+  color: #fff;
+  font-size: 48rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 20rpx;
+}
+
+.fail-text { font-size: 30rpx; color: #333; margin-bottom: 12rpx; }
+.fail-error { font-size: 24rpx; color: #999; margin-bottom: 30rpx; max-width: 80%; }

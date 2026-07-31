@@ -1,0 +1,10 @@
+{
+  "name": "analyzeImage",
+  "version": "1.0.0",
+  "description": "AI 视觉分析云函数 - 分析白酒陈列照片",
+  "main": "index.js",
+  "dependencies": {
+    "wx-server-sdk": "~2.6.3",
+    "axios": "^1.6.0"
+  }
+}

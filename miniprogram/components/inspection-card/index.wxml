@@ -1,0 +1,18 @@
+<view class="inspection-card" bindtap="onTap">
+  <view class="card-header">
+    <text class="card-title">{{item.taskName || '未命名任务'}}</text>
+    <text class="card-status status-{{item.status || 'uploaded'}}">{{statusText}}</text>
+  </view>
+  <view class="card-body">
+    <view class="card-info">
+      <text class="card-date">{{displayDate}}</text>
+      <text class="card-store text-ellipsis" wx:if="{{item.storeName}}">门店：{{item.storeName}}</text>
+      <text class="card-address text-ellipsis">{{item.location.address || '未知位置'}}</text>
+      <text class="card-user">{{item.userName || ''}}</text>
+    </view>
+    <view class="card-score" wx:if="{{item.aiReport && item.aiReport.score}}">
+      <text class="score-num">{{item.aiReport.score}}</text>
+      <text class="score-unit">分</text>
+    </view>
+  </view>
+</view>

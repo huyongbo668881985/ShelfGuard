@@ -1,0 +1,349 @@
+/* pages/camera/camera.wxss */
+
+.camera-page {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: #000;
+  position: relative;
+}
+
+.camera-wrapper {
+  flex: 1;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.camera {
+  flex: 1;
+  width: 100%;
+}
+
+/* 实时水印预览 */
+.watermark-preview {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 40rpx;
+}
+
+.preview-top {
+  background: rgba(0, 0, 0, 0.4);
+  padding: 30rpx;
+  border-radius: 16rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 12rpx;
+}
+
+.preview-bottom {
+  background: rgba(0, 0, 0, 0.4);
+  padding: 30rpx;
+  border-radius: 16rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 12rpx;
+}
+
+.preview-task {
+  color: #fff;
+  font-size: 36rpx;
+  font-weight: bold;
+  text-shadow: 0 2rpx 4rpx rgba(0, 0, 0, 0.5);
+}
+
+.preview-store {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 28rpx;
+  text-shadow: 0 2rpx 4rpx rgba(0, 0, 0, 0.5);
+}
+
+.preview-info {
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 24rpx;
+  text-shadow: 0 2rpx 4rpx rgba(0, 0, 0, 0.5);
+}
+
+/* 相机控制栏 */
+.camera-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  padding: 40rpx 60rpx;
+  background: rgba(0, 0, 0, 0.85);
+}
+
+.control-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8rpx;
+}
+
+.control-icon {
+  font-size: 48rpx;
+}
+
+.control-label {
+  color: #fff;
+  font-size: 22rpx;
+}
+
+.shutter-btn {
+  width: 130rpx;
+  height: 130rpx;
+  border-radius: 50%;
+  border: 6rpx solid #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+}
+
+.shutter-inner {
+  width: 104rpx;
+  height: 104rpx;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.shutter-btn:active .shutter-inner {
+  background: #ddd;
+}
+
+/* 设置按钮 */
+.settings-btn {
+  position: absolute;
+  top: 100rpx;
+  right: 30rpx;
+  background: rgba(0, 0, 0, 0.6);
+  padding: 16rpx 24rpx;
+  border-radius: 30rpx;
+  color: #fff;
+  font-size: 26rpx;
+}
+
+/* 连拍缩略图条：贴在相机预览区域底部，跟水印文字预留出空间不重叠 */
+.capture-strip {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 20rpx;
+  display: flex;
+  align-items: center;
+  padding: 0 24rpx;
+}
+
+.capture-thumbs {
+  display: flex;
+  gap: 12rpx;
+  flex: 1;
+  overflow: hidden;
+}
+
+.capture-thumb {
+  position: relative;
+  width: 88rpx;
+  height: 88rpx;
+  border-radius: 8rpx;
+  overflow: hidden;
+  border: 2rpx solid rgba(255, 255, 255, 0.8);
+  flex-shrink: 0;
+}
+
+.capture-thumb-img {
+  width: 88rpx;
+  height: 88rpx;
+}
+
+.capture-thumb-remove {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 32rpx;
+  height: 32rpx;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 20rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.capture-count {
+  color: #fff;
+  font-size: 24rpx;
+  background: rgba(0, 0, 0, 0.5);
+  padding: 8rpx 16rpx;
+  border-radius: 20rpx;
+  margin-left: 12rpx;
+  flex-shrink: 0;
+}
+
+.capture-finish-btn {
+  margin-left: 12rpx;
+  background: #e94560;
+  color: #fff;
+  font-size: 26rpx;
+  padding: 12rpx 24rpx;
+  border-radius: 30rpx;
+  flex-shrink: 0;
+}
+
+/* 预览区域 */
+.preview-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.preview-image {
+  flex: 1;
+  width: 100%;
+  background: #000;
+}
+
+.composing-mask {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.composing-text {
+  color: #fff;
+  font-size: 32rpx;
+}
+
+.preview-actions {
+  display: flex;
+  gap: 24rpx;
+  padding: 40rpx 30rpx;
+  background: rgba(0, 0, 0, 0.85);
+}
+
+.preview-actions .btn-secondary,
+.preview-actions .btn-primary {
+  flex: 1;
+}
+
+/* 设置面板 */
+.settings-mask {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 100;
+}
+
+.settings-panel {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #fff;
+  border-radius: 32rpx 32rpx 0 0;
+  max-height: 70vh;
+  z-index: 101;
+  transform: translateY(100%);
+  transition: transform 0.3s ease;
+}
+
+.settings-panel.show {
+  transform: translateY(0);
+}
+
+.settings-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 30rpx 40rpx;
+  border-bottom: 1rpx solid #eee;
+}
+
+.settings-title {
+  font-size: 32rpx;
+  font-weight: bold;
+  color: #333;
+}
+
+.settings-close {
+  font-size: 36rpx;
+  color: #999;
+  padding: 10rpx;
+}
+
+.settings-content {
+  padding: 20rpx 40rpx 60rpx;
+  max-height: calc(70vh - 120rpx);
+}
+
+.setting-item {
+  padding: 24rpx 0;
+  border-bottom: 1rpx solid #f5f5f5;
+}
+
+.setting-item:last-child {
+  border-bottom: none;
+}
+
+.setting-label {
+  display: block;
+  font-size: 28rpx;
+  color: #666;
+  margin-bottom: 16rpx;
+}
+
+.setting-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16rpx;
+}
+
+.setting-label-row .setting-label {
+  margin-bottom: 0;
+}
+
+.choose-customer-btn {
+  font-size: 24rpx;
+  color: #1a1a2e;
+  background: #eef2ff;
+  padding: 6rpx 16rpx;
+  border-radius: 20rpx;
+}
+
+.setting-input {
+  font-size: 30rpx;
+  padding: 16rpx 0;
+  border-bottom: 2rpx solid #eee;
+}
+
+.setting-value {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 30rpx;
+  color: #333;
+  padding: 16rpx 0;
+}
+
+.setting-arrow {
+  font-size: 36rpx;
+  color: #999;
+}

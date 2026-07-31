@@ -1,0 +1,9 @@
+<!--components/watermark-canvas/index.wxml-->
+<!-- 隐藏画布，用于离屏合成 -->
+<view class="watermark-canvas-wrapper">
+  <canvas
+    id="watermarkCanvas"
+    type="2d"
+    class="watermark-canvas"
+  ></canvas>
+</view>

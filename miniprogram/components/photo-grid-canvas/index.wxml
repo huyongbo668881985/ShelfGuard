@@ -1,0 +1,9 @@
+<!--components/photo-grid-canvas/index.wxml-->
+<!-- 隐藏画布，用于离屏把多张照片拼成一张大图 -->
+<view class="grid-canvas-wrapper">
+  <canvas
+    id="photoGridCanvas"
+    type="2d"
+    class="grid-canvas"
+  ></canvas>
+</view>
