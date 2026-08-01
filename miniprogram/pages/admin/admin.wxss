@@ -1,0 +1,112 @@
+/* pages/admin/admin.wxss */
+
+.admin-page {
+  min-height: 100vh;
+  background: var(--color-bg-page);
+  padding: var(--spacing-md) var(--spacing-lg) 200rpx;
+}
+
+.loading-state {
+  padding: 120rpx 0;
+  text-align: center;
+  color: var(--color-text-hint);
+  font-size: var(--font-md);
+}
+
+.page-tip {
+  background: #eef0fb;
+  color: var(--color-text-secondary);
+  font-size: var(--font-sm);
+  line-height: 1.6;
+  padding: 18rpx 24rpx;
+  border-radius: var(--radius-md);
+  margin-bottom: var(--spacing-md);
+}
+
+.empty-state {
+  padding: 100rpx 0;
+  text-align: center;
+  color: var(--color-text-hint);
+  font-size: var(--font-md);
+}
+
+.user-card {
+  background: #fff;
+  border-radius: var(--radius-md);
+  padding: var(--spacing-md);
+  margin-bottom: var(--spacing-md);
+  box-shadow: 0 2rpx 10rpx rgba(0, 0, 0, 0.04);
+}
+
+.user-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 12rpx;
+}
+
+.user-name {
+  font-size: var(--font-lg);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.user-openid {
+  font-size: var(--font-xs);
+  color: var(--color-text-hint);
+}
+
+.user-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12rpx 24rpx;
+  margin-bottom: 14rpx;
+}
+
+.meta-item {
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+}
+
+.user-tags {
+  display: flex;
+  gap: 12rpx;
+  margin-bottom: 20rpx;
+}
+
+.tag {
+  font-size: var(--font-xs);
+  padding: 4rpx 16rpx;
+  border-radius: 999rpx;
+  line-height: 1.6;
+}
+
+.tag-role.role-sales { background: #eef0f3; color: #5b6470; }
+.tag-role.role-manager { background: #e3f1fb; color: #1f6fb2; }
+.tag-role.role-admin { background: #efeafd; color: #6b4ed1; }
+
+.status-active { background: #e7f6ec; color: var(--color-success); }
+.status-disabled { background: #fdecec; color: var(--color-error); }
+
+.user-actions {
+  display: flex;
+  gap: var(--spacing-sm);
+}
+
+.act-btn {
+  flex: 1;
+  margin: 0;
+  font-size: var(--font-sm);
+}
+
+.btn-outline {
+  background: #fff;
+  color: var(--color-text-secondary);
+  border: 2rpx solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+.btn-outline::after { border: none; }
+
+.btn-disable { color: var(--color-error); border-color: #f3c2c2; }
+.btn-enable { color: var(--color-success); border-color: #b7e3c4; }

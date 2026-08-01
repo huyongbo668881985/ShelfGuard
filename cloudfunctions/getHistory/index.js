@@ -19,16 +19,14 @@ const _ = db.command
 
 const MANAGER_ROLES = ['admin', 'manager']
 
-async function getCallerRole(openid) {
+async function getCaller(openid) {
   try {
     const res = await db.collection('users').where({ _openid: openid }).get()
-    if (res.data.length > 0 && MANAGER_ROLES.includes(res.data[0].role)) {
-      return res.data[0].role
-    }
+    return res.data[0] || null
   } catch (err) {
-    console.error('查询用户角色失败，按普通业务员处理:', err)
+    console.error('查询用户失败，按普通业务员处理:', err)
+    return null
   }
-  return 'sales'
 }
 
 // 构建通用查询条件（列表和统计共用）
@@ -73,7 +71,11 @@ exports.main = async (event, context) => {
   const openid = wxContext.OPENID
   const { action = 'list', page = 1, pageSize = 20, where = {}, targetUserName = '' } = event
 
-  const role = await getCallerRole(openid)
+  const caller = await getCaller(openid)
+  if (caller && caller.disabled) {
+    return { success: false, error: '账号已停用，请联系管理员' }
+  }
+  const role = (caller && MANAGER_ROLES.includes(caller.role)) ? caller.role : 'sales'
   const isManager = MANAGER_ROLES.includes(role)
   const queryConditions = buildBaseConditions({ isManager, openid, targetUserName, where })
 

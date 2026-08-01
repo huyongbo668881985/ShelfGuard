@@ -5,7 +5,9 @@
     "pages/history/history",
     "pages/report/report",
     "pages/products/products",
-    "pages/customers/customers"
+    "pages/customers/customers",
+    "pages/settings/settings",
+    "pages/admin/admin"
   ],
   "window": {
     "backgroundColor": "#f5f5f5",

@@ -1,0 +1,9 @@
+{
+  "name": "submitInspection",
+  "version": "1.0.0",
+  "description": "提交巡检记录云函数 - 服务端收口创建，统一鉴权",
+  "main": "index.js",
+  "dependencies": {
+    "wx-server-sdk": "~2.6.3"
+  }
+}

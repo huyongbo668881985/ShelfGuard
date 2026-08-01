@@ -1,0 +1,172 @@
+<!--pages/settings/settings.wxml-->
+<view class="settings-page">
+  <view class="loading-state" wx:if="{{loading}}">
+    <text>加载中...</text>
+  </view>
+
+  <block wx:if="{{!loading}}">
+    <!-- 只读提示 -->
+    <view class="readonly-tip" wx:if="{{!canEdit}}">
+      <text>你不是管理员，以下设置仅供查看</text>
+    </view>
+
+    <!-- 首管理员激活（仅当系统尚无管理员、且当前用户不是管理员时显示） -->
+    <view class="card activate-card" wx:if="{{showActivate}}">
+      <view class="section-title">激活管理员</view>
+      <text class="activate-desc">系统还没有管理员。输入部署时配置的激活码，把你当前的微信账号设为管理员；之后就能在「用户与权限管理」里给其他人分配角色。</text>
+      <input
+        class="activate-input"
+        placeholder="请输入激活码"
+        placeholder-class="key-input-ph"
+        value="{{activateCode}}"
+        bindinput="onActivateInput"
+      />
+      <button class="btn-primary activate-btn" bindtap="onActivate" disabled="{{activating}}">
+        {{activating ? '激活中...' : '激活为管理员'}}
+      </button>
+    </view>
+
+    <!-- 管理后台入口（仅管理员可见） -->
+    <view class="card admin-entry" wx:if="{{canEdit}}" bindtap="goAdmin">
+      <view class="entry-left">
+        <text class="entry-title">用户与权限管理</text>
+        <text class="entry-sub">分配业务员 / 管理者 / 管理员角色，停用离职账号</text>
+      </view>
+      <text class="entry-arrow">›</text>
+    </view>
+
+    <!-- 队列概览 -->
+    <view class="card queue-card">
+      <view class="queue-row">
+        <view class="queue-item">
+          <text class="queue-value queue-pending">{{queue.pending}}</text>
+          <text class="queue-label">待分析</text>
+        </view>
+        <view class="queue-divider"></view>
+        <view class="queue-item">
+          <text class="queue-value queue-running">{{queue.analyzing}}</text>
+          <text class="queue-label">分析中</text>
+        </view>
+        <view class="queue-divider"></view>
+        <view class="queue-item">
+          <text class="queue-value queue-failed">{{queue.failed}}</text>
+          <text class="queue-label">失败</text>
+        </view>
+      </view>
+
+      <view class="last-run" wx:if="{{lastRunText}}">
+        <text class="last-run-title">上次运行：{{lastRunText}}</text>
+        <text class="last-run-detail" wx:if="{{lastRunSummaryText}}">{{lastRunSummaryText}}</text>
+      </view>
+
+      <view class="queue-actions">
+        <button class="btn-outline" bindtap="onRetryFailed" disabled="{{!canEdit}}">重排失败记录</button>
+        <button class="btn-primary" bindtap="onRunNow" disabled="{{!canEdit || running}}">
+          {{running ? '分析中...' : '立即分析一批'}}
+        </button>
+      </view>
+    </view>
+
+    <!-- 分析模式 -->
+    <view class="card">
+      <view class="section-title">分析模式</view>
+
+      <view class="mode-option {{analyzeMode === 'batch' ? 'active' : ''}}" data-mode="batch" bindtap="onSelectMode">
+        <view class="mode-head">
+          <text class="mode-name">每日集中分析</text>
+          <text class="mode-check" wx:if="{{analyzeMode === 'batch'}}">✓</text>
+        </view>
+        <text class="mode-desc">照片提交后立刻显示"已提交"，业务员直接去下一家。AI 分析统一在设定时间跑，不占用拜访时间。</text>
+      </view>
+
+      <view class="mode-option {{analyzeMode === 'instant' ? 'active' : ''}}" data-mode="instant" bindtap="onSelectMode">
+        <view class="mode-head">
+          <text class="mode-name">提交即分析</text>
+          <text class="mode-check" wx:if="{{analyzeMode === 'instant'}}">✓</text>
+        </view>
+        <text class="mode-desc">旧流程。提交后原地等待 AI 出结果，约 15-40 秒，随后直接跳转报告页。</text>
+      </view>
+    </view>
+
+    <!-- 集中分析时间 -->
+    <view class="card" wx:if="{{analyzeMode === 'batch'}}">
+      <view class="section-title">集中分析时间</view>
+
+      <view class="form-row">
+        <text class="form-label">开始时间</text>
+        <picker mode="time" value="{{analyzeTime}}" bindchange="onTimeChange" disabled="{{!canEdit}}">
+          <view class="form-picker">
+            <text>{{analyzeTime}}</text>
+            <text class="form-arrow">›</text>
+          </view>
+        </picker>
+      </view>
+
+      <view class="form-row">
+        <text class="form-label">持续时长</text>
+        <view class="form-input-wrap">
+          <input
+            class="form-input"
+            type="number"
+            value="{{windowMinutes}}"
+            bindinput="onWindowInput"
+            disabled="{{!canEdit}}"
+          />
+          <text class="form-unit">分钟</text>
+        </view>
+      </view>
+
+      <view class="form-row">
+        <text class="form-label">每轮处理</text>
+        <view class="form-input-wrap">
+          <input
+            class="form-input"
+            type="number"
+            value="{{batchSize}}"
+            bindinput="onBatchSizeInput"
+            disabled="{{!canEdit}}"
+          />
+          <text class="form-unit">条</text>
+        </view>
+      </view>
+
+      <view class="form-hint">
+        <text>系统每 2 分钟检查一次，在「{{analyzeTime}} 起 {{windowMinutes}} 分钟」这个窗口内，每次最多处理 {{batchSize}} 条。窗口结束时没排完的记录会留到第二天继续。</text>
+      </view>
+    </view>
+
+    <!-- API Key -->
+    <view class="card">
+      <view class="section-title">Qwen-VL-Plus API Key</view>
+
+      <view class="key-status" wx:if="{{hasApiKey}}">
+        <text class="key-status-ok">已配置：{{apiKeyMasked}}</text>
+        <text class="key-clear" bindtap="onClearApiKey" wx:if="{{canEdit}}">清除</text>
+      </view>
+      <view class="key-status" wx:else>
+        <text class="key-status-none">此处未配置（可能已在云函数环境变量中配置）</text>
+      </view>
+
+      <input
+        class="key-input"
+        placeholder="{{hasApiKey ? '留空表示不修改' : '粘贴 sk- 开头的 API Key'}}"
+        placeholder-class="key-input-ph"
+        value="{{apiKeyInput}}"
+        bindinput="onApiKeyInput"
+        disabled="{{!canEdit}}"
+      />
+
+      <view class="form-hint">
+        <text>推荐把 Key 配置在云函数环境变量里（更安全，不经过前端）：云开发控制台 → 云函数 → analyzeImage → 版本与配置 → 环境变量 → 新增 DASHSCOPE_API_KEY。</text>
+        <text class="hint-line">Key 从阿里云百炼控制台 bailian.console.aliyun.com 申请。两处都配了以环境变量优先。</text>
+      </view>
+    </view>
+
+    <!-- 保存 -->
+    <view class="save-bar" wx:if="{{canEdit}}">
+      <button class="btn-primary btn-save" bindtap="onSave" disabled="{{saving}}">
+        {{saving ? '保存中...' : '保存设置'}}
+      </button>
+    </view>
+  </block>
+</view>

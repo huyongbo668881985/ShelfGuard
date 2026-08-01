@@ -1,0 +1,9 @@
+{
+  "name": "users",
+  "version": "1.0.0",
+  "description": "用户与权限管理云函数 - 列表/角色/停用，仅 admin 可调",
+  "main": "index.js",
+  "dependencies": {
+    "wx-server-sdk": "~2.6.3"
+  }
+}

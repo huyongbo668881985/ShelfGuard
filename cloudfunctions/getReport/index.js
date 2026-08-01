@@ -22,16 +22,14 @@ const db = cloud.database()
 
 const MANAGER_ROLES = ['admin', 'manager']
 
-async function getCallerRole(openid) {
+async function getCaller(openid) {
   try {
     const res = await db.collection('users').where({ _openid: openid }).get()
-    if (res.data.length > 0 && MANAGER_ROLES.includes(res.data[0].role)) {
-      return res.data[0].role
-    }
+    return res.data[0] || null
   } catch (err) {
-    console.error('查询用户角色失败，按普通业务员处理:', err)
+    console.error('查询用户失败，按普通业务员处理:', err)
+    return null
   }
-  return 'sales'
 }
 
 exports.main = async (event, context) => {
@@ -41,6 +39,12 @@ exports.main = async (event, context) => {
 
   if (!inspectionId) {
     return { success: false, error: '缺少 inspectionId' }
+  }
+
+  // 停用账号拦截：停用的号不能读取任何巡检详情
+  const caller = await getCaller(openid)
+  if (caller && caller.disabled) {
+    return { success: false, error: '账号已停用，请联系管理员' }
   }
 
   let doc
@@ -58,7 +62,7 @@ exports.main = async (event, context) => {
 
   // 归属校验：本人可直接读；管理者可读全员；其余拒绝
   if (doc._openid !== openid) {
-    const role = await getCallerRole(openid)
+    const role = (caller && MANAGER_ROLES.includes(caller.role)) ? caller.role : 'sales'
     if (!MANAGER_ROLES.includes(role)) {
       console.warn(`拒绝越权读取: caller=${openid} 试图读取 inspection=${inspectionId}（属于 ${doc._openid}）`)
       return { success: false, error: '无权访问该巡检记录' }

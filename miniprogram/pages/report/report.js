@@ -8,7 +8,8 @@ Page({
     inspectionId: '',
     detail: null,
     loading: true,
-    refreshTimer: null
+    refreshTimer: null,
+    analyzeTime: '21:00'   // 集中分析时间，用于"排队中"提示，report 页加载时拉取
   },
 
   onLoad(options) {
@@ -66,8 +67,14 @@ Page({
 
       this.setData({ detail, loading: false })
 
-      // 如果还在分析中，启动轮询
-      if (detail.status === 'uploaded' && !detail.aiReport) {
+      // 最佳努力获取集中分析时间，用于"排队中"提示（失败不影响主流程）
+      this.refreshAnalyzeTime()
+
+      // 还没出报告且处于实时分析状态（即时模式的 analyzing / 旧字段 uploaded）才轮询，
+      // pending（集中模式排队中）不轮询——它只会在设定时间被定时任务处理，
+      // 轮询也只是空转；用户可下拉刷新查看。
+      const realtimeAnalyzing = detail.status === 'analyzing' || detail.status === 'uploaded'
+      if (!detail.aiReport && realtimeAnalyzing) {
         this.startPolling(id)
       }
 
@@ -110,6 +117,18 @@ Page({
     }, 3000)
 
     this.setData({ refreshTimer: timer })
+  },
+
+  // 拉取集中分析时间（用于报告页"排队中"提示）
+  async refreshAnalyzeTime() {
+    try {
+      const res = await wx.cloud.callFunction({ name: 'settings', data: { action: 'get' } })
+      if (res.result && res.result.success && res.result.settings && res.result.settings.analyzeTime) {
+        this.setData({ analyzeTime: res.result.settings.analyzeTime })
+      }
+    } catch (err) {
+      // 不影响主流程
+    }
   },
 
   // 预览图片

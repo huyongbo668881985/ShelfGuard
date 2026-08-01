@@ -63,6 +63,24 @@ Page({
   },
 
   onShow() {
+    // "继续拜访下一家"回传标记：upload 页提交完成后点了继续，回到相机页应当
+    // 清空上一家门店信息并直接进入下一家拍照阶段（自动弹出客户选择）。
+    // 用 globalData.startNextVisit 通信，因为相机是 tabBar 页，navigateBack
+    // 只触发 onShow 不触发 onLoad，没法用页面参数传。
+    if (app.globalData.startNextVisit) {
+      app.globalData.startNextVisit = false
+      this.setData({
+        storeName: '',
+        selectedCustomerId: '',
+        // 门店地址回退到当前定位地址，避免沿用上一家门店地址
+        address: (this.data.location && this.data.location.address) || this.data.address
+      })
+      wx.showToast({ title: '请选择下一家门店', icon: 'none' })
+      // 自动进入客户选择阶段
+      this.chooseCustomer()
+      return
+    }
+
     // 从"选择客户"页面（customers 页选择模式）返回时，globalData 里会带着
     // 选中的客户资料，这里取一次就清空，避免下次进相机页误把上次的选择带进来
     const selected = app.globalData.selectedCustomer
@@ -186,6 +204,14 @@ Page({
   // 客户管理入口（跟产品库一样，正常管理模式，不带 select 参数）
   goToCustomers() {
     wx.navigateTo({ url: '/pages/customers/customers' })
+  },
+
+  // 分析设置入口：集中分析时间、API Key、待分析队列
+  // 走 closeSettings() 而不是直接 setData，是为了顺带把改过的业务员姓名存下来，
+  // 同时关掉水印设置面板——否则从设置页返回后面板还盖在相机上
+  goToAnalyzeSettings() {
+    this.closeSettings()
+    wx.navigateTo({ url: '/pages/settings/settings' })
   },
 
   // 选客户：带上当前定位，customers 页会按距离由近到远排好序

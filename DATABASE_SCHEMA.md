@@ -31,7 +31,15 @@
   },
   
   // === 状态管理 ===
-  "status": "string",                 // 状态：uploaded | analyzed | analyze_failed
+  // 状态机（详见下方"状态流转"）：
+  //   pending        待分析（提交即入队，等定时/手动批量分析领取）
+  //   analyzing      分析中（analyzeImage 被调用后、出结果前）
+  //   analyzed       分析成功
+  //   analyze_failed 分析失败
+  "status": "string",                 // 状态：pending | analyzing | analyzed | analyze_failed
+  "analyzeAttempts": "number",        // 已尝试分析次数（僵尸回收 / 失败重排时用于判断是否超限）
+  "analyzeStartedAt": "Date",         // 最近一次开始分析的时间（用于回收超时的僵尸记录）
+  "analyzedModel": "string",          // 实际出报告的模型名（如 qwen-vl-plus），便于追溯
   "createdAt": "Date",                // 创建时间（服务器时间）
   
   // === AI 分析结果 ===
@@ -112,10 +120,17 @@ db.collection('inspections').createIndex({
 ### 状态流转
 
 ```
-uploaded → analyzed      (AI 分析成功)
-uploaded → analyze_failed (AI 分析失败)
-analyze_failed → analyzed (重试成功)
+pending → analyzing       (定时触发器 / 手动"立即分析"领取任务，开始分析)
+analyzing → analyzed       (AI 分析成功)
+analyzing → analyze_failed (AI 分析失败)
+analyze_failed → pending   (管理员在"分析设置"页点"重排失败记录"重试)
+pending → analyze_failed   (记录没有照片等脏数据，直接判失败，不再占用队列)
 ```
+
+> 旧文档里写的 `uploaded` 状态是"提交即同步分析"时期的遗留字段，新流程已统一用 `pending`：
+> 提交即入队（不原地等 AI），由 `batchAnalyze` 定时任务或管理员手动触发 `analyzeImage` 来推进。
+> 即时分析模式（instant）下，`pending` 记录也会被小程序端直接领取并调用 `analyzeImage`，
+> 流程同上，只是触发时机从"定时"变成了"提交后立刻"。
 
 ---
 
@@ -129,18 +144,39 @@ analyze_failed → analyzed (重试成功)
 {
   "_id": "string",                    // 自动生成
   "_openid": "string",                // 微信用户 openid
-  
+
   // === 用户信息 ===
   "name": "string",                   // 用户姓名
-  "role": "string",                   // 角色：sales | manager | admin
+  "role": "string",                   // 角色：sales（业务员）| manager（管理者）| admin（管理员）
+                                      //   - sales：只能看自己、改自己资料、提交巡检
+                                      //   - manager：可看全员记录 + 全量统计（只读视角），不能改系统设置
+                                      //   - admin：改系统设置 + 管用户（角色/停用），是最高权限
   "phone": "string",                  // 手机号（可选）
   "department": "string",             // 部门（可选）
-  
+
+  // === 账号状态 ===
+  "disabled": "boolean",              // 是否停用（由 admin 在「用户与权限管理」里置 true）。
+                                      //   停用后无法提交巡检、查看记录/报告、改设置；历史数据不受影响。
+  "disabledAt": "Date",               // 停用时间
+  "disabledBy": "string",             // 执行停用的 admin 的 openid
+
+  // === 提拔记录 ===
+  "promotedAt": "Date",               // 被设为 admin 的时间（首管理员激活时写入）
+  "promotedBy": "string",             // 提拔来源：'self-setup'（激活码自举）或提拔人的 openid
+
   // === 时间戳 ===
   "createdAt": "Date",                // 首次登录时间
   "updatedAt": "Date"                 // 最后更新时间
 }
 ```
+
+> **首管理员怎么来**：系统初始没有任何管理员。部署时在 `settings` 云函数环境变量里设
+> `ADMIN_SETUP_CODE`（你自己定的字符串），再在小程序「分析设置」页用这个码把当前微信账号激活成 admin。
+> 激活后系统就有了管理员，这条路永久关闭（别人无法再用激活码或"系统无管理员"的漏洞提权）。
+> 后续给其他人升 manager/admin，只能由已有的 admin 在「用户与权限管理」页里操作。
+>
+> **巡检记录归属**：`inspections` 的 `_openid` 现在由 `submitInspection` 云函数在服务端
+> 显式写入（提交时传入的 openid），不再依赖客户端直写自动注入，确保归属可信、sales 只能看自己。
 
 ### 索引建议
 
@@ -149,6 +185,25 @@ analyze_failed → analyzed (重试成功)
 db.collection('users').createIndex({
   _openid: 1
 }, { unique: true })
+```
+
+---
+
+## 集合：roleChanges（角色变更审计）
+
+每次 `users.setRole` 调整某人角色时，由 `users` 云函数自动写入一条记录，便于追溯"谁在什么时候把谁从 X 提到了 Y"。仅审计用途，不参与任何查询过滤。
+
+### 字段结构
+
+```json
+{
+  "_id": "string",                    // 自动生成
+  "byOpenid": "string",               // 操作人（执行提拔/降级的 admin）openid
+  "targetOpenid": "string",           // 被调整角色的用户 openid
+  "from": "string",                   // 调整前角色：sales | manager | admin
+  "to": "string",                     // 调整后角色：sales | manager | admin
+  "at": "Date"                        // 变更发生时间
+}
 ```
 
 ---
@@ -246,6 +301,65 @@ cloud://env-id.xxx/
 
 ---
 
+---
+
+## 集合：settings（系统配置）
+
+全局唯一的配置文档，固定 `_id = 'global'`，全系统共用一份。由 `settings` 云函数读写，前端「分析设置」页调用。
+
+API Key（`dashscopeApiKey`）明文只存在这里、只在 `analyzeImage` 云函数服务端读取，前端只读掩码、绝不拿到明文。
+
+### 字段结构
+
+```json
+{
+  "_id": "global",                    // 固定值，全系统唯一一份配置
+
+  // === 分析调度 ===
+  "analyzeMode": "string",            // 'batch' = 每日集中分析（默认）；'instant' = 提交即分析（退回旧流程）
+  "analyzeTime": "string",            // 集中分析开始时间，北京时间 HH:mm，默认 '21:00'
+  "windowMinutes": "number",          // 从开始时间起允许跑多久（分钟），默认 180
+  "batchSize": "number",              // 每次定时触发最多处理几条，默认 2（云函数 60s 超时限制下建议 ≤3）
+
+  // === API Key ===
+  "dashscopeApiKey": "string",        // 通义千问 DashScope API Key（明文，仅服务端可读）
+
+  // === 运行记录（batchAnalyze 每次实干后回写）===
+  "lastRunAt": "Date",                // 最近一次实际运行时间
+  "lastRunTriggeredBy": "string",     // 'timer' | 'manual'
+  "lastRunSummary": {                 // 最近一次的运行统计
+    "processed": "number",
+    "succeeded": "number",
+    "failed": "number",
+    "reclaimed": "number",
+    "remaining": "number"
+  },
+
+  "updatedAt": "Date",
+  "updatedBy": "string"               // 最近一次修改者的 openid
+}
+```
+
+### 读写权限（重要）
+
+- **读（get）**：任何登录用户都能读，但 `dashscopeApiKey` 只返回掩码（`sk-xxxx****xxxx`），明文不出服务端。停用账号读也会被拒。
+- **写（save / retryFailed）**：仅 `admin` 角色。
+- **首管理员激活（activateAdmin）**：一次性，凭云函数环境变量 `ADMIN_SETUP_CODE`，把当前用户升为 admin。
+  激活后系统已有管理员，这条路关闭；若已存在任何 admin/manager，激活直接被拒（不再有"系统无管理员则任何人可写"的自举漏洞）。
+- **manager 不能改设置**：`manager` 只拥有"看全员 + 全量统计"的只读视角，`admin` 才拥有改设置 + 管用户的权限。
+
+### 使用方式
+
+- `analyzeImage` 在环境变量 `DASHSCOPE_API_KEY` 没配时，会到这里读 `dashscopeApiKey` 作为兜底。
+- `batchAnalyze` 每次醒来先读这里的 `analyzeMode` / `analyzeTime` / `windowMinutes` / `batchSize` 决定要不要干活、干多久。
+- 没有这个文档时，所有读写都退回 `DEFAULT_SETTINGS` 默认值，不阻断主流程。
+
+### 部署注意
+
+`settings` 集合**必须先在云开发控制台手动创建**。若未创建，首次保存会报 `-502005 database collection not exists`。创建空集合后即可正常读写。
+
+---
+
 ## 查询示例
 
 ### 查询当前用户 90 天内的巡检记录
@@ -270,7 +384,7 @@ const res = await db.collection('inspections')
 ```javascript
 const res = await db.collection('inspections')
   .where({
-    status: 'uploaded'
+    status: 'pending'
   })
   .get()
 ```

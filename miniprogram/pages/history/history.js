@@ -193,6 +193,14 @@ Page({
       item.scoreLevel = scoreInfo.level
     }
 
+    // 列表项状态标记：还没出报告的记录用轻量文案提示，避免用户以为"丢单了"
+    const STATUS_TEXT = {
+      pending: '待分析',
+      analyzing: '分析中',
+      analyze_failed: '分析失败'
+    }
+    item.statusText = STATUS_TEXT[item.status] || ''
+
     return item
   },
 

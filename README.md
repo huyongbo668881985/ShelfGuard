@@ -92,32 +92,68 @@ ShelfGuard/
 1. 打开 `project.config.json`，替换 `appid` 为你的小程序 AppID
 2. 打开 `miniprogram/app.js`，替换 `cloudEnv` 为你的云开发环境 ID
 
-### 2. 开通云开发
+### 2. 开通云开发模式（每日集中分析）
 
 1. 在微信开发者工具中点击「云开发」按钮
 2. 开通云开发，创建环境
 3. 在云开发控制台创建数据库集合：
    - `inspections` — 巡检记录
    - `users` — 用户信息
+   - `products` — 产品库（品牌识别参考）
+   - `customers` — 客户/门店资料
+   - `settings` — **系统配置（必须建！）**：存放集中分析时间、API Key、分析模式等。`batchAnalyze` / `settings` / `analyzeImage` 都会读它。不建也不会崩（全都退回默认值），但「分析设置」页的修改没法持久化。
+   - `roleChanges` — **角色变更审计（建议建）**：`users` 云函数改角色时会写审计日志。不建不影响改角色，但日志写不进去（云函数会忽略该错误）。
 
 ### 3. 部署云函数
 
-右键每个云函数目录，选择「上传并部署：云端安装依赖」。
+右键每个云函数目录，选择「上传并部署：云端安装依赖」。需要部署的云函数：
+`login` / `analyzeImage` / `getReport` / `getHistory` / `customers` / `products` / `geocode` / `settings` / `batchAnalyze` / **`submitInspection`** / **`users`**。
 
-### 4. 配置 AI 视觉 API（可选）
+> `submitInspection`：收口巡检记录的创建（服务端鉴权 + 写归属），替代原来小程序端直写 `inspections` 集合。
+> `users`：用户与权限管理（仅 admin 可调），提供用户列表 / 角色调整 / 停用启用。
 
-编辑 `cloudfunctions/analyzeImage/index.js`：
+⚠️ **`batchAnalyze` 部署后必须改超时时间**：默认 20 秒不够。云开发控制台 → 云函数 → `batchAnalyze` → 版本与配置 → 执行超时时间 → 改成 **60 秒**。同时确认它的**定时触发器**已生效（`cloudfunctions/batchAnalyze/config.json` 里配了 `"0 */2 * * * *"`，每 2 分钟唤醒一次）。若触发器没自动创建，手动在 `batchAnalyze` 的「触发器」里加一条：周期 `0 */2 * * * *`。
 
-```javascript
-// 设置环境变量（在云函数环境变量中配置）
-OPENAI_API_KEY=your-openai-key
-DASHSCOPE_API_KEY=your-dashscope-key
+> 为什么是"每 2 分钟唤醒、每次只处理 2 条"而不是"到点一次性全跑"：微信云函数单次最长 60 秒，一条分析要 15-40 秒，一次跑不完积压的全部记录。靠高频小批量慢慢把队列排空即可，空跑成本可忽略。
 
-// 选择使用的模型
-const CURRENT_MODEL = 'openai'  // 或 'qwen'
-```
+### 4. 配置 AI 视觉 API（使用 Qwen-VL-Plus）
 
-未配置 API Key 时，系统会返回模拟报告，方便测试。
+识图模型默认已切换到**通义千问 Qwen-VL-Plus**（`cloudfunctions/analyzeImage/index.js` 里 `CURRENT_MODEL = 'qwen'`、`AI_CONFIG.qwen.model = 'qwen-vl-plus'`）。
+
+**API Key 填在哪里（三选一，优先级从高到低）：**
+
+1. **【推荐】云函数环境变量（最安全，Key 不进代码库、不经过前端）**
+   微信开发者工具 → 云开发控制台 → 云函数 → 找到 `analyzeImage` → 版本与配置 → 环境变量 → 新增
+   `DASHSCOPE_API_KEY = sk-xxxxxx`
+2. **小程序内「分析设置」页填写**：会存进 `settings` 集合的 `dashscopeApiKey` 字段，方便但没有环境变量安全。
+3. **直接写死在代码里**：仅限本地调试，千万别提交到 git。
+
+> Key 从哪申请：阿里云百炼控制台 https://bailian.console.aliyun.com/ → 右上角头像 → API-KEY → 创建我的 API-KEY，形如 `sk-xxxxxxxxxxxx`。
+> 三种来源都没配置时，系统会返回**模拟报告**，方便先把流程跑通。
+
+`analyzeImage/index.js` 文件顶部有完整的注释说明（模型切换、API Key 解析、请求体差异），改配置前建议先读一遍。Prompt 已抽离到同目录 `prompt.js`，优化建议见 `PROMPT_GUIDE.md`。
+
+### 5. 激活管理员（必须，否则改不了系统设置）
+
+系统初始没有任何管理员，且**不再**保留"无管理员则任何人可配置"的自举逻辑（那是个安全漏洞）。部署时先给 `settings` 云函数配一个只有你知道的激活码：
+
+1. 微信开发者工具 → 云开发控制台 → 云函数 → `settings` → 版本与配置 → 环境变量 → 新增
+   `ADMIN_SETUP_CODE = 你自定的字符串（如 SG-SETUP-8848）`
+2. 用你自己的微信在小程序里正常登录一次（会在 `users` 表建一条 `role: 'sales'` 记录）。
+3. 打开小程序「分析设置」页 → 页面顶部会显示"激活管理员"卡片 → 输入上面的激活码 → 点"激活为管理员"。
+4. 激活成功后，你的账号变成 `admin`，激活卡片消失，「分析设置」里出现"用户与权限管理"入口。
+
+> 之后给别人提拔 manager / admin，只能在「用户与权限管理」页里由 admin 操作；激活码这条路在已有管理员后自动关闭，别人无法再用它提权。
+> 若忘了激活码：直接去云开发控制台改 `settings` 云函数的 `ADMIN_SETUP_CODE` 环境变量即可。
+
+### 6. 权限与账号管理（Phase 0 + Phase 1 已落地）
+
+- **认证 = 微信 openid**：无需用户名/密码，`login` 自动建 `users` 记录。
+- **授权分三级**：`sales`（业务员，只能看自己）/ `manager`（管理者，可看全员+统计，但**不能改系统设置**）/ `admin`（管理员，改设置 + 管用户）。
+- **账号停用**：admin 在「用户与权限管理」里把离职员工 `disabled` 置 true，其无法提交巡检、查看记录/报告、改设置；历史数据不受影响。
+- **首管理员**：凭 `ADMIN_SETUP_CODE` 激活码产生（见上），之后不再有"系统无管理员则任何人可写"的漏洞。
+- **管理后台**：`pages/admin/admin` 页（仅 admin 可见），含用户列表、改角色、停用/启用，所有变更写入 `roleChanges` 审计集合。
+- 详见 [PERMISSION_DESIGN.md](./PERMISSION_DESIGN.md) 与 [DATABASE_SCHEMA.md](./DATABASE_SCHEMA.md)。
 
 ## 数据库设计
 
@@ -177,12 +213,12 @@ MIT
 
 ## 如何把自己设为管理员（admin）
 
-出于安全考虑，`role` 字段不允许通过小程序端自己修改（`login` 云函数的更新白名单里特意没放这个字段，否则任何人都能把自己改成 admin，等于没做权限控制）。设置方法：
+系统初始没有任何管理员。`role` 字段不允许通过小程序端自己修改（防止任何人把自己改成 admin），也不建议再去云开发控制台手改数据库。正确的做法是用**激活码**：
 
-1. 用你自己的账号在小程序里正常登录一次、并在相机页"设置"面板里填一下姓名（这一步会在 `users` 表里创建你的用户记录，默认 `role: 'sales'`）。
-2. 打开微信开发者工具 → 云开发控制台 → 数据库 → `users` 集合，找到 `_openid` 是你自己的那条记录（可以用姓名或手机号定位）。
-3. 把这条记录的 `role` 字段手动改成 `"admin"`，保存。
-4. 重新打开一次小程序（触发重新登录），"巡检记录"页就会多出"按业务员筛选"的入口，此时你能看到全部业务员的记录；其他没被设为 `admin`/`manager` 的账号还是只能看自己的。
+1. 部署时给 `settings` 云函数配环境变量 `ADMIN_SETUP_CODE`（见上方「步骤 5. 激活管理员」）。
+2. 用你自己的微信在小程序里登录一次，打开「分析设置」页，输入激活码即可把自己升为 `admin`。
+
+成为 admin 后，就能在「用户与权限管理」页里给团队成员分配 `sales` / `manager` / `admin` 角色，或停用离职账号。详见 [PERMISSION_DESIGN.md](./PERMISSION_DESIGN.md)。
 
 ## 本次新增：管理者视角（按业务员查看/筛选）
 
@@ -201,7 +237,7 @@ MIT
 - 🟡 报告页轮询超时后给出提示，而不是静默停止。
 - 🟡 `DATABASE_SCHEMA.md` 中 `aiReport` 字段结构改为与 `analyzeImage` 云函数实际输出保持一致。
 
-> 模型切换说明：当前 `analyzeImage` 默认走 `openai`（GPT-4o）分支，`qwen` 分支已预留并支持多图；后续切到通义千问 qwen3.7-plus 时，只需改 `CURRENT_MODEL` 并核对 `AI_CONFIG.qwen` 里的 `model` 名称和请求体格式（不同千问模型的多模态接口字段可能有差异，接入前建议对照官方文档核实一次），主流程不需要改动。
+> 模型切换说明：当前 `analyzeImage` 默认走 `qwen`（**Qwen-VL-Plus**）分支，Prompt 已抽离到同目录 `prompt.js`、优化建议见 `PROMPT_GUIDE.md`。`openai`（GPT-4o）分支作为备用通道保留，两者共用同一套"多图合并、JSON 解析、字段校验"主流程，切回只需把 `CURRENT_MODEL` 改成 `'openai'`，无需改其他代码。不同模型的 API 请求体结构差异（尤其是通义千问的多模态接口）已经封装在 `callQwen` / `callOpenAI` 里，互不干扰。
 
 ## 相关文档
 

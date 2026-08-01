@@ -1,0 +1,53 @@
+<!--pages/admin/admin.wxml-->
+<view class="admin-page">
+  <view class="loading-state" wx:if="{{loading}}">
+    <text>加载中...</text>
+  </view>
+
+  <block wx:if="{{!loading}}">
+    <view class="page-tip">
+      <text>仅管理员可见。在这里分配「业务员 / 管理者 / 管理员」角色，或停用离职员工账号。所有变更都会记入审计日志。</text>
+    </view>
+
+    <view class="empty-state" wx:if="{{users.length === 0}}">
+      <text>还没有用户</text>
+    </view>
+
+    <view class="user-card" wx:for="{{users}}" wx:key="_id">
+      <view class="user-head">
+        <text class="user-name">{{item.name || '未命名'}}</text>
+        <text class="user-openid">{{item.openidMasked}}</text>
+      </view>
+
+      <view class="user-meta">
+        <text class="meta-item" wx:if="{{item.department}}">部门：{{item.department}}</text>
+        <text class="meta-item" wx:if="{{item.phone}}">电话：{{item.phone}}</text>
+        <text class="meta-item" wx:if="{{!item.department && !item.phone}}">暂无更多信息</text>
+      </view>
+
+      <view class="user-tags">
+        <text class="tag tag-role role-{{item.role}}">{{item.roleLabel}}</text>
+        <text class="tag {{item.disabled ? 'status-disabled' : 'status-active'}}">
+          {{item.disabled ? '已停用' : '正常'}}
+        </text>
+      </view>
+
+      <view class="user-actions">
+        <button
+          class="btn-outline act-btn"
+          size="mini"
+          data-id="{{item._id}}"
+          data-role="{{item.role}}"
+          bindtap="changeRole"
+        >改角色</button>
+        <button
+          class="btn-outline act-btn {{item.disabled ? 'btn-enable' : 'btn-disable'}}"
+          size="mini"
+          data-id="{{item._id}}"
+          data-disabled="{{item.disabled}}"
+          bindtap="toggleDisabled"
+        >{{item.disabled ? '启用' : '停用'}}</button>
+      </view>
+    </view>
+  </block>
+</view>

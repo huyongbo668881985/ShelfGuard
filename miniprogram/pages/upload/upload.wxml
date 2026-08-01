@@ -60,7 +60,7 @@
   </view>
 
   <!-- 进度区域 -->
-  <view class="progress-section" wx:if="{{status !== 'ready' && status !== 'success' && status !== 'error'}}">
+  <view class="progress-section" wx:if="{{status !== 'ready' && status !== 'success' && status !== 'error' && status !== 'submitted'}}">
     <!-- 压缩进度 -->
     <view class="progress-item" wx:if="{{status === 'compressing'}}">
       <view class="progress-header">
@@ -94,10 +94,21 @@
     </view>
   </view>
 
-  <!-- 成功状态 -->
+  <!-- 成功状态（即时分析模式：AI 已出报告，马上跳报告页） -->
   <view class="success-section" wx:if="{{status === 'success'}}">
     <text class="success-icon">✓</text>
     <text class="success-text">上传成功！即将跳转到报告页...</text>
+  </view>
+
+  <!-- 已提交状态（集中分析模式：提交即完成，不用原地等 AI） -->
+  <view class="submitted-section" wx:if="{{status === 'submitted'}}">
+    <text class="submitted-icon">✓</text>
+    <text class="submitted-title">已提交，照片已入队</text>
+    <text class="submitted-hint">AI 分析将在每天 {{analyzeTime}} 集中进行，稍后可在「历史」中查看报告</text>
+    <view class="submitted-actions">
+      <button class="btn-secondary" bindtap="viewReport">查看记录</button>
+      <button class="btn-primary" bindtap="continueVisit">继续拜访下一家</button>
+    </view>
   </view>
 
   <!-- 错误状态 -->
@@ -106,8 +117,8 @@
     <text class="error-text">{{errorMsg || '上传失败'}}</text>
   </view>
 
-  <!-- 操作按钮 -->
-  <view class="actions">
+  <!-- 操作按钮：集中分析模式下提交后由上面的"已提交"区提供按钮，这里整体隐藏 -->
+  <view class="actions" wx:if="{{status !== 'submitted'}}">
     <button
       class="btn-secondary"
       bindtap="goBack"

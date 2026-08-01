@@ -9,12 +9,16 @@
     <!-- 状态栏 -->
     <view class="status-bar status-{{detail.status}}">
       <text class="status-icon" wx:if="{{detail.status === 'analyzed'}}">✓</text>
-      <text class="status-icon" wx:elif="{{detail.status === 'uploaded'}}">⏳</text>
+      <text class="status-icon" wx:elif="{{detail.status === 'pending'}}">⏳</text>
+      <text class="status-icon" wx:elif="{{detail.status === 'analyzing'}}">🔄</text>
       <text class="status-icon" wx:elif="{{detail.status === 'analyze_failed'}}">!</text>
+      <text class="status-icon" wx:elif="{{detail.status === 'uploaded'}}">⏳</text>
       <text class="status-text">
         <block wx:if="{{detail.status === 'analyzed'}}">分析完成</block>
-        <block wx:elif="{{detail.status === 'uploaded'}}">AI 分析中...</block>
+        <block wx:elif="{{detail.status === 'pending'}}">排队中，等待集中分析</block>
+        <block wx:elif="{{detail.status === 'analyzing'}}">AI 分析中...</block>
         <block wx:elif="{{detail.status === 'analyze_failed'}}">分析失败</block>
+        <block wx:elif="{{detail.status === 'uploaded'}}">AI 分析中...</block>
         <block wx:else>已上传</block>
       </text>
     </view>
@@ -198,11 +202,17 @@
       </view>
     </block>
 
-    <!-- AI 分析中提示 -->
-    <view class="card analyzing-card" wx:if="{{detail.status === 'uploaded' && !detail.aiReport}}">
+    <!-- AI 分析中 / 排队中提示 -->
+    <view class="card analyzing-card" wx:if="{{!detail.aiReport && (detail.status === 'pending' || detail.status === 'uploaded' || detail.status === 'analyzing')}}">
       <text class="analyzing-icon">🔍</text>
-      <text class="analyzing-text">AI 正在分析陈列情况</text>
-      <text class="analyzing-hint">请稍候，通常 10-30 秒完成</text>
+      <text class="analyzing-text">
+        <block wx:if="{{detail.status === 'pending'}}">已加入分析队列</block>
+        <block wx:else>AI 正在分析陈列情况</block>
+      </text>
+      <text class="analyzing-hint">
+        <block wx:if="{{detail.status === 'pending'}}">将在每天 {{analyzeTime}} 集中分析，可先返回继续拜访</block>
+        <block wx:else>请稍候，通常 10-30 秒完成</block>
+      </text>
       <button class="btn-secondary refresh-btn" bindtap="refresh">刷新</button>
     </view>
 

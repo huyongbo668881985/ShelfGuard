@@ -77,12 +77,13 @@
 
       <!-- 内容区 -->
       <view class="item-content">
-        <view class="item-header">
-          <text class="item-title">{{item.storeName || item.taskName || '未命名'}}</text>
-          <view class="item-score" wx:if="{{item.aiReport && item.aiReport.score}}" style="background: {{item.scoreColor}}">
-            <text>{{item.aiReport.score}}</text>
-          </view>
+      <view class="item-header">
+        <text class="item-title">{{item.storeName || item.taskName || '未命名'}}</text>
+        <view class="item-status status-{{item.status}}" wx:if="{{item.statusText}}">{{item.statusText}}</view>
+        <view class="item-score" wx:if="{{item.aiReport && item.aiReport.score}}" style="background: {{item.scoreColor}}">
+          <text>{{item.aiReport.score}}</text>
         </view>
+      </view>
         
         <text class="item-summary text-ellipsis" wx:if="{{item.aiReport && item.aiReport.summary}}">
           {{item.aiReport.summary}}

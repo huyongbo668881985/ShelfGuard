@@ -39,6 +39,9 @@ App({
     userInfo: null,
     openid: null,
     isLoggedIn: false,
+    // 当前用户的角色与停用状态（登录后由 login 云函数返回；权限边界以服务端为准）
+    userRole: 'sales',
+    userDisabled: false,
     
     // 当前巡检任务
     currentTask: {
@@ -50,12 +53,22 @@ App({
     // 客户选择器（camera 页 -> customers 页选择模式 -> 选完返回）用来中转数据的字段，
     // 用完即清空，不要指望它长期存值
     selectedCustomer: null,
-    
+
+    // 「继续拜访下一家」通信标记：upload 页提交后点了继续，回相机页 onShow 读它并清空
+    startNextVisit: false,
+
+    // 分析模式/集中分析时间缓存（upload 页首屏先用它避免闪烁，由 settings 云函数刷新）
+    // analyzeMode: 'batch' 每日集中分析（默认） | 'instant' 提交即分析
+    systemConfig: {
+      analyzeMode: 'batch',
+      analyzeTime: '21:00'
+    },
+
     // 全局配置
     config: {
       maxPhotosPerInspection: 9,  // 每次巡检最多照片数
       compressTargetSize: 700,    // 压缩目标大小 KB
-      aiModel: 'openai'           // AI 模型选择
+      aiModel: 'qwen'             // AI 模型（实际以云函数 analyzeImage 的 CURRENT_MODEL 为准）
     }
   },
 
@@ -73,6 +86,9 @@ App({
       // 如果用户信息存在，更新全局状态
       if (result.userInfo) {
         this.globalData.userInfo = result.userInfo
+        // 角色与停用状态供前端判断入口（真正的鉴权在服务端）
+        this.globalData.userRole = result.userInfo.role || 'sales'
+        this.globalData.userDisabled = !!result.userInfo.disabled
         // 同步业务员信息到当前任务
         if (result.userInfo.name) {
           this.globalData.currentTask.userName = result.userInfo.name

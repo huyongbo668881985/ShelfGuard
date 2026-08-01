@@ -1,0 +1,9 @@
+{
+  "name": "settings",
+  "version": "1.0.0",
+  "description": "全局系统配置读写（分析模式、集中分析时间、API Key）",
+  "main": "index.js",
+  "dependencies": {
+    "wx-server-sdk": "~2.6.3"
+  }
+}

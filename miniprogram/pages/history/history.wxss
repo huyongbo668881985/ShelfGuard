@@ -198,6 +198,27 @@
   flex-shrink: 0;
 }
 
+/* 列表项状态标记：待分析 / 分析中 / 分析失败 */
+.item-status {
+  flex-shrink: 0;
+  font-size: 22rpx;
+  line-height: 1;
+  padding: 8rpx 14rpx;
+  border-radius: 20rpx;
+  background: #e8f0fe;
+  color: #1a73e8;
+}
+
+.item-status.status-analyzing {
+  background: #fff3e0;
+  color: #e65100;
+}
+
+.item-status.status-analyze_failed {
+  background: #fdecea;
+  color: #d32f2f;
+}
+
 .item-summary {
   font-size: 26rpx;
   color: #666;

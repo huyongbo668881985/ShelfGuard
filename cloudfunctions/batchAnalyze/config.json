@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "openapi": []
+  },
+  "triggers": [
+    {
+      "name": "batchAnalyzeTimer",
+      "type": "timer",
+      "config": "0 */2 * * * * *"
+    }
+  ]
+}

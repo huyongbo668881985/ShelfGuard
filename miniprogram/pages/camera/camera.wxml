@@ -178,6 +178,15 @@
           <text class="setting-arrow">›</text>
         </view>
       </view>
+
+      <!-- 分析设置入口：集中分析时间、API Key、待分析队列 -->
+      <view class="setting-item">
+        <text class="setting-label">分析设置</text>
+        <view class="setting-value" bindtap="goToAnalyzeSettings">
+          <text>集中分析时间 / API Key</text>
+          <text class="setting-arrow">›</text>
+        </view>
+      </view>
     </scroll-view>
   </view>
 
