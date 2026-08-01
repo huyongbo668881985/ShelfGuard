@@ -61,24 +61,27 @@
       </cover-view>
     </camera>
 
-    <!-- 相机控制栏：这部分本来就在 camera 标签外面、走的是正常文档流（不是
-         absolute 悬浮盖在相机上面），不受原生组件遮挡问题影响，不用改 -->
-    <view class="camera-controls">
-      <view class="control-btn" bindtap="switchFlash">
-        <text class="control-icon">{{flashMode === 'on' ? '⚡️' : flashMode === 'off' ? '🔦' : '⚡️'}}</text>
-        <text class="control-label">{{flashMode === 'on' ? '开' : flashMode === 'off' ? '关' : '自动'}}</text>
-      </view>
+  </view>
 
-      <view class="shutter-btn" bindtap="takePhoto">
-        <view class="shutter-inner"></view>
-      </view>
+  <!-- 相机控制栏：从 camera-wrapper 里移出来，作为 camera-page 的直接子节点。
+       原因：下面把 .camera 改成 position:absolute 绝对填充预览区，若控制栏还
+       留在 wrapper 内会和相机原生层重叠被遮挡；移到外层正常文档流就稳定可见。 -->
+  <view class="camera-controls" wx:if="{{!showPreview && !showSettings}}">
+    <view class="control-btn" bindtap="switchFlash">
+      <text class="control-icon">{{flashMode === 'on' ? '⚡️' : flashMode === 'off' ? '🔦' : '⚡️'}}</text>
+      <text class="control-label">{{flashMode === 'on' ? '开' : flashMode === 'off' ? '关' : '自动'}}</text>
+    </view>
 
-      <view class="control-btn" bindtap="switchCamera">
-        <text class="control-icon">🔄</text>
-        <text class="control-label">翻转</text>
-      </view>
+    <view class="shutter-btn" bindtap="takePhoto">
+      <view class="shutter-inner"></view>
+    </view>
+
+    <view class="control-btn" bindtap="switchCamera">
+      <text class="control-icon">🔄</text>
+      <text class="control-label">翻转</text>
     </view>
   </view>
+
 
   <!-- 照片预览区域 -->
   <view class="preview-wrapper" wx:if="{{showPreview}}">
@@ -110,41 +113,43 @@
       <text class="settings-close" bindtap="closeSettings">✕</text>
     </view>
 
-    <scroll-view class="settings-content" scroll-y>
+    <scroll-view class="settings-content" scroll-y="true">
       <!-- 任务名称 -->
       <view class="setting-item">
         <text class="setting-label">任务名称</text>
-        <input
+        <textarea
           class="setting-input"
+          style="color: #1a1a2e; background: #fff; height: 80rpx;"
           placeholder="请输入任务名称"
+          placeholder-class="setting-ph"
+          placeholder-style="color: #999;"
           value="{{taskName}}"
           bindinput="onTaskNameInput"
-        />
+          adjust-position="{{false}}"
+        ></textarea>
       </view>
 
-      <!-- 门店名称 -->
+      <!-- 门店：必须从客户库选择，不允许手输 -->
       <view class="setting-item">
-        <view class="setting-label-row">
-          <text class="setting-label">门店名称</text>
-          <text class="choose-customer-btn" bindtap="chooseCustomer">📍从客户库选择</text>
+        <text class="setting-label">门店</text>
+        <view class="select-store" bindtap="chooseCustomer">
+          <text class="select-store-text {{storeName ? '' : 'placeholder'}}">{{storeName || '选择门店'}}</text>
+          <text class="setting-arrow">›</text>
         </view>
-        <input
-          class="setting-input"
-          placeholder="请输入门店名称，或点上面从客户库选"
-          value="{{storeName}}"
-          bindinput="onStoreNameInput"
-        />
       </view>
 
       <!-- 业务员姓名 -->
       <view class="setting-item">
         <text class="setting-label">业务员姓名</text>
-        <input
+        <textarea
           class="setting-input"
+          style="color: #1a1a2e; background: #fff; height: 80rpx;"
           placeholder="请输入姓名"
+          placeholder-class="setting-ph"
+          placeholder-style="color: #999;"
           value="{{userName}}"
           bindinput="onUserNameInput"
-        />
+        ></textarea>
       </view>
 
       <!-- 水印位置 -->

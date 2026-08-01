@@ -53,6 +53,14 @@ page {
   -webkit-font-smoothing: antialiased;
 }
 
+/* 全局兜底：强制所有 input/textarea 文字深色、白底，避免真机上颜色继承异常导致看不见
+   （原生输入组件部分机型/基础库不继承 page 文字色，必须显式声明） */
+input,
+textarea {
+  color: #1a1a2e !important;
+  background-color: #fff !important;
+}
+
 /* 通用容器 */
 .container {
   padding: var(--spacing-lg);

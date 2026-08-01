@@ -23,6 +23,7 @@
         </view>
 
         <text class="card-address" wx:if="{{item.address}}">{{item.address}}</text>
+        <text class="card-address" wx:elif="{{item.location && item.location.address}}">{{item.location.address}}</text>
         <text class="card-contact" wx:if="{{item.contactName || item.contactPhone}}">
           {{item.contactName}}{{item.contactName && item.contactPhone ? '  ' : ''}}{{item.contactPhone}}
         </text>
@@ -62,43 +63,50 @@
     <scroll-view class="editor-content" scroll-y>
       <view class="form-item">
         <text class="form-label">门店名称 *</text>
-        <input
+        <textarea
           class="form-input"
+          style="color: #1a1a2e; background: #fff; height: 80rpx;"
           placeholder="如：XX超市XX店"
+          placeholder-style="color: #999;"
           value="{{form.storeName}}"
           bindinput="onStoreNameInput"
-        />
+        ></textarea>
       </view>
 
       <view class="form-item">
         <text class="form-label">地址（可选）</text>
-        <input
+        <textarea
           class="form-input"
+          style="color: #1a1a2e; background: #fff; height: 80rpx;"
           placeholder="如：XX路XX号"
+          placeholder-style="color: #999;"
           value="{{form.address}}"
           bindinput="onAddressInput"
-        />
+        ></textarea>
       </view>
 
       <view class="form-item">
         <text class="form-label">联系人（可选）</text>
-        <input
+        <textarea
           class="form-input"
+          style="color: #1a1a2e; background: #fff; height: 80rpx;"
           placeholder="如：王经理"
+          placeholder-style="color: #999;"
           value="{{form.contactName}}"
           bindinput="onContactNameInput"
-        />
+        ></textarea>
       </view>
 
       <view class="form-item">
         <text class="form-label">联系电话（可选）</text>
-        <input
+        <textarea
           class="form-input"
-          type="number"
+          style="color: #1a1a2e; background: #fff; height: 80rpx;"
           placeholder="如：13800138000"
+          placeholder-style="color: #999;"
           value="{{form.contactPhone}}"
           bindinput="onContactPhoneInput"
-        />
+        ></textarea>
       </view>
 
       <view class="form-item">
@@ -110,7 +118,7 @@
           </view>
         </view>
         <view class="location-row" wx:else>
-          <text class="location-value">📍 {{form.location.latitude}}, {{form.location.longitude}}</text>
+          <text class="location-value">📍 {{form.location.address || (form.location.latitude + ', ' + form.location.longitude)}}</text>
           <text class="location-clear" bindtap="onClearLocation">清除</text>
         </view>
       </view>

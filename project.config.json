@@ -40,9 +40,9 @@
     "swc": false,
     "disableSWC": true
   },
-  "appid": "wx8a8c36f07351bd3c",
+  "appid": "wx028c7a6862cffa1c",
   "projectname": "ShelfGuard",
-  "libVersion": "3.3.4",
+  "libVersion": "3.17.0",
   "cloudfunctionTemplateRoot": "",
   "condition": {
     "search": {

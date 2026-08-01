@@ -9,11 +9,21 @@ function getLocation() {
   return new Promise((resolve, reject) => {
     wx.getLocation({
       type: 'gcj02',
-      success: res => {
-        resolve({
+      success: async res => {
+        const location = {
           latitude: res.latitude,
           longitude: res.longitude
-        })
+        }
+        // 逆地理编码：把坐标转成路名/地标，方便水印直接显示可读地址
+        try {
+          const geo = await reverseGeocode(res.latitude, res.longitude)
+          location.address = geo.address
+          location.geoReason = geo.reason
+        } catch (e) {
+          location.address = `${res.latitude.toFixed(6)}, ${res.longitude.toFixed(6)}`
+          location.geoReason = 'CALL_FAIL'
+        }
+        resolve(location)
       },
       fail: err => {
         // 某些失败场景 errMsg 可能不存在，先判空避免 TypeError 崩溃
@@ -45,16 +55,29 @@ function showLocationAuth() {
 
 /**
  * 逆地理编码（腾讯地图）
- * 需要在云函数中调用，避免暴露 API Key
+ * 注意：微信小程序没有内置的 wx.reverseGeocoder 这样的原生 API，
+ * 必须走腾讯地图（调用 geocode 云函数，避免在前端暴露 Key、也避免配置域名白名单）。
  * @param {number} lat
  * @param {number} lng
  * @returns {Promise<string>} 地址文本
  */
 function reverseGeocode(lat, lng) {
   return new Promise((resolve) => {
-    // 使用微信内置的逆地理编码能力（需配置腾讯地图 Key）
-    // 这里简化处理，实际项目中建议通过云函数调用
-    resolve(`${lat.toFixed(6)}, ${lng.toFixed(6)}`)
+    wx.cloud.callFunction({
+      name: 'geocode',
+      data: { lat, lng },
+      success: (res) => {
+        const r = (res && res.result) ? res.result : {}
+        resolve({
+          address: r.address || `${lat.toFixed(6)}, ${lng.toFixed(6)}`,
+          reason: r.reason || (r.success ? '' : 'GEOCODE_FAIL')
+        })
+      },
+      fail: (err) => resolve({
+        address: `${lat.toFixed(6)}, ${lng.toFixed(6)}`,
+        reason: `CALL_FAIL:${err && err.errMsg ? err.errMsg : 'unknown'}`
+      })
+    })
   })
 }
 

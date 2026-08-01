@@ -1,0 +1,10 @@
+{
+  "name": "geocode",
+  "version": "1.0.0",
+  "description": "逆地理编码云函数",
+  "main": "index.js",
+  "dependencies": {
+    "wx-server-sdk": "~2.6.3",
+    "axios": "^1.6.0"
+  }
+}

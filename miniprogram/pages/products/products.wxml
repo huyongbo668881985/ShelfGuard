@@ -70,32 +70,38 @@
     <scroll-view class="editor-content" scroll-y>
       <view class="form-item">
         <text class="form-label">品牌名称 *</text>
-        <input
+        <textarea
           class="form-input"
+          style="color: #1a1a2e; background: #fff; height: 80rpx;"
           placeholder="如：XX酒业"
+          placeholder-style="color: #999;"
           value="{{form.brandName}}"
           bindinput="onBrandNameInput"
-        />
+        ></textarea>
       </view>
 
       <view class="form-item">
         <text class="form-label">产品线 / 系列（可选）</text>
-        <input
+        <textarea
           class="form-input"
+          style="color: #1a1a2e; background: #fff; height: 80rpx;"
           placeholder="如：经典系列"
+          placeholder-style="color: #999;"
           value="{{form.productLine}}"
           bindinput="onProductLineInput"
-        />
+        ></textarea>
       </view>
 
       <view class="form-item">
         <text class="form-label">别名（用中文逗号分隔，可选）</text>
-        <input
+        <textarea
           class="form-input"
+          style="color: #1a1a2e; background: #fff; height: 80rpx;"
           placeholder="如：简称1，简称2"
+          placeholder-style="color: #999;"
           value="{{form.aliasesText}}"
           bindinput="onAliasesInput"
-        />
+        ></textarea>
         <text class="form-tip">AI 识别时可能用不同名字描述同一产品，填写别名有助于统计时正确归类</text>
       </view>
 

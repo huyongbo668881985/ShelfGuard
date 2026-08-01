@@ -20,7 +20,7 @@ Component({
         color: '#ffffff',    // 文字颜色
         bgColor: 'rgba(0, 0, 0, 0.4)', // 背景色
         opacity: 1,          // 整体透明度 0-1
-        fontSize: 24,        // 基础字号（相对于 750 设计稿）
+        fontSize: 16,        // 基础字号（相对于 750 设计稿，已调小以免水印过大）
         showLogo: true       // 是否显示 LOGO
       }
     }

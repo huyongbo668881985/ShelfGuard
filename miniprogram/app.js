@@ -33,7 +33,7 @@ App({
 
   globalData: {
     // 云开发环境 ID（请替换为实际环境 ID）
-    cloudEnv: 'your-env-id',
+    cloudEnv: 'cloud1-d8gop997sa25927c4',
     
     // 用户信息
     userInfo: null,

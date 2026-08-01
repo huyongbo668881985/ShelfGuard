@@ -31,9 +31,6 @@
     ]
   },
   "permission": {
-    "scope.camera": {
-      "desc": "需要使用相机拍摄货架陈列照片"
-    },
     "scope.userLocation": {
       "desc": "需要获取您的位置用于记录巡检门店地址"
     }

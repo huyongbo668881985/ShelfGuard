@@ -16,8 +16,15 @@
 }
 
 .camera {
-  flex: 1;
+  /* 真机上原生 camera 组件用 flex:1 经常算不出高度导致黑屏，
+     改用绝对定位填满预览区，高度由父级 camera-wrapper（flex:1）确定，稳定可靠 */
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
   width: 100%;
+  height: 100%;
 }
 
 /* 实时水印预览 */
@@ -328,10 +335,35 @@
   border-radius: 20rpx;
 }
 
-.setting-input {
+/* 门店选择按钮（替代原手输框，强制从客户库选） */
+.select-store {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   font-size: 30rpx;
+  color: #333;
   padding: 16rpx 0;
-  border-bottom: 2rpx solid #eee;
+}
+
+.select-store-text.placeholder {
+  color: #999;
+}
+
+.setting-input {
+  /* 显式深色文字：杜绝某些机型上 input 继承到异常颜色（如白字白底）导致看不见 */
+  color: var(--color-text-primary);
+  font-size: 32rpx;
+  /* 明确白底 + 可见边框，既避免“字极小看不清”，也让人一眼看出这是输入框 */
+  background-color: #ffffff;
+  padding: 18rpx 20rpx;
+  border: 2rpx solid var(--color-border);
+  border-radius: var(--radius-md);
+  margin-top: 8rpx;
+}
+
+/* 占位提示文字颜色，确保和输入文字区分且清晰可见 */
+.setting-ph {
+  color: var(--color-text-hint);
 }
 
 .setting-value {

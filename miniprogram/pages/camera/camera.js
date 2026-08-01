@@ -5,6 +5,9 @@ const app = getApp()
 const { getLocation: fetchLocation } = require('../../utils/location')
 const { validateInspection } = require('../../utils/validator')
 
+// 任务名称默认值（用户可随时更改，改动会本机记忆）
+const TASK_NAME_DEFAULT = '永丰特8：常规拜访'
+
 Page({
   data: {
     // 相机配置
@@ -26,7 +29,7 @@ Page({
       color: '#ffffff',
       bgColor: 'rgba(0, 0, 0, 0.4)',
       opacity: 1,
-      fontSize: 24,
+      fontSize: 16,
       showLogo: true
     },
 
@@ -50,6 +53,13 @@ Page({
     this.loadUserInfo(options)
     // 获取位置
     this.getLocation()
+
+    // 登录是异步的，camera 作为首页在 onLoad 时可能还没拿到用户信息
+    // （业务员默认姓名存在云端 users 集合）。若此刻还没有姓名，等登录完成
+    // 后再补一次 loadUserInfo，确保业务员姓名能默认带出来。
+    if (!app.globalData.isLoggedIn || !(app.globalData.userInfo && app.globalData.userInfo.name)) {
+      app.loginCallback = () => this.loadUserInfo(options)
+    }
   },
 
   onShow() {
@@ -75,11 +85,13 @@ Page({
   loadUserInfo(options) {
     const globalData = app.globalData
     const userInfo = globalData.userInfo || {}
+    // 任务名称：上次填过的优先（本机记忆），否则用固定默认值，用户可随时更改
+    const lastTaskName = wx.getStorageSync('shelfguard_lastTaskName') || ''
 
     this.setData({
       userName: options.userName || userInfo.name || '',
       storeName: options.storeName || '',
-      taskName: options.taskName || ''
+      taskName: options.taskName || lastTaskName || TASK_NAME_DEFAULT
     })
   },
 
@@ -89,9 +101,22 @@ Page({
       const location = await fetchLocation()
       this.setData({
         location,
-        // 简化处理：直接显示坐标，逆地理编码见 ROADMAP P0-1
-        address: `${location.latitude.toFixed(6)}, ${location.longitude.toFixed(6)}`
+        // 优先显示逆地理编码得到的路名/地标，失败则退回坐标
+        address: location.address || `${location.latitude.toFixed(6)}, ${location.longitude.toFixed(6)}`
       })
+      // 临时诊断：逆地理编码失败时把原因弹到手机上，方便定位问题（确认修复后可删）
+      if (location.geoReason) {
+        const reasonText = {
+          NO_KEY: '云函数未配置地图Key',
+          API_ERROR: '地图服务返回错误',
+          DEP_OR_API_ERROR: '云函数依赖异常',
+          CALL_FAIL: '逆地理编码调用失败',
+          GEOCODE_FAIL: '逆地理编码失败'
+        }
+        const msg = reasonText[location.geoReason.split('(')[0]] || '逆地理编码未生效'
+        console.warn('[逆地理编码诊断]', location.geoReason)
+        wx.showToast({ title: `定位地址: ${msg}`, icon: 'none', duration: 2500 })
+      }
     } catch (err) {
       console.error('获取位置失败:', err)
       wx.showToast({ title: '位置获取失败', icon: 'none' })
@@ -120,16 +145,23 @@ Page({
 
   // 关闭设置面板
   closeSettings() {
+    // 业务员姓名变更时回写云端（按 openid 绑定），下次登录即默认带出；
+    // 不同微信登录 = 不同业务员，自然显示各自姓名。
+    const newName = (this.data.userName || '').trim()
+    const oldName = (app.globalData.userInfo && app.globalData.userInfo.name) || ''
+    if (newName && newName !== oldName) {
+      app.updateUserInfo({ name: newName }).then((ok) => {
+        if (ok) wx.showToast({ title: '业务员姓名已保存', icon: 'none' })
+      })
+    }
     this.setData({ showSettings: false })
   },
 
   // 输入处理
   onTaskNameInput(e) {
     this.setData({ taskName: e.detail.value })
-  },
-
-  onStoreNameInput(e) {
-    this.setData({ storeName: e.detail.value })
+    // 记住上次填的任务名，下次进入默认带出（可更改）
+    wx.setStorageSync('shelfguard_lastTaskName', e.detail.value)
   },
 
   onUserNameInput(e) {
