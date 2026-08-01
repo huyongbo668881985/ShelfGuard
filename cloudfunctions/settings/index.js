@@ -249,25 +249,49 @@ async function handleSave(openid, input) {
 }
 
 // ============================================================
-// 把失败的记录重新排进队列（仅 admin）
+// 把失败/卡死的记录重新排进队列（仅 admin）
 // ============================================================
+/**
+ * 这个动作同时处理两类"跑不动了"的记录，用户视角就是一个「重新分析」按钮：
+ *
+ * 1. status = analyze_failed —— 正常失败，AI 报了错并写回了状态
+ * 2. status = analyzing 且卡了超过 3 分钟 —— 云函数被 60 秒硬上限杀掉，
+ *    进程直接终止，来不及写任何终态，记录就永远停在"分析中"。
+ *    这类记录光靠 retryFailed 的老逻辑（只查 analyze_failed）是捞不出来的，
+ *    用户界面上会看到"失败 0 条"却有一堆转圈的记录，只能干等定时器回收。
+ *
+ * 两类都要把 analyzeAttempts 清零，否则重排回队列后一旦再失败一次，
+ * 就会因为累计次数超限被直接判死，等于只给了一次机会。
+ */
+const STUCK_THRESHOLD_MS = 3 * 60 * 1000
+
 async function handleRetryFailed(openid) {
   if (!(await isAdmin(openid))) {
     return { success: false, error: '只有管理员可以重排失败记录' }
   }
 
-  // updateMany 在云函数里可以直接用 where().update()
-  const res = await db.collection('inspections')
-    .where({ status: 'analyze_failed' })
-    .update({
-      data: {
-        status: 'pending',
-        analyzeAttempts: 0,   // 重试次数清零，否则一进队列就被判超限
-        analyzeError: ''
-      }
-    })
+  const resetData = {
+    status: 'pending',
+    analyzeAttempts: 0,   // 重试次数清零，否则一进队列就被判超限
+    analyzeError: ''
+  }
 
-  return { success: true, updated: res.stats.updated }
+  // updateMany 在云函数里可以直接用 where().update()
+  const failedRes = await db.collection('inspections')
+    .where({ status: 'analyze_failed' })
+    .update({ data: resetData })
+
+  const stuckRes = await db.collection('inspections')
+    .where({
+      status: 'analyzing',
+      analyzeStartedAt: _.lt(new Date(Date.now() - STUCK_THRESHOLD_MS))
+    })
+    .update({ data: resetData })
+
+  const failed = failedRes.stats.updated
+  const stuck = stuckRes.stats.updated
+
+  return { success: true, updated: failed + stuck, failed, stuck }
 }
 
 // ============================================================

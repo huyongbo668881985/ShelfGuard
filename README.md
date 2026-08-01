@@ -21,7 +21,7 @@
 - 自动触发 AI 分析
 
 #### 3. AI 分析云函数
-- 支持 OpenAI GPT-4o 和通义千问 VL
+- 通义千问 Qwen3.7-Plus 多模态视觉模型（能直接识图，单一通道）
 - 结构化分析：评分、总结、产品识别、问题、建议
 - 未配置 API Key 时返回模拟报告
 - 分析结果自动保存到数据库
@@ -51,7 +51,7 @@
 - 微信小程序原生开发
 - 微信云开发（CloudBase）
 - Canvas 2D 水印合成
-- AI 视觉模型（GPT-4o / 通义千问VL）
+- AI 视觉模型（通义千问 Qwen3.7-Plus 多模态）
 
 ## 目录结构
 
@@ -112,13 +112,23 @@ ShelfGuard/
 > `submitInspection`：收口巡检记录的创建（服务端鉴权 + 写归属），替代原来小程序端直写 `inspections` 集合。
 > `users`：用户与权限管理（仅 admin 可调），提供用户列表 / 角色调整 / 停用启用。
 
-⚠️ **`batchAnalyze` 部署后必须改超时时间**：默认 20 秒不够。云开发控制台 → 云函数 → `batchAnalyze` → 版本与配置 → 执行超时时间 → 改成 **60 秒**。同时确认它的**定时触发器**已生效（`cloudfunctions/batchAnalyze/config.json` 里配了 `"0 */2 * * * *"`，每 2 分钟唤醒一次）。若触发器没自动创建，手动在 `batchAnalyze` 的「触发器」里加一条：周期 `0 */2 * * * *`。
+⚠️⚠️ **`analyzeImage` 和 `batchAnalyze` 部署后必须把执行超时改成 60 秒** ⚠️⚠️
 
-> 为什么是"每 2 分钟唤醒、每次只处理 2 条"而不是"到点一次性全跑"：微信云函数单次最长 60 秒，一条分析要 15-40 秒，一次跑不完积压的全部记录。靠高频小批量慢慢把队列排空即可，空跑成本可忽略。
+云函数默认超时是 **20 秒**，而一次视觉分析要 30-45 秒。超时后进程被直接杀掉，`try/catch` 都来不及执行，记录会**永远停在"分析中"**——而 DashScope 那边其实已经算完并计了费。所以「API 后台有调用、小程序里却一直转圈」这个现象，基本可以直接确诊为超时没改。
 
-### 4. 配置 AI 视觉 API（使用 Qwen-VL-Plus）
+两个函数都要改：云开发控制台 → 云函数 → 选中函数 → 版本与配置 → 执行超时时间 → **60** → 保存。
 
-识图模型默认已切换到**通义千问 Qwen-VL-Plus**（`cloudfunctions/analyzeImage/index.js` 里 `CURRENT_MODEL = 'qwen'`、`AI_CONFIG.qwen.model = 'qwen-vl-plus'`）。
+> ⚠️ **微信云开发不支持通过 `config.json` 设置超时**——`config.json` 没有 `timeout` 字段，写进去也不会生效。这步**必须手动在控制台 GUI 里改并保存**，不能靠上传代码自动应用。如果你看到「DashScope 后台有调用和计费、小程序却一直转圈 / 没输出」，99% 就是这里没改：进程在 20 秒被硬杀，连报错都来不及写。`analyzeImage` 目录下的 `config.json` 已移除无效的 `timeout` 字段，别再指望它。
+
+同时确认 `batchAnalyze` 的**定时触发器**已生效（`config.json` 里配了 `"0 */2 * * * *"`，每 2 分钟唤醒一次）。若触发器没自动创建，手动在「触发器」里加一条：周期 `0 */2 * * * *`。
+
+> 为什么是"每 2 分钟唤醒、每次只跑一条"而不是"到点一次性全跑"：微信云函数单次最长 60 秒，一条分析要 30-45 秒，一次也就跑得完一条。靠高频小批量慢慢把队列排空即可，空跑成本可忽略。
+
+> 关于思考模式：`analyzeImage` 给 Qwen3.x 显式传了 `enable_thinking: false` + `thinking_budget: 0`。Qwen3.x 是混合思考模型、**默认开启思考**，不关掉的话耗时翻 2-4 倍（直接顶穿 60 秒）且思考 token 照常计费。这两个参数必须成对传，只设 `thinking_budget` 无效。
+
+### 4. 配置 AI 视觉 API（使用 Qwen3.7-Plus）
+
+识图模型默认已切换到**通义千问 Qwen3.7-Plus**（视觉-语言一体化多模态模型，能直接识图，`cloudfunctions/analyzeImage/index.js` 里 `CURRENT_MODEL = 'qwen'`、`AI_CONFIG.qwen.model = 'qwen3.7-plus'`）。
 
 **API Key 填在哪里（三选一，优先级从高到低）：**
 
@@ -237,7 +247,7 @@ MIT
 - 🟡 报告页轮询超时后给出提示，而不是静默停止。
 - 🟡 `DATABASE_SCHEMA.md` 中 `aiReport` 字段结构改为与 `analyzeImage` 云函数实际输出保持一致。
 
-> 模型切换说明：当前 `analyzeImage` 默认走 `qwen`（**Qwen-VL-Plus**）分支，Prompt 已抽离到同目录 `prompt.js`、优化建议见 `PROMPT_GUIDE.md`。`openai`（GPT-4o）分支作为备用通道保留，两者共用同一套"多图合并、JSON 解析、字段校验"主流程，切回只需把 `CURRENT_MODEL` 改成 `'openai'`，无需改其他代码。不同模型的 API 请求体结构差异（尤其是通义千问的多模态接口）已经封装在 `callQwen` / `callOpenAI` 里，互不干扰。
+> 模型说明：当前 `analyzeImage` 固定走 **Qwen3.7-Plus**（通义千问视觉-语言一体化多模态模型，能直接识图），`CURRENT_MODEL = 'qwen'`。Prompt 已抽离到同目录 `prompt.js`、优化建议见 `PROMPT_GUIDE.md`。原 `openai`（GPT-4o）备用通道已移除，只保留这一个多模态通道。如需更换模型，改 `AI_CONFIG.qwen.model` 即可（注意只能填多模态模型，纯文本的 `qwen-plus` 等不接收图片、会导致分析失败）。
 
 ## 相关文档
 

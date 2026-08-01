@@ -12,17 +12,23 @@
 // 运行机制（重要，改之前先看懂）
 // ============================================================
 // 定时触发器每 2 分钟叫醒这个函数一次（见同目录 config.json），每次醒来做三件事：
-//   1. 看当前时间是否落在设定的"分析窗口"内（默认 21:00 起 3 小时），不在就立刻返回
-//   2. 把卡在 analyzing 超过 10 分钟的僵尸记录捞回 pending（函数超时被杀会留下这种记录）
-//   3. 领取最多 batchSize 条 pending 记录，逐条分析
+//   1. 先把卡在 analyzing 超过 3 分钟的僵尸记录捞回 pending（任何时刻都做，不受窗口限制，否则会卡死）
+//   2. 看当前时间是否落在设定的"分析窗口"内（默认 21:00 起 3 小时），不在窗口就只回收不认领新任务
+//   3. 在窗口内才领取 pending 记录，实际上一轮只跑得完一条（见 SOFT_DEADLINE_MS）
 //
 // 为什么不是"到点了一次性全跑完"：
-// 微信云函数单次执行最长 60 秒，一条照片分析要 15-40 秒，一次最多也就跑得完 1-2 条。
+// 微信云函数单次执行最长 60 秒，一条照片分析要 30-45 秒，一次只跑得完一条。
 // 所以设计成"高频小批量"——靠定时器反复触发慢慢把队列排空，而不是指望一次跑完。
 // 空跑一次只消耗几十毫秒，一天 720 次的成本可以忽略。
 //
-// ⚠️ 部署后必须去云开发控制台把本函数的**超时时间改成 60 秒**（默认 20 秒不够用）：
-//    云开发控制台 → 云函数 → batchAnalyze → 版本与配置 → 执行超时时间 → 60
+// ⚠️⚠️ 部署后必须确认 **analyzeImage 和 batchAnalyze 两个函数的超时都是 60 秒** ⚠️⚠️
+//    config.json 里已经写了 "timeout": 60，但开发者工具不一定会应用，务必去控制台核对：
+//    云开发控制台 → 云函数 → 选中函数 → 版本与配置 → 执行超时时间 → 60 → 保存
+//
+//    默认值是 20 秒，而一次视觉分析要 30-45 秒 —— 函数会在拿到 AI 结果之前就被杀，
+//    进程直接终止，catch 都来不及跑，记录永远停在"分析中"。
+//    最坑的是 DashScope 那边其实已经算完并计了费，所以"后台有调用、前端却一直转圈"
+//    这个现象几乎可以直接确诊为超时没改。
 
 const cloud = require('wx-server-sdk')
 
@@ -41,15 +47,26 @@ const DEFAULT_SETTINGS = {
   analyzeMode: 'batch',   // batch = 每日集中分析；instant = 提交即分析（退回旧流程）
   analyzeTime: '21:00',   // 集中分析开始时间（北京时间 HH:mm）
   windowMinutes: 180,     // 从开始时间起，允许跑多久（分钟）。队列没排空就等明天继续
-  batchSize: 2            // 每次定时触发最多处理几条
+  batchSize: 1            // 每次定时触发最多处理几条，见下方 SOFT_DEADLINE_MS 说明
 }
 
-// 单次执行的软性截止线。云函数硬超时设的是 60 秒，这里留 12 秒余量，
-// 到点就不再领新任务，让已完成的状态能正常写回数据库。
-const SOFT_DEADLINE_MS = 48 * 1000
+// ⚠️ 单次执行的软性截止线：只要已用时超过它，本轮就不再领新任务。
+//
+// 为什么是 8 秒这么短（而不是接近 60 秒的值）：
+// 本函数是**同步等待** analyzeImage 返回的，而一条照片分析要 30-45 秒。
+// 假设截止线设成 48 秒，跑完第一条时已用时 45 秒 —— 45 < 48，于是它会去领第二条，
+// 然后在第二条跑到一半时整个函数被 60 秒硬上限杀掉，第二条就永远卡在 analyzing。
+// 这不是理论问题，是实际踩过的坑。
+//
+// 正确的判断标准是"剩余时间够不够再跑完一条"，而 60 秒的预算本来就只够跑一条，
+// 所以直接把截止线压到 8 秒：等价于"一轮只处理一条"。
+// 队列靠定时器每 2 分钟触发一次慢慢排空，不指望单次跑完。
+const SOFT_DEADLINE_MS = 8 * 1000
 
-// 一条记录卡在 analyzing 超过这个时长，判定为僵尸，捞回 pending 重试
-const STUCK_THRESHOLD_MS = 10 * 60 * 1000
+// 一条记录卡在 analyzing 超过这个时长，判定为僵尸，捞回 pending 重试。
+// 云函数最长活 60 秒，所以超过 3 分钟还停在 analyzing，一定是被硬杀了，
+// 不可能是"还在跑"。阈值不必留太长，越短用户看到自愈越快。
+const STUCK_THRESHOLD_MS = 3 * 60 * 1000
 
 // 同一条记录最多重试几次，超过就标记失败，避免一张坏图无限占用额度
 const MAX_ATTEMPTS = 3
@@ -86,11 +103,23 @@ exports.main = async (event, context) => {
     return { success: true, skipped: true, reason: '当前为即时分析模式，定时任务不处理' }
   }
 
+  // ⚠️ 先回收僵尸记录，且这一步不受时间窗口限制。
+  // 否则窗口外的卡死记录（云函数超时被杀、或那次 analyzeImage 调用异常）
+  // 永远没机会被捞回，会一直停在"分析中"无法自愈。
+  const reclaimed = await reclaimStuckRecords()
+
   if (!isInAnalyzeWindow(settings)) {
+    if (reclaimed > 0) {
+      await recordRun(
+        { processed: 0, succeeded: 0, failed: 0, reclaimed, remaining: await countPending() },
+        'timer'
+      )
+    }
     return {
       success: true,
       skipped: true,
-      reason: `当前不在分析窗口内（${settings.analyzeTime} 起 ${settings.windowMinutes} 分钟）`
+      reclaimed,
+      reason: `当前不在分析窗口内（${settings.analyzeTime} 起 ${settings.windowMinutes} 分钟），已先回收 ${reclaimed} 条卡死记录`
     }
   }
 

@@ -39,7 +39,7 @@
   "status": "string",                 // 状态：pending | analyzing | analyzed | analyze_failed
   "analyzeAttempts": "number",        // 已尝试分析次数（僵尸回收 / 失败重排时用于判断是否超限）
   "analyzeStartedAt": "Date",         // 最近一次开始分析的时间（用于回收超时的僵尸记录）
-  "analyzedModel": "string",          // 实际出报告的模型名（如 qwen-vl-plus），便于追溯
+  "analyzedModel": "string",          // 实际出报告的模型名（如 qwen3.7-plus），便于追溯
   "createdAt": "Date",                // 创建时间（服务器时间）
   
   // === AI 分析结果 ===

@@ -210,7 +210,10 @@ Page({
     if (!this.checkEditable()) return
     if (this.data.running) return
 
-    if (this.data.queue.pending === 0) {
+    // analyzing > 0 时也放行：云函数会在开跑前先回收卡死的记录，
+    // 回收完它们就变成 pending 可以立刻处理。这里若只看 pending 会把用户挡在门外，
+    // 明明界面上有 3 条转圈的记录，却提示"没有待分析的记录"。
+    if (this.data.queue.pending === 0 && this.data.queue.analyzing === 0) {
       wx.showToast({ title: '没有待分析的记录', icon: 'none' })
       return
     }
@@ -239,7 +242,19 @@ Page({
       this.loadSettings()
     } catch (err) {
       wx.hideLoading()
-      wx.showToast({ title: err.message || '触发失败', icon: 'none' })
+      // 一条记录要跑 30-45 秒，客户端等待很容易先一步超时。
+      // 这种情况云端其实还在正常跑，不能让用户以为失败了又反复点，
+      // 那样只会堆积重复触发。提示他过一会儿刷新看结果。
+      const msg = String(err.message || '')
+      if (/timeout|超时/i.test(msg)) {
+        wx.showModal({
+          title: '云端仍在分析',
+          content: '等待响应超时，但云端任务通常还在继续跑。请稍等 1 分钟后下拉刷新查看结果，不要重复点击。',
+          showCancel: false
+        })
+      } else {
+        wx.showToast({ title: msg || '触发失败', icon: 'none' })
+      }
     }
 
     this.setData({ running: false })
@@ -249,15 +264,23 @@ Page({
 
   async onRetryFailed() {
     if (!this.checkEditable()) return
-    if (this.data.queue.failed === 0) {
-      wx.showToast({ title: '没有失败的记录', icon: 'none' })
+
+    // 卡在"分析中"的记录也算需要重排的对象：云函数被超时杀掉时来不及写失败状态，
+    // 这类记录会一直转圈但 failed 计数是 0。只看 failed 会让按钮点不动。
+    const { failed = 0, analyzing = 0 } = this.data.queue
+    if (failed === 0 && analyzing === 0) {
+      wx.showToast({ title: '没有需要重排的记录', icon: 'none' })
       return
     }
 
+    const parts = []
+    if (failed > 0) parts.push(`${failed} 条分析失败`)
+    if (analyzing > 0) parts.push(`${analyzing} 条卡在分析中（超过 3 分钟的）`)
+
     const confirm = await new Promise(resolve => {
       wx.showModal({
-        title: '重新分析失败记录',
-        content: `将把 ${this.data.queue.failed} 条分析失败的记录重新放回待分析队列，下次集中分析时再试一遍。`,
+        title: '重新分析',
+        content: `将把 ${parts.join('、')} 的记录放回待分析队列，重试次数清零。`,
         success: r => resolve(r.confirm),
         fail: () => resolve(false)
       })
@@ -272,7 +295,11 @@ Page({
       if (!res.result || !res.result.success) {
         throw new Error((res.result && res.result.error) || '操作失败')
       }
-      wx.showToast({ title: `已重排 ${res.result.updated} 条`, icon: 'none' })
+      const r = res.result
+      wx.showToast({
+        title: r.updated > 0 ? `已重排 ${r.updated} 条` : '没有符合条件的记录',
+        icon: 'none'
+      })
       this.loadSettings()
     } catch (err) {
       wx.showToast({ title: err.message || '操作失败', icon: 'none' })

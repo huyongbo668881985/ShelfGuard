@@ -36,26 +36,44 @@ const db = cloud.database()
 //
 const AI_CONFIG = {
   qwen: {
-    // DashScope 多模态生成接口（qwen-vl 系列专用，不是通用文本接口）
+    // DashScope 多模态生成接口（qwen-vl 系列 与 Qwen3.7 系列通用，不是通用文本接口）。
+    // 注意：纯文本的 qwen-plus / qwen3.6-plus 不能放这里——它们不接收图片，
+    // 会导致整条分析链路失败。要识图必须选多模态模型：qwen-vl-plus、qwen3-vl-plus、qwen3.7-plus 等。
     apiUrl: 'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
-    model: 'qwen-vl-plus',
+    model: 'qwen3.7-plus',
     apiKey: process.env.DASHSCOPE_API_KEY || ''
-  },
-  openai: {
-    apiUrl: 'https://api.openai.com/v1/chat/completions',
-    model: 'gpt-4o',
-    apiKey: process.env.OPENAI_API_KEY || ''
   }
 }
 
-// 当前启用的模型。改成 'openai' 即可切回 GPT-4o，
-// 主流程（多图合并、JSON 解析、字段校验）两边共用，不需要改动。
+// 当前只走 qwen3.7-plus 这一个多模态通道，不再保留 OpenAI 备用通道。
 const CURRENT_MODEL = 'qwen'
 
 // 采样参数：陈列评分要的是稳定复现，不是创意，所以温度压到很低。
 // 如果发现同一张图多次分析分差还是很大，先看 PROMPT_GUIDE.md 建议 2。
 const TEMPERATURE = 0.1
-const MAX_TOKENS = 4000
+const MAX_TOKENS = 2500
+
+// ============================================================
+// ⚠️ 超时控制（改之前务必看懂，这里踩过坑）
+// ============================================================
+// 微信云函数单次执行**硬上限 60 秒**，到点进程直接被杀，
+// try/catch 和 finally 都不会执行 —— 也就是说记录的 status 会永远停在
+// analyzing，前端一直显示"分析中"，而 DashScope 那边其实已经跑完并计了费。
+//
+// 所以这里做两层防护：
+// 1. AI_HARD_TIMEOUT_MS：自己先掐表，到点主动抛错，把控制权交回 catch，
+//    保证能写入 analyze_failed，让用户看到失败而不是无限转圈。
+// 2. axios timeout 设得比它再小一点，让网络层先超时、错误信息更具体。
+//
+// 40 秒的余量怎么来的：本函数前后还有取图片临时链接、查产品库、写数据库这些开销
+// （合计约 3-5 秒），40 + 5 = 45 秒，距离 60 秒硬上限还剩 15 秒安全垫。
+// 另外 batchAnalyze 是同步等本函数返回的，它自己也要在 60 秒内收尾，所以不能贴太满。
+//
+// 关掉思考模式后，一次三图分析正常在 15-25 秒完成，40 秒是够用的。
+// 如果日志里频繁出现"主动中止"，说明图片太大或太多，优先压缩图片而不是调大这里
+// —— 上限是 60 秒，调不动的。
+const AI_HARD_TIMEOUT_MS = 40 * 1000
+const AI_HTTP_TIMEOUT_MS = 38 * 1000
 
 // ============================================================
 // 云函数入口
@@ -151,8 +169,15 @@ exports.main = async (event, context) => {
     console.log('[2/5] 产品库查询完成')
 
     // 3. 调用 AI 视觉模型分析（同一次巡检的多张照片合并为一次调用，输出一份综合报告）
+    //    套一层自己的倒计时：宁可主动判失败，也不能让云函数被硬杀导致状态卡在 analyzing。
+    //    详见文件顶部 AI_HARD_TIMEOUT_MS 的注释。
     console.log(`[3/5] 调用 ${CURRENT_MODEL}/${AI_CONFIG[CURRENT_MODEL].model} 视觉分析...`)
-    const aiReport = await analyzeWithVision(imageUrls, brandReferenceText)
+    const { text: aiText, debug } = await withHardTimeout(
+      analyzeWithVision(imageUrls, brandReferenceText),
+      AI_HARD_TIMEOUT_MS,
+      `AI 分析超过 ${AI_HARD_TIMEOUT_MS / 1000} 秒未完成，已主动中止（云函数硬上限 60 秒）。常见原因：单次照片过多、图片分辨率过高`
+    )
+    const aiReport = aiText
     console.log('[3/5] AI 分析完成')
 
     // 4. 更新巡检记录
@@ -165,7 +190,8 @@ exports.main = async (event, context) => {
         analyzeError: '',                  // 重试成功时清掉上一次的错误信息
         analyzedModel: AI_CONFIG[CURRENT_MODEL].model,
         analyzedFileID: idsToAnalyze[0],   // 兼容旧字段：保留第一张图的 fileID
-        analyzedFileIDs: idsToAnalyze      // 新字段：本次参与分析的全部 fileID
+        analyzedFileIDs: idsToAnalyze,     // 新字段：本次参与分析的全部 fileID
+        aiDebug: debug                     // 诊断快照，方便排查"有调用无输出"
       }
     })
     console.log('[4/5] 数据库更新成功')
@@ -175,12 +201,14 @@ exports.main = async (event, context) => {
 
   } catch (err) {
     console.error('AI 分析失败:', err)
+    const debug = (err && err.debug) || {}
     try {
       await db.collection('inspections').doc(inspectionId).update({
         data: {
           status: 'analyze_failed',
           analyzeError: err.message,
-          analyzedAt: db.serverDate()
+          analyzedAt: db.serverDate(),
+          aiDebug: debug
         }
       })
     } catch (updateErr) {
@@ -188,6 +216,22 @@ exports.main = async (event, context) => {
     }
     return { success: false, error: err.message }
   }
+}
+
+// ============================================================
+// 工具：给一个 Promise 套倒计时
+// ============================================================
+/**
+ * 到点就抛错，把控制权交回调用方的 catch。
+ * 注意：这不会真的取消底层请求（axios 那边还在跑），但云函数马上就会结束，
+ * 目的只是抢在被硬杀之前把失败状态写进数据库。
+ */
+function withHardTimeout(promise, ms, message) {
+  let timer
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms)
+  })
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
 }
 
 // ============================================================
@@ -245,27 +289,24 @@ async function analyzeWithVision(imageUrls, brandReferenceText) {
 
   if (!apiKey) {
     console.warn('未配置 AI API Key，返回模拟结果。配置方法见本文件顶部 AI_CONFIG 注释。')
-    return generateMockReport()
+    return { text: generateMockReport(), debug: { mode: 'mock', reason: '未配置 API Key' } }
   }
 
   const userPrompt = buildUserPrompt(imageUrls.length, brandReferenceText)
 
-  let response
-  if (CURRENT_MODEL === 'qwen') {
-    response = await callQwen(config, apiKey, imageUrls, userPrompt)
-  } else if (CURRENT_MODEL === 'openai') {
-    response = await callOpenAI(config, apiKey, imageUrls, userPrompt)
-  } else {
-    throw new Error(`不支持的模型: ${CURRENT_MODEL}`)
-  }
-
-  return parseAIResponse(response)
+  const { text, debug } = await callQwen(config, apiKey, imageUrls, userPrompt)
+  const parsed = parseAIResponse(text)
+  // 把"前端最终拿到的是不是有效报告"也记进诊断，区分"模型回了但解析失败"
+  // 和"模型根本没回正文"这两种不同的"没输出"表现。
+  debug.parsedOk = !(parsed.metadata && parsed.metadata.parseError)
+  return { text: parsed, debug }
 }
 
 /**
- * 调用通义千问 Qwen-VL-Plus（DashScope 原生多模态接口，支持一次传入多张图片）
+ * 调用通义千问 Qwen3.7-Plus（DashScope 原生多模态接口，支持一次传入多张图片）
+ * Qwen3.7-Plus 是视觉-语言一体化多模态模型，能直接接收图片做视觉理解。
  *
- * 请求体结构和 OpenAI 完全不同，注意别照着 OpenAI 的写：
+ * 请求体结构（图片与文本都放进同一个 content 数组）：
  * - 图片放 input.messages[].content 数组里，格式是 { image: 'https://...' }
  * - 文本放同一个数组里，格式是 { text: '...' }
  * - 采样参数在顶层 parameters 里，不是平铺在 body 上
@@ -300,16 +341,29 @@ async function callQwen(config, apiKey, imageUrls, userPrompt) {
         temperature: TEMPERATURE,
         top_p: 0.5,
         // 高分辨率模式：把单图 token 上限从 1280 提到 16384，
-        // 货架上的价签、瓶标小字要靠它才看得清。代价是 token 消耗上升，
-        // 如果账单吃紧或接口报参数错误，删掉这一行即可。
-        vl_high_resolution_images: true
+        // 货架上的价签、瓶标小字要靠它才看得清。代价是 token 消耗上升。
+        // 注意：vl_high_resolution_images 是 qwen-vl 老系列的专用参数，
+        // Qwen3.7 系列原生就支持高分辨率，不需要也不会接受这个参数，
+        // 传了反而可能报「参数错误」，所以只对 qwen-vl 前缀的模型开启。
+        ...(config.model.startsWith('qwen-vl') ? { vl_high_resolution_images: true } : {}),
+        // ⚠️⚠️ 千万不要删掉下面这两行 ⚠️⚠️
+        // Qwen3.x 是"混合思考"模型，**默认开启思考模式**：回答正文之前会先生成
+        // 一大段推理过程（reasoning_content）。对陈列打分这种结构化提取任务，
+        // 思考过程没有价值，却带来两个致命后果：
+        //   1. 耗时翻 2-4 倍 —— 直接把云函数顶穿 60 秒硬上限，记录卡死在"分析中"
+        //   2. 思考 token 照常计费 —— 一次简单分析能烧掉近 2 万 token
+        // 关闭后必须两个参数一起传：只设 thinking_budget=0 而不设 enable_thinking，
+        // 模型仍会输出 reasoning_content 并计费（官方文档明确说明）。
+        ...(isHybridThinkingModel(config.model)
+          ? { enable_thinking: false, thinking_budget: 0 }
+          : {})
       }
     }, {
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`
       },
-      timeout: 150000
+      timeout: AI_HTTP_TIMEOUT_MS
     })
   } catch (err) {
     // DashScope 的报错信息藏在 response.data 里，直接抛 axios 原始错误会丢掉
@@ -318,10 +372,54 @@ async function callQwen(config, apiKey, imageUrls, userPrompt) {
     if (data && (data.message || data.code)) {
       throw new Error(`DashScope 调用失败[${data.code || err.response.status}]: ${data.message || '未知错误'}`)
     }
+    // 网络层超时：说明模型生成太慢（图片太大／太多，或思考模式没关掉）
+    if (err.code === 'ECONNABORTED') {
+      throw new Error(`AI 响应超过 ${AI_HTTP_TIMEOUT_MS / 1000} 秒未返回，已中止。建议减少单次照片数量或压缩图片`)
+    }
     throw err
   }
 
-  return extractQwenText(response.data)
+  // 构造一份诊断快照，无论解析成功与否都透传给调用方写进数据库，
+  // 方便在云开发控制台直接看"模型到底回了什么、思考模式到底关没关"，而不用再靠猜。
+  const output = response.data && response.data.output
+  const msg = output && output.choices && output.choices[0] && output.choices[0].message
+  const contentType = msg ? (Array.isArray(msg.content) ? 'array' : typeof msg.content) : 'none'
+  const hasReasoning = !!(msg && (msg.reasoning_content || msg.reasoning))
+  const reasoningOnly = hasReasoning && (
+    contentType === 'none' ||
+    (Array.isArray(msg.content) && msg.content.every(p => !p.text))
+  )
+  const debug = {
+    model: config.model,
+    enableThinkingSent: isHybridThinkingModel(config.model),
+    hasOutput: !!output,
+    hasChoices: !!(output && Array.isArray(output.choices) && output.choices.length > 0),
+    contentType,
+    hasReasoning,
+    reasoningOnly,        // true = 模型只吐了思考过程、没吐正文，说明 enable_thinking 没关成功
+    dashscopeCode: response.data && response.data.code,
+    dashscopeMessage: response.data && response.data.message,
+    requestId: response.data && response.data.request_id
+  }
+
+  try {
+    const text = extractQwenText(response.data)
+    return { text, debug }
+  } catch (extractErr) {
+    // 把诊断一并带上去，让 catch 上游能把 reasoningOnly 这类关键信号落库
+    extractErr.debug = debug
+    throw extractErr
+  }
+}
+
+/**
+ * 判断是否为 Qwen3.x 混合思考模型（需要显式关闭思考模式）
+ *
+ * 命中的模型：qwen3.5-* / qwen3.6-* / qwen3.7-* 全系（plus / max / flash）
+ * 不命中的：qwen-vl-plus 等老 VL 系列（不认识 enable_thinking 参数，传了会报参数错误）
+ */
+function isHybridThinkingModel(model) {
+  return /^qwen3(\.\d+)?[-.]/.test(model || '') && !model.startsWith('qwen-vl')
 }
 
 /**
@@ -354,42 +452,15 @@ function extractQwenText(data) {
     return output.text
   }
 
+  // 走到这里通常意味着：模型只输出了思考过程（reasoning_content）没输出正文，
+  // 说明 enable_thinking 没关成功。把这个判断单独拎出来，免得又被
+  // "返回结构异常"这种万金油报错掩盖掉真正原因。
+  const msg = output.choices && output.choices[0] && output.choices[0].message
+  if (msg && (msg.reasoning_content || msg.reasoning)) {
+    throw new Error('模型只返回了思考过程、没有正文，请确认 enable_thinking 参数已生效')
+  }
+
   throw new Error('DashScope 返回结构异常：未能提取到文本内容')
-}
-
-/**
- * 调用 OpenAI GPT-4o（支持一次传入多张图片）—— 备用通道
- */
-async function callOpenAI(config, apiKey, imageUrls, userPrompt) {
-  const imageContent = imageUrls.map(url => ({
-    type: 'image_url',
-    image_url: { url, detail: 'high' }
-  }))
-
-  const response = await axios.post(config.apiUrl, {
-    model: config.model,
-    messages: [
-      { role: 'system', content: SYSTEM_PROMPT },
-      {
-        role: 'user',
-        content: [
-          { type: 'text', text: userPrompt },
-          ...imageContent
-        ]
-      }
-    ],
-    max_tokens: MAX_TOKENS,
-    temperature: TEMPERATURE,
-    response_format: { type: 'json_object' }
-  }, {
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`
-    },
-    timeout: 150000
-  })
-
-  return response.data.choices[0].message.content
 }
 
 // ============================================================
@@ -405,9 +476,8 @@ function parseAIResponse(responseText) {
       jsonStr = jsonMatch[1].trim()
     }
 
-    // 兜底：Qwen 不支持 OpenAI 的 response_format:json_object 强制 JSON 输出，
-    // 偶尔会在 JSON 前后带一句"好的，以下是分析结果："。
-    // 截取第一个 { 到最后一个 } 之间的内容再解析。
+    // 兜底：Qwen 不强制 JSON 输出，偶尔会在 JSON 前后夹带一句"好的，以下是分析结果："
+    // 这类说明文字，需要截取第一个 { 到最后一个 } 之间的内容再解析。
     if (!jsonStr.startsWith('{')) {
       const start = jsonStr.indexOf('{')
       const end = jsonStr.lastIndexOf('}')

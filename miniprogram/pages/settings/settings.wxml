@@ -60,7 +60,7 @@
       </view>
 
       <view class="queue-actions">
-        <button class="btn-outline" bindtap="onRetryFailed" disabled="{{!canEdit}}">重排失败记录</button>
+        <button class="btn-outline" bindtap="onRetryFailed" disabled="{{!canEdit}}">重排失败/卡住</button>
         <button class="btn-primary" bindtap="onRunNow" disabled="{{!canEdit || running}}">
           {{running ? '分析中...' : '立即分析一批'}}
         </button>
