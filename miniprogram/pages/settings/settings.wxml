@@ -1,5 +1,12 @@
 <!--pages/settings/settings.wxml-->
 <view class="settings-page">
+  <!-- 品牌头 -->
+  <view class="brand-header brand-header--full">
+    <image class="brand-logo-img" src="/images/logo.png" mode="aspectFit"></image>
+    <view class="brand-logo">特8水印</view>
+    <view class="brand-sub">白酒终端巡检 · 智能水印</view>
+  </view>
+
   <view class="loading-state" wx:if="{{loading}}">
     <text>加载中...</text>
   </view>

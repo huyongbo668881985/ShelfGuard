@@ -172,12 +172,29 @@ exports.main = async (event, context) => {
     //    套一层自己的倒计时：宁可主动判失败，也不能让云函数被硬杀导致状态卡在 analyzing。
     //    详见文件顶部 AI_HARD_TIMEOUT_MS 的注释。
     console.log(`[3/5] 调用 ${CURRENT_MODEL}/${AI_CONFIG[CURRENT_MODEL].model} 视觉分析...`)
-    const { text: aiText, debug } = await withHardTimeout(
+    const analysis = await withHardTimeout(
       analyzeWithVision(imageUrls, brandReferenceText),
       AI_HARD_TIMEOUT_MS,
       `AI 分析超过 ${AI_HARD_TIMEOUT_MS / 1000} 秒未完成，已主动中止（云函数硬上限 60 秒）。常见原因：单次照片过多、图片分辨率过高`
     )
-    const aiReport = aiText
+
+    // 未配置 API Key：不把模拟报告落库（否则统计/平均分会被假数据污染），
+    // 直接标记失败并给出明确原因；模拟报告仅随返回值透传给调用方做开发预览。
+    if (analysis.mock) {
+      const noKeyError = '未配置 AI API Key，未生成真实分析报告。请管理员在 analyzeImage 云函数环境变量或「分析设置」中配置 DASHSCOPE_API_KEY。'
+      console.warn('[3/5]', noKeyError)
+      await db.collection('inspections').doc(inspectionId).update({
+        data: {
+          status: 'analyze_failed',
+          analyzeError: noKeyError,
+          analyzedAt: db.serverDate(),
+          aiDebug: analysis.debug
+        }
+      })
+      return { success: false, error: noKeyError, mock: true, report: analysis.text }
+    }
+
+    const aiReport = analysis.text
     console.log('[3/5] AI 分析完成')
 
     // 4. 更新巡检记录
@@ -191,7 +208,7 @@ exports.main = async (event, context) => {
         analyzedModel: AI_CONFIG[CURRENT_MODEL].model,
         analyzedFileID: idsToAnalyze[0],   // 兼容旧字段：保留第一张图的 fileID
         analyzedFileIDs: idsToAnalyze,     // 新字段：本次参与分析的全部 fileID
-        aiDebug: debug                     // 诊断快照，方便排查"有调用无输出"
+        aiDebug: analysis.debug            // 诊断快照，方便排查"有调用无输出"
       }
     })
     console.log('[4/5] 数据库更新成功')
@@ -288,8 +305,12 @@ async function analyzeWithVision(imageUrls, brandReferenceText) {
   const apiKey = await resolveApiKey(config)
 
   if (!apiKey) {
-    console.warn('未配置 AI API Key，返回模拟结果。配置方法见本文件顶部 AI_CONFIG 注释。')
-    return { text: generateMockReport(), debug: { mode: 'mock', reason: '未配置 API Key' } }
+    console.warn('未配置 AI API Key，拒绝将模拟报告写入数据库（防止假数据污染统计）。配置方法见本文件顶部 AI_CONFIG 注释。')
+    return {
+      text: generateMockReport(),
+      debug: { mode: 'mock', reason: '未配置 API Key' },
+      mock: true
+    }
   }
 
   const userPrompt = buildUserPrompt(imageUrls.length, brandReferenceText)

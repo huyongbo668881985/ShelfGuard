@@ -10,25 +10,29 @@
     "pages/admin/admin"
   ],
   "window": {
-    "backgroundColor": "#f5f5f5",
+    "backgroundColor": "#F4F6F9",
     "backgroundTextStyle": "dark",
-    "navigationBarBackgroundColor": "#1a1a2e",
-    "navigationBarTitleText": "白酒终端巡检",
+    "navigationBarBackgroundColor": "#1C3D5A",
+    "navigationBarTitleText": "特8水印",
     "navigationBarTextStyle": "white"
   },
   "tabBar": {
-    "color": "#999999",
-    "selectedColor": "#1a1a2e",
+    "color": "#9AA0A6",
+    "selectedColor": "#1C3D5A",
     "backgroundColor": "#ffffff",
     "borderStyle": "black",
     "list": [
       {
         "pagePath": "pages/camera/camera",
-        "text": "巡检拍照"
+        "text": "巡检拍照",
+        "iconPath": "images/tab-camera.png",
+        "selectedIconPath": "images/tab-camera-active.png"
       },
       {
         "pagePath": "pages/history/history",
-        "text": "巡检记录"
+        "text": "巡检记录",
+        "iconPath": "images/tab-list.png",
+        "selectedIconPath": "images/tab-list-active.png"
       }
     ]
   },

@@ -27,6 +27,26 @@ App({
       traceUser: true
     })
 
+    // 隐私授权拦截：自微信基础库 2.32.3 起，调用相机/位置等敏感接口前
+    // 必须先让用户同意《隐私保护指引》。这里注册全局拦截，当小程序首次
+    // 触发隐私协议时，在当前页（相机页）弹出自定义同意窗，同意后调用
+    // resolve({ event, resolve }) 让被拦截的接口继续授权。
+    if (typeof wx.onNeedPrivacyAuthorize === 'function') {
+      wx.onNeedPrivacyAuthorize((resolve, event) => {
+        const app = getApp()
+        app.globalData._privacyResolve = resolve
+        app.globalData._privacyEvent = event
+        const pages = getCurrentPages()
+        const curPage = pages[pages.length - 1]
+        if (curPage && typeof curPage.showPrivacyAuthorize === 'function') {
+          curPage.showPrivacyAuthorize()
+        } else {
+          // 当前页还没挂载弹窗组件，记下标记等 onShow 补弹
+          app.globalData._privacyPending = true
+        }
+      })
+    }
+
     // 用户登录
     this.login()
   },
@@ -56,6 +76,13 @@ App({
 
     // 「继续拜访下一家」通信标记：upload 页提交后点了继续，回相机页 onShow 读它并清空
     startNextVisit: false,
+
+    // 隐私授权拦截回调暂存：wx.onNeedPrivacyAuthorize 触发时填入 resolve/event，
+    // 弹窗「同意」后调用 resolve({ event, resolve }) 放行被拦截的接口；
+    // _privacyPending 用于组件尚未挂载时的补弹标记
+    _privacyResolve: null,
+    _privacyEvent: null,
+    _privacyPending: false,
 
     // 分析模式/集中分析时间缓存（upload 页首屏先用它避免闪烁，由 settings 云函数刷新）
     // analyzeMode: 'batch' 每日集中分析（默认） | 'instant' 提交即分析

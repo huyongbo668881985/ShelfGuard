@@ -119,53 +119,40 @@ Page({
 
   // 构建查询条件
   buildWhereCondition() {
-    const db = wx.cloud.database()
-    const _ = db.command
     const conditions = {}
 
-    // 90 天内
-    const ninetyDaysAgo = new Date()
-    ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90)
-    conditions.createdAt = _.gte(ninetyDaysAgo)
-
-    // 日期筛选
+    // 日期筛选：只传原始值（ISO 字符串），由服务端重建 db.command。
+    // db.command 命令对象经 callFunction JSON 序列化会丢失内部字段（见 BUG_REVIEW.md），
+    // 不能直接透传给云函数，否则筛选条件会被静默丢弃。无筛选时服务端自带 90 天默认窗口。
     if (this.data.filterDate) {
       const now = new Date()
       let startDate
-      
+
       if (this.data.filterDate === 'today') {
         startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate())
       } else if (this.data.filterDate === 'week') {
-        startDate = new Date(now)
-        startDate.setDate(now.getDate() - 7)
+        startDate = new Date(now.getTime() - 7 * 864e5)
       } else if (this.data.filterDate === 'month') {
         startDate = new Date(now)
         startDate.setMonth(now.getMonth() - 1)
       }
-      
+
       if (startDate) {
-        conditions.createdAt = _.and(_.gte(startDate), _.gte(ninetyDaysAgo))
+        conditions.startDateISO = startDate.toISOString()
       }
     }
 
-    // 评分筛选
-    if (this.data.filterScore) {
-      let scoreCondition
-      if (this.data.filterScore === 'high') {
-        scoreCondition = _.gte(80)
-      } else if (this.data.filterScore === 'medium') {
-        scoreCondition = _.and(_.gte(60), _.lt(80))
-      } else if (this.data.filterScore === 'low') {
-        scoreCondition = _.lt(60)
-      }
-      
-      if (scoreCondition) {
-        conditions['aiReport.score'] = scoreCondition
-      }
+    // 评分筛选：只传数值区间，由服务端拼 _.gte / _.lte
+    if (this.data.filterScore === 'high') {
+      conditions.scoreMin = 80
+    } else if (this.data.filterScore === 'medium') {
+      conditions.scoreMin = 60
+      conditions.scoreMax = 79
+    } else if (this.data.filterScore === 'low') {
+      conditions.scoreMax = 59
     }
 
-    // 关键词搜索（门店名称或任务名称）：只传纯文本 keyword，
-    // 由服务端拼 $or，避免依赖 db.command 序列化内部字段导致条件丢失。
+    // 关键词搜索（门店名称或任务名称）：只传纯文本 keyword，由服务端拼 $or
     if (this.data.searchKeyword) {
       conditions.keyword = this.data.searchKeyword
     }

@@ -1,0 +1,17 @@
+<!-- 隐私授权弹窗：相机/定位首次触发隐私协议时由 app.js 拦截后弹出 -->
+<view class="privacy-mask" wx:if="{{show}}" catchtouchmove="noop">
+  <view class="privacy-card">
+    <view class="privacy-title">隐私保护指引</view>
+    <scroll-view class="privacy-scroll" scroll-y="true">
+      <view class="privacy-para">为完成白酒终端巡检拍照与门店定位，「特8水印」需要获取您的相机与位置权限：</view>
+      <view class="privacy-bullet">· 相机：用于拍摄门店陈列照片并叠加巡检水印</view>
+      <view class="privacy-bullet">· 位置：用于记录门店地址与拜访定位</view>
+      <view class="privacy-para">以上信息仅用于内部巡检管理，不会另作他用。请阅读并同意《小程序隐私保护指引》后继续使用。</view>
+    </scroll-view>
+    <view class="privacy-contract" bindtap="openContract">查看完整《小程序隐私保护指引》</view>
+    <view class="privacy-actions">
+      <view class="privacy-btn privacy-refuse" bindtap="onRefuse">暂不使用</view>
+      <view class="privacy-btn privacy-agree" bindtap="onAgree">同意并继续</view>
+    </view>
+  </view>
+</view>

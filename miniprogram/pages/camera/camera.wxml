@@ -8,6 +8,7 @@
       flash="{{flashMode}}"
       resolution="high"
       binderror="onCameraError"
+      bindinitdone="onCameraInitDone"
     >
       <!-- 实时水印预览层
            重要：camera 是原生组件，层级永远最高，普通 view/text 放在它里面
@@ -109,7 +110,10 @@
   <view class="settings-mask" wx:if="{{showSettings}}" bindtap="closeSettings"></view>
   <view class="settings-panel {{showSettings ? 'show' : ''}}">
     <view class="settings-header">
-      <text class="settings-title">水印设置</text>
+      <view class="settings-brand">
+        <image class="settings-brand-logo" src="/images/logo-te.png" mode="aspectFit"></image>
+        <text class="settings-title">特8水印 · 设置</text>
+      </view>
       <text class="settings-close" bindtap="closeSettings">✕</text>
     </view>
 
@@ -197,4 +201,8 @@
 
   <!-- 隐藏的拼图合成组件，同样始终挂载，原因跟上面一样 -->
   <photo-grid-canvas id="photoGridCanvas"></photo-grid-canvas>
+
+  <!-- 隐私授权弹窗：首次触发相机/位置等敏感接口时由 app.js 全局拦截唤起，
+       用户点"同意并继续"后放行被拦截的接口。平时隐藏。 -->
+  <privacy-auth id="privacyAuth"></privacy-auth>
 </view>

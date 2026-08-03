@@ -63,6 +63,13 @@ Page({
   },
 
   onShow() {
+    // 隐私授权补弹：app.js 的 wx.onNeedPrivacyAuthorize 拦截触发时，
+    // 若当时弹窗组件尚未挂载会置 _privacyPending 标记，这里在页面显示时补弹一次
+    if (app.globalData._privacyPending) {
+      app.globalData._privacyPending = false
+      this.showPrivacyAuthorize()
+    }
+
     // "继续拜访下一家"回传标记：upload 页提交完成后点了继续，回到相机页应当
     // 清空上一家门店信息并直接进入下一家拍照阶段（自动弹出客户选择）。
     // 用 globalData.startNextVisit 通信，因为相机是 tabBar 页，navigateBack
@@ -96,6 +103,25 @@ Page({
   },
 
   onReady() {
+    this.setData({ cameraReady: true })
+  },
+
+  // 弹出隐私授权窗：由 app.js 全局隐私拦截回调触发，也用于 _privacyPending 补弹。
+  // 用户「同意并继续」时，privacy-auth 组件内部会调用 app.globalData._privacyResolve
+  // 放行被微信隐私网关拦住的原始接口（相机/位置授权）。
+  showPrivacyAuthorize() {
+    const comp = this.selectComponent('#privacyAuth')
+    if (comp) {
+      comp.show()
+    } else {
+      // 极端情况下组件尚未挂载，回到标记，下一轮 onShow 再补弹
+      app.globalData._privacyPending = true
+    }
+  },
+
+  // 相机初始化完成（wx 相机组件 initdone 事件）：比 onReady 更可靠地表示
+  // 相机已可拍照。将 cameraReady 置 true，保证首次进入页面即可拍。
+  onCameraInitDone() {
     this.setData({ cameraReady: true })
   },
 
@@ -494,9 +520,12 @@ Page({
                 wx.openSetting({
                   success: (settingRes) => {
                     if (settingRes.authSetting['scope.camera']) {
-                      // 用户在设置页里重新开启了，刷新一下相机组件状态
-                      this.setData({ cameraReady: false })
-                      wx.showToast({ title: '权限已开启，请重新进入', icon: 'none' })
+                      // 用户在设置页里重新开启了：相机组件实例从未被卸载，
+                      // 权限刚开启即处于可用状态，应当把 cameraReady 恢复为 true。
+                      // （旧逻辑误置为 false，导致之后每次拍照都被"未就绪"拦截，
+                      // 必须杀进程重进小程序才能恢复——这是之前"有时候相机失败"的隐藏 bug。）
+                      this.setData({ cameraReady: true })
+                      wx.showToast({ title: '权限已开启', icon: 'none' })
                     }
                   }
                 })

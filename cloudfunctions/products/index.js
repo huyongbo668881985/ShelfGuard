@@ -41,7 +41,41 @@ exports.main = async (event, context) => {
           .where(query)
           .orderBy('createdAt', 'desc')
           .get()
-        return { success: true, list: res.data }
+
+        // 参考照临时链接服务端统一取：收紧云存储权限后，前端直接拿 fileID 当
+        // 图片 src 只能读到本人上传的文件，其他业务员看团队共享产品库会裂图。
+        const photoIDs = []
+        for (const p of res.data) {
+          const photos = p.photos || {}
+          ;['front', 'back', 'side'].forEach(slot => {
+            if (photos[slot]) photoIDs.push(photos[slot])
+          })
+        }
+
+        const urlMap = {}
+        // getTempFileURL 单次最多 50 个，产品一多按批取
+        for (let i = 0; i < photoIDs.length; i += 50) {
+          const chunk = photoIDs.slice(i, i + 50)
+          try {
+            const fileRes = await cloud.getTempFileURL({ fileList: chunk })
+            fileRes.fileList.forEach(f => {
+              if (f.tempFileURL) urlMap[f.fileID] = f.tempFileURL
+            })
+          } catch (err) {
+            console.error('获取产品参考照临时链接失败:', err)
+          }
+        }
+
+        const list = res.data.map(p => {
+          const photos = p.photos || {}
+          const photoURLs = { front: '', back: '', side: '' }
+          ;['front', 'back', 'side'].forEach(slot => {
+            if (photos[slot]) photoURLs[slot] = urlMap[photos[slot]] || ''
+          })
+          return { ...p, photoURLs }
+        })
+
+        return { success: true, list }
       }
 
       // 新增产品

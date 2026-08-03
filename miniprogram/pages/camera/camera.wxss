@@ -289,6 +289,17 @@
   color: #333;
 }
 
+.settings-brand {
+  display: flex;
+  align-items: center;
+  gap: 14rpx;
+}
+
+.settings-brand-logo {
+  width: 56rpx;
+  height: 56rpx;
+}
+
 .settings-close {
   font-size: 36rpx;
   color: #999;

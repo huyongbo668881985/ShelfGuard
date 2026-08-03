@@ -380,13 +380,9 @@ async function recordRun(result, triggeredBy) {
 async function canManage(openid) {
   try {
     const res = await db.collection('users').where({ _openid: openid }).get()
-    if (res.data.length > 0 && MANAGER_ROLES.includes(res.data[0].role)) {
-      return true
-    }
-    // 自举场景：系统里还没有任何管理员时，允许任意登录用户操作，
-    // 否则第一个用户永远没法配置系统。设了管理员之后这条自动失效。
-    const adminRes = await db.collection('users').where({ role: _.in(MANAGER_ROLES) }).count()
-    return adminRes.total === 0
+    // 只认服务端 users 表里的 admin / manager 角色。
+    // 不再保留"系统无管理员则任何人可触发"的自举逻辑（安全漏洞，与 README 一致）。
+    return res.data.length > 0 && MANAGER_ROLES.includes(res.data[0].role)
   } catch (err) {
     console.error('权限校验失败:', err)
     return false

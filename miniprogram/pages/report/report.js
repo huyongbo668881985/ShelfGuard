@@ -57,13 +57,9 @@ Page({
         detail.analyzedAtFormatted = formatDate(detail.analyzedAt, 'YYYY-MM-DD HH:mm')
       }
 
-      // 获取图片临时链接
-      if (detail.photoFileIDs && detail.photoFileIDs.length > 0) {
-        const fileRes = await wx.cloud.getTempFileURL({
-          fileList: detail.photoFileIDs
-        })
-        detail.photoURLs = fileRes.fileList.map(f => f.tempFileURL)
-      }
+      // 照片临时链接由 getReport 云函数在服务端统一获取（photoURLs 字段）。
+      // 收紧云存储权限后，前端直连 wx.cloud.getTempFileURL 只能读本人文件，
+      // 管理者查看他人巡检记录的照片会被存储安全规则拦截，所以这里不再自己取。
 
       this.setData({ detail, loading: false })
 

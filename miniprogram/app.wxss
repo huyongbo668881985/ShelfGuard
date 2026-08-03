@@ -1,43 +1,45 @@
-/* app.wxss - 全局样式 */
+/* app.wxss - 全局样式（特8水印 / ShelfGuard 皮肤 v2） */
 
 /* CSS 变量 - 统一设计系统 */
 page {
-  --color-primary: #1a1a2e;
-  --color-primary-light: #16213e;
-  --color-primary-dark: #0f3460;
-  --color-accent: #e94560;
-  --color-success: #4caf50;
-  --color-warning: #ff9800;
-  --color-error: #f44336;
-  --color-info: #2196f3;
-  
-  --color-text-primary: #333333;
-  --color-text-secondary: #666666;
-  --color-text-hint: #999999;
-  --color-text-disabled: #cccccc;
-  
-  --color-bg-page: #f5f5f5;
-  --color-bg-card: #ffffff;
-  --color-bg-hover: #f8f9fa;
-  --color-border: #e8e8e8;
-  --color-divider: #f0f0f0;
-  
-  --radius-sm: 8rpx;
-  --radius-md: 12rpx;
-  --radius-lg: 16rpx;
-  --radius-xl: 24rpx;
+  /* 主品牌色：沉稳蓝墨 + 暖金点缀（呼应白酒行业质感） */
+  --color-primary: #1C3D5A;
+  --color-primary-light: #2E5A82;
+  --color-primary-dark: #122A40;
+  --color-accent: #C2933B;
+
+  --color-success: #2E9E5B;
+  --color-warning: #E08A1E;
+  --color-error: #D6453D;
+  --color-info: #2D7FD6;
+
+  --color-text-primary: #1F2933;
+  --color-text-secondary: #5A6470;
+  --color-text-hint: #9AA0A6;
+  --color-text-disabled: #C7CBD1;
+
+  --color-bg-page: #F4F6F9;
+  --color-bg-card: #FFFFFF;
+  --color-bg-hover: #EEF2F7;
+  --color-border: #E4E8EE;
+  --color-divider: #EEF1F5;
+
+  --radius-sm: 10rpx;
+  --radius-md: 16rpx;
+  --radius-lg: 20rpx;
+  --radius-xl: 28rpx;
   --radius-round: 999rpx;
-  
-  --shadow-sm: 0 2rpx 8rpx rgba(0, 0, 0, 0.04);
-  --shadow-md: 0 4rpx 16rpx rgba(0, 0, 0, 0.08);
-  --shadow-lg: 0 8rpx 32rpx rgba(0, 0, 0, 0.12);
-  
+
+  --shadow-sm: 0 2rpx 10rpx rgba(28, 61, 90, 0.05);
+  --shadow-md: 0 6rpx 20rpx rgba(28, 61, 90, 0.08);
+  --shadow-lg: 0 12rpx 36rpx rgba(28, 61, 90, 0.12);
+
   --spacing-xs: 8rpx;
   --spacing-sm: 16rpx;
   --spacing-md: 24rpx;
   --spacing-lg: 32rpx;
   --spacing-xl: 48rpx;
-  
+
   --font-xs: 22rpx;
   --font-sm: 24rpx;
   --font-md: 28rpx;
@@ -57,7 +59,7 @@ page {
    （原生输入组件部分机型/基础库不继承 page 文字色，必须显式声明） */
 input,
 textarea {
-  color: #1a1a2e !important;
+  color: #1F2933 !important;
   background-color: #fff !important;
 }
 
@@ -73,6 +75,7 @@ textarea {
   padding: var(--spacing-lg);
   margin-bottom: var(--spacing-md);
   box-shadow: var(--shadow-sm);
+  border: 1rpx solid var(--color-divider);
 }
 
 /* 按钮系统 */
@@ -87,6 +90,7 @@ textarea {
   text-align: center;
   width: 100%;
   letter-spacing: 2rpx;
+  box-shadow: 0 6rpx 16rpx rgba(28, 61, 90, 0.18);
 }
 
 .btn-primary::after {
@@ -121,6 +125,30 @@ textarea {
   background: var(--color-bg-hover);
 }
 
+/* 金色强调按钮（关键动作 / 高亮 CTA） */
+.btn-accent {
+  background: linear-gradient(135deg, var(--color-accent) 0%, #D9A94E 100%);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-lg);
+  padding: 24rpx 0;
+  font-size: var(--font-lg);
+  font-weight: 500;
+  text-align: center;
+  width: 100%;
+  letter-spacing: 2rpx;
+  box-shadow: 0 6rpx 16rpx rgba(194, 147, 59, 0.22);
+}
+
+.btn-accent::after {
+  border: none;
+}
+
+.btn-accent:active {
+  opacity: 0.85;
+  transform: scale(0.98);
+}
+
 .btn-ghost {
   background: transparent;
   color: var(--color-text-secondary);
@@ -136,6 +164,7 @@ textarea {
 .text-success { color: var(--color-success); }
 .text-warning { color: var(--color-warning); }
 .text-error { color: var(--color-error); }
+.text-accent { color: var(--color-accent); }
 
 .text-bold { font-weight: 600; }
 .text-center { text-align: center; }
@@ -186,7 +215,7 @@ textarea {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(18, 42, 64, 0.5);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -212,9 +241,40 @@ textarea {
   padding-bottom: env(safe-area-inset-bottom);
 }
 
-/* 页面背景渐变 */
+/* 页面背景渐变（顶部品牌色过渡到底部浅灰） */
 .page-gradient {
-  background: linear-gradient(180deg, var(--color-primary) 0%, var(--color-bg-page) 40%);
+  background: linear-gradient(180deg, var(--color-primary) 0%, var(--color-bg-page) 45%);
+}
+
+/* 品牌头部（列表/设置类页面可放在顶部，统一品牌感） */
+.brand-header {
+  padding: var(--spacing-lg);
+  padding-top: calc(var(--spacing-lg) + 8rpx);
+  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-light) 100%);
+  color: #fff;
+}
+
+.brand-header .brand-logo {
+  font-size: var(--font-xl);
+  font-weight: 700;
+  letter-spacing: 3rpx;
+}
+
+.brand-header .brand-sub {
+  font-size: var(--font-sm);
+  opacity: 0.82;
+  margin-top: 6rpx;
+}
+
+.brand-header .brand-logo-img {
+  width: 108rpx;
+  height: 108rpx;
+  margin-bottom: 14rpx;
+}
+
+/* 全宽品牌头：用于自身带页面内边距的页面，用负边距抵消实现通栏 */
+.brand-header--full {
+  margin: calc(-1 * var(--spacing-md)) calc(-1 * var(--spacing-lg)) var(--spacing-md);
 }
 
 /* 徽章 */
@@ -229,21 +289,21 @@ textarea {
 }
 
 .badge-success {
-  background: #e8f5e9;
+  background: #E7F6ED;
   color: var(--color-success);
 }
 
 .badge-warning {
-  background: #fff3e0;
+  background: #FCEFD9;
   color: var(--color-warning);
 }
 
 .badge-error {
-  background: #ffebee;
+  background: #FBE9E8;
   color: var(--color-error);
 }
 
 .badge-info {
-  background: #e3f2fd;
+  background: #E6F1FB;
   color: var(--color-info);
 }

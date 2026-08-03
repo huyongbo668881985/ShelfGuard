@@ -69,5 +69,17 @@ exports.main = async (event, context) => {
     }
   }
 
+  // 照片临时链接：服务端统一取（云函数具备管理员权限，不受存储安全规则限制）。
+  // 收紧云存储权限后，前端直连 getTempFileURL 只能读到本人文件，管理者看他人记录会失败。
+  doc.photoURLs = []
+  if (Array.isArray(doc.photoFileIDs) && doc.photoFileIDs.length > 0) {
+    try {
+      const fileRes = await cloud.getTempFileURL({ fileList: doc.photoFileIDs })
+      doc.photoURLs = fileRes.fileList.map(f => f.tempFileURL || '')
+    } catch (err) {
+      console.error('获取照片临时链接失败:', err)
+    }
+  }
+
   return { success: true, detail: doc }
 }

@@ -3,6 +3,7 @@
   "disableScroll": true,
   "usingComponents": {
     "watermark-canvas": "/components/watermark-canvas/index",
-    "photo-grid-canvas": "/components/photo-grid-canvas/index"
+    "photo-grid-canvas": "/components/photo-grid-canvas/index",
+    "privacy-auth": "/components/privacy-auth/index"
   }
 }

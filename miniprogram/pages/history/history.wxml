@@ -1,5 +1,12 @@
 <!--pages/history/history.wxml-->
 <view class="history-page">
+  <!-- 品牌头 -->
+  <view class="brand-header">
+    <image class="brand-logo-img" src="/images/logo.png" mode="aspectFit"></image>
+    <view class="brand-logo">特8水印</view>
+    <view class="brand-sub">白酒终端巡检 · 智能水印</view>
+  </view>
+
   <!-- 统计卡片 -->
   <view class="stats-card">
     <view class="stats-item">
@@ -66,9 +73,9 @@
       <view class="item-thumbnail">
         <image
           class="thumbnail-img"
-          src="{{item.thumbnailFileID}}"
+          src="{{item.thumbnailURL || item.thumbnailFileID}}"
           mode="aspectFill"
-          wx:if="{{item.thumbnailFileID}}"
+          wx:if="{{item.thumbnailURL || item.thumbnailFileID}}"
         ></image>
         <view class="thumbnail-placeholder" wx:else>
           <text>📷</text>

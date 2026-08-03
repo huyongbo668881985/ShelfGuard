@@ -1,0 +1,82 @@
+.privacy-mask {
+  position: fixed;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.privacy-card {
+  width: 600rpx;
+  max-height: 70vh;
+  background: #fff;
+  border-radius: 20rpx;
+  padding: 40rpx 36rpx 32rpx;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+}
+
+.privacy-title {
+  font-size: 34rpx;
+  font-weight: 700;
+  color: #1C3D5A;
+  text-align: center;
+  margin-bottom: 24rpx;
+}
+
+.privacy-scroll {
+  flex: 1;
+  max-height: 40vh;
+}
+
+.privacy-para {
+  font-size: 26rpx;
+  color: #333;
+  line-height: 1.7;
+  margin-bottom: 16rpx;
+}
+
+.privacy-bullet {
+  font-size: 26rpx;
+  color: #444;
+  line-height: 1.7;
+  padding-left: 8rpx;
+}
+
+.privacy-contract {
+  font-size: 24rpx;
+  color: #C2933B;
+  text-align: center;
+  margin: 20rpx 0 24rpx;
+  text-decoration: underline;
+}
+
+.privacy-actions {
+  display: flex;
+  gap: 20rpx;
+}
+
+.privacy-btn {
+  flex: 1;
+  height: 80rpx;
+  line-height: 80rpx;
+  text-align: center;
+  border-radius: 12rpx;
+  font-size: 28rpx;
+}
+
+.privacy-refuse {
+  background: #F1F0EC;
+  color: #666;
+}
+
+.privacy-agree {
+  background: #1C3D5A;
+  color: #fff;
+}

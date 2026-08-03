@@ -14,10 +14,10 @@
           wx:for="{{['front','back','side']}}"
           wx:for-item="slot"
           wx:key="slot"
-          src="{{item.photos[slot]}}"
+          src="{{item.photoURLs[slot] || item.photos[slot]}}"
           mode="aspectFill"
-          wx:if="{{item.photos[slot]}}"
-          data-url="{{item.photos[slot]}}"
+          wx:if="{{item.photoURLs[slot] || item.photos[slot]}}"
+          data-url="{{item.photoURLs[slot] || item.photos[slot]}}"
           bindtap="onPreviewPhoto"
         ></image>
         <view class="card-photo placeholder" wx:if="{{!item.photos.front}}">

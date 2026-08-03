@@ -34,8 +34,19 @@ function buildBaseConditions({ isManager, openid, targetUserName, where }) {
   const ninetyDaysAgo = new Date()
   ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90)
 
+  // 前端只传原语（startDateISO / scoreMin / scoreMax / keyword），
+  // db.command 命令对象由服务端重建——命令对象经 callFunction JSON 序列化会丢失
+  // 内部字段，前端直接透传 _.gte / _.and / _.lt 会导致筛选条件被静默丢弃。
+  let createdAtCondition = _.gte(ninetyDaysAgo)
+  if (where && where.startDateISO) {
+    const startDate = new Date(where.startDateISO)
+    if (!isNaN(startDate.getTime())) {
+      createdAtCondition = _.gte(startDate)
+    }
+  }
+
   let conditions = {
-    createdAt: (where && where.createdAt) || _.gte(ninetyDaysAgo)
+    createdAt: createdAtCondition
   }
 
   if (isManager) {
@@ -48,8 +59,14 @@ function buildBaseConditions({ isManager, openid, targetUserName, where }) {
     conditions._openid = openid
   }
 
-  if (where && where['aiReport.score']) {
-    conditions['aiReport.score'] = where['aiReport.score']
+  if (where && where.scoreMin != null) {
+    conditions['aiReport.score'] = _.gte(where.scoreMin)
+  }
+  if (where && where.scoreMax != null) {
+    const cur = conditions['aiReport.score']
+    conditions['aiReport.score'] = cur
+      ? _.and(cur, _.lte(where.scoreMax))
+      : _.lte(where.scoreMax)
   }
 
   // 关键词搜索：前端只传纯文本 keyword，服务端负责拼接 $or（门店名/任务名模糊匹配）。
@@ -81,13 +98,16 @@ exports.main = async (event, context) => {
 
   try {
     if (action === 'stats') {
-      const totalRes = await db.collection('inspections').where(queryConditions).count()
+      // 统计口径：排除历史遗留的模拟报告（isMock: true），
+      // 防止未配置 API Key 时期写入的假数据污染总巡检数/本周/平均分。
+      const statsConditions = _.and(queryConditions, { 'aiReport.metadata.isMock': _.neq(true) })
+      const totalRes = await db.collection('inspections').where(statsConditions).count()
 
       const weekAgo = new Date()
       weekAgo.setDate(weekAgo.getDate() - 7)
       // 注意：queryConditions 在有关键词时是 _.and(...) 命令对象，不能用 { ...queryConditions }
       // 展开（命令对象的内部字段不可枚举，展开会变空对象），必须用 _.and() 包裹拼接。
-      const weekConditions = _.and(queryConditions, { createdAt: _.gte(weekAgo) })
+      const weekConditions = _.and(statsConditions, { createdAt: _.gte(weekAgo) })
       const weekRes = await db.collection('inspections').where(weekConditions).count()
 
       // 平均分：游标遍历全部有分数的记录再求平均，避免之前 .limit(100) 截断导致
@@ -98,7 +118,7 @@ exports.main = async (event, context) => {
       const BATCH_SIZE = 100
       for (let skip = 0; ; skip += BATCH_SIZE) {
         const batch = await db.collection('inspections')
-          .where(_.and(queryConditions, { 'aiReport.score': _.exists(true) }))
+          .where(_.and(statsConditions, { 'aiReport.score': _.exists(true) }))
           .field({ 'aiReport.score': true })
           .skip(skip)
           .limit(BATCH_SIZE)
@@ -145,13 +165,36 @@ exports.main = async (event, context) => {
       })
       .get()
 
+    // 缩略图临时链接：服务端统一取（云函数具备管理员权限）。收紧云存储权限后，
+    // 前端直接拿 fileID 当图片 src 只能读到本人上传的文件，管理者看他人记录会裂图。
+    const thumbnailIds = listRes.data
+      .filter(item => Array.isArray(item.photoFileIDs) && item.photoFileIDs.length > 0)
+      .map(item => item.photoFileIDs[0])
+    const thumbnailURLMap = {}
+    if (thumbnailIds.length > 0) {
+      try {
+        const fileRes = await cloud.getTempFileURL({ fileList: thumbnailIds })
+        fileRes.fileList.forEach(f => {
+          if (f.tempFileURL) thumbnailURLMap[f.fileID] = f.tempFileURL
+        })
+      } catch (err) {
+        console.error('获取缩略图临时链接失败:', err)
+      }
+    }
+    const list = listRes.data.map(item => {
+      if (Array.isArray(item.photoFileIDs) && item.photoFileIDs.length > 0) {
+        item.thumbnailURL = thumbnailURLMap[item.photoFileIDs[0]] || ''
+      }
+      return item
+    })
+
     return {
       success: true,
       isManager,
       total,
       page,
       pageSize,
-      list: listRes.data
+      list
     }
   } catch (err) {
     console.error('查询历史失败:', err)

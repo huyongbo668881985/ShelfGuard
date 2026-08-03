@@ -14,6 +14,18 @@ cloud.init({
 
 const db = cloud.database()
 
+// 服务端硬校验：前端校验只是 UX 提示，这里才是真正的边界（云函数公开可调，不能只靠前端）
+const MAX_PHOTOS = 9        // 单次巡检照片数上限（与 app.globalData.config.maxPhotosPerInspection 一致）
+const MAX_TASK_NAME = 100   // 任务名称长度上限
+const MAX_STORE_NAME = 100  // 门店名称长度上限
+const MAX_USER_NAME = 50    // 业务员姓名长度上限
+const MAX_CUSTOMER_ID = 64  // 客户 _id 长度上限
+const MAX_ADDRESS = 300     // 地址文本长度上限
+
+function isValidFileID(id) {
+  return typeof id === 'string' && id.startsWith('cloud://')
+}
+
 exports.main = async (event, context) => {
   const wxContext = cloud.getWXContext()
   const openid = wxContext.OPENID || ''
@@ -23,9 +35,49 @@ exports.main = async (event, context) => {
 
   const { taskName, storeName, userName, customerId, fileIDs, location } = event
 
+  // ---- 入参校验（防绕过前端直接构造请求） ----
   if (!Array.isArray(fileIDs) || fileIDs.length === 0) {
     return { success: false, error: '缺少照片文件，无法提交' }
   }
+  if (fileIDs.length > MAX_PHOTOS) {
+    return { success: false, error: `单次巡检最多提交 ${MAX_PHOTOS} 张照片` }
+  }
+  if (!fileIDs.every(isValidFileID)) {
+    return { success: false, error: '照片文件格式不合法' }
+  }
+
+  if (typeof taskName !== 'string' || !taskName.trim()) {
+    return { success: false, error: '缺少任务名称' }
+  }
+  if (taskName.length > MAX_TASK_NAME) {
+    return { success: false, error: `任务名称不能超过 ${MAX_TASK_NAME} 个字符` }
+  }
+  if (typeof storeName === 'string' && storeName.length > MAX_STORE_NAME) {
+    return { success: false, error: `门店名称不能超过 ${MAX_STORE_NAME} 个字符` }
+  }
+  if (typeof userName === 'string' && userName.length > MAX_USER_NAME) {
+    return { success: false, error: `业务员姓名不能超过 ${MAX_USER_NAME} 个字符` }
+  }
+  if (typeof customerId === 'string' && customerId.length > MAX_CUSTOMER_ID) {
+    return { success: false, error: '客户信息格式不正确' }
+  }
+
+  // 位置信息规范化：非法/缺失时降级为空对象（前端拍照流程已有"不带位置继续"的兜底弹窗）
+  let safeLocation = {}
+  if (location && typeof location === 'object') {
+    const lat = Number(location.latitude)
+    const lng = Number(location.longitude)
+    safeLocation = {
+      latitude: Number.isFinite(lat) ? lat : 0,
+      longitude: Number.isFinite(lng) ? lng : 0,
+      address: (typeof location.address === 'string' ? location.address : '').slice(0, MAX_ADDRESS)
+    }
+  }
+
+  // 可空字符串字段收口为非字符串一律当作空，避免恶意传数字/对象时下游 .slice() 抛错
+  const safeStoreName = typeof storeName === 'string' ? storeName.slice(0, MAX_STORE_NAME) : ''
+  const safeUserName = typeof userName === 'string' ? userName.slice(0, MAX_USER_NAME) : ''
+  const safeCustomerId = typeof customerId === 'string' ? customerId.slice(0, MAX_CUSTOMER_ID) : ''
 
   try {
     // 服务端账号状态校验：停用账号一律拒绝提交（前端只是 UX 提示，这里才是硬边界）
@@ -38,13 +90,13 @@ exports.main = async (event, context) => {
     const addRes = await db.collection('inspections').add({
       data: {
         _openid: openid,                 // 显式写入归属，便于 sales 仅看自己的记录
-        taskName: taskName || '',
-        storeName: storeName || '',
-        userName: userName || '',
-        customerId: customerId || '',
+        taskName: taskName.trim(),
+        storeName: safeStoreName,
+        userName: safeUserName,
+        customerId: safeCustomerId,
         photoFileIDs: fileIDs,
         photoCount: fileIDs.length,
-        location: location || {},
+        location: safeLocation,
         status: 'pending',              // 待分析，batchAnalyze 领取的唯一依据
         analyzeAttempts: 0,
         createdAt: db.serverDate()
