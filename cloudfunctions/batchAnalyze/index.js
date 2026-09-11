@@ -212,19 +212,31 @@ async function claimOnePending() {
 
   // 没有照片的脏记录直接判失败，别让它在队列里反复占位
   if (!Array.isArray(record.photoFileIDs) || record.photoFileIDs.length === 0) {
-    await db.collection('inspections').doc(record._id).update({
+    await db.collection('inspections').where({
+      _id: record._id,
+      status: 'pending'
+    }).update({
       data: { status: 'analyze_failed', analyzeError: '记录中没有照片', analyzedAt: db.serverDate() }
     })
     return null
   }
 
-  await db.collection('inspections').doc(record._id).update({
+  // 查询和更新之间可能有另一轮定时任务/手动任务抢到同一条记录。
+  // 把 status=pending 放进更新条件，只有真正更新成功的一方才获得分析权。
+  const claimRes = await db.collection('inspections').where({
+    _id: record._id,
+    status: 'pending'
+  }).update({
     data: {
       status: 'analyzing',
       analyzeStartedAt: db.serverDate(),
       analyzeAttempts: _.inc(1)
     }
   })
+
+  if (!claimRes.stats || claimRes.stats.updated !== 1) {
+    return null
+  }
 
   record.analyzeAttempts = (record.analyzeAttempts || 0) + 1
   return record

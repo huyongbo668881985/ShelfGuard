@@ -22,8 +22,11 @@ const MAX_USER_NAME = 50    // 业务员姓名长度上限
 const MAX_CUSTOMER_ID = 64  // 客户 _id 长度上限
 const MAX_ADDRESS = 300     // 地址文本长度上限
 
-function isValidFileID(id) {
-  return typeof id === 'string' && id.startsWith('cloud://')
+function isValidFileID(id, openid) {
+  if (typeof id !== 'string' || !id.startsWith('cloud://')) return false
+  // 上传端使用 inspections/<openid>/... 目录，防止把已知的他人 fileID
+  // 挂到自己的巡检记录中。旧格式文件不再接受新的巡检提交。
+  return id.includes(`/inspections/${openid}/`)
 }
 
 exports.main = async (event, context) => {
@@ -42,7 +45,7 @@ exports.main = async (event, context) => {
   if (fileIDs.length > MAX_PHOTOS) {
     return { success: false, error: `单次巡检最多提交 ${MAX_PHOTOS} 张照片` }
   }
-  if (!fileIDs.every(isValidFileID)) {
+  if (!fileIDs.every(id => isValidFileID(id, openid))) {
     return { success: false, error: '照片文件格式不合法' }
   }
 
@@ -76,7 +79,6 @@ exports.main = async (event, context) => {
 
   // 可空字符串字段收口为非字符串一律当作空，避免恶意传数字/对象时下游 .slice() 抛错
   const safeStoreName = typeof storeName === 'string' ? storeName.slice(0, MAX_STORE_NAME) : ''
-  const safeUserName = typeof userName === 'string' ? userName.slice(0, MAX_USER_NAME) : ''
   const safeCustomerId = typeof customerId === 'string' ? customerId.slice(0, MAX_CUSTOMER_ID) : ''
 
   try {
@@ -86,13 +88,16 @@ exports.main = async (event, context) => {
     if (user && user.disabled) {
       return { success: false, error: '账号已停用，无法提交巡检' }
     }
+    if (!user) {
+      return { success: false, error: '用户资料不存在，请重新登录后再试' }
+    }
 
     const addRes = await db.collection('inspections').add({
       data: {
         _openid: openid,                 // 显式写入归属，便于 sales 仅看自己的记录
         taskName: taskName.trim(),
         storeName: safeStoreName,
-        userName: safeUserName,
+        userName: typeof user.name === 'string' ? user.name.slice(0, MAX_USER_NAME) : '',
         customerId: safeCustomerId,
         photoFileIDs: fileIDs,
         photoCount: fileIDs.length,

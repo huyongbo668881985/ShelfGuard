@@ -215,7 +215,7 @@ db.collection('users').createIndex({
 **⚠️ 权限模型跟 `inspections` 不一样，注意别混淆**：
 - `inspections` 是个人巡检记录，云函数查询必须按 `_openid` 过滤（见前文 `getHistory` 的教训）。
 - `products` 是团队共享资料库，所有登录用户查询到的是**同一份**产品清单，云函数**不**按 `_openid` 过滤；`_openid` 字段只记录创建人用于审计。
-- 当前版本没有做角色权限限制，任何登录用户都能增删改产品库——这是"先跑起来"的简化设计（详见项目当前阶段说明）。如果后续要收紧成"只有管理员能维护"，在 `cloudfunctions/products/index.js` 的 `add`/`update`/`remove` 分支里加一次 `users.role` 校验即可，前端调用方式不用变。
+- 产品库查询对登录用户开放；新增、修改、下架仅允许 `admin` 角色，服务端在 `cloudfunctions/products/index.js` 的 `add`/`update`/`remove` 分支统一校验。
 
 ### 字段结构
 

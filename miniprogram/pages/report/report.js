@@ -37,6 +37,10 @@ Page({
 
   // 加载巡检详情
   async loadDetail(id) {
+    if (this.data.refreshTimer) {
+      clearInterval(this.data.refreshTimer)
+      this.setData({ refreshTimer: null })
+    }
     this.setData({ loading: true })
 
     try {
@@ -83,6 +87,9 @@ Page({
 
   // 轮询检查分析状态
   startPolling(id) {
+    if (this.data.refreshTimer) {
+      clearInterval(this.data.refreshTimer)
+    }
     let attempts = 0
     const maxAttempts = 30 // 最多轮询 30 次（约 1 分钟）
 
@@ -90,6 +97,7 @@ Page({
       attempts++
       if (attempts >= maxAttempts) {
         clearInterval(timer)
+        if (this.data.refreshTimer === timer) this.setData({ refreshTimer: null })
         wx.showToast({ title: '分析耗时较长，请稍后下拉刷新查看', icon: 'none', duration: 3000 })
         return
       }
@@ -104,6 +112,7 @@ Page({
 
         if (detail.status === 'analyzed' || detail.aiReport) {
           clearInterval(timer)
+          if (this.data.refreshTimer === timer) this.setData({ refreshTimer: null })
           // 重新加载完整详情
           this.loadDetail(id)
         }

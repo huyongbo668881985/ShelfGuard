@@ -18,6 +18,18 @@ const db = cloud.database()
 const _ = db.command
 
 const MANAGER_ROLES = ['admin', 'manager']
+const MAX_PAGE_SIZE = 50
+const MAX_KEYWORD_LENGTH = 50
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function normalizeScore(value) {
+  if (value === null || value === undefined || value === '') return null
+  const score = Number(value)
+  return Number.isFinite(score) && score >= 0 && score <= 100 ? score : null
+}
 
 async function getCaller(openid) {
   try {
@@ -59,14 +71,16 @@ function buildBaseConditions({ isManager, openid, targetUserName, where }) {
     conditions._openid = openid
   }
 
-  if (where && where.scoreMin != null) {
-    conditions['aiReport.score'] = _.gte(where.scoreMin)
+  const scoreMin = normalizeScore(where && where.scoreMin)
+  const scoreMax = normalizeScore(where && where.scoreMax)
+  if (scoreMin !== null) {
+    conditions['aiReport.score'] = _.gte(scoreMin)
   }
-  if (where && where.scoreMax != null) {
+  if (scoreMax !== null) {
     const cur = conditions['aiReport.score']
     conditions['aiReport.score'] = cur
-      ? _.and(cur, _.lte(where.scoreMax))
-      : _.lte(where.scoreMax)
+      ? _.and(cur, _.lte(scoreMax))
+      : _.lte(scoreMax)
   }
 
   // 关键词搜索：前端只传纯文本 keyword，服务端负责拼接 $or（门店名/任务名模糊匹配）。
@@ -74,9 +88,11 @@ function buildBaseConditions({ isManager, openid, targetUserName, where }) {
   // 但 db.command 经 callFunction JSON 序列化后 _actions 通常不存在，导致搜索条件被静默丢弃。
   // 改为显式传 keyword 由服务端拼 $or，不再依赖序列化内部字段。
   if (where && where.keyword) {
+    const keyword = String(where.keyword).trim().slice(0, MAX_KEYWORD_LENGTH)
+    if (!keyword) return conditions
     conditions = _.and(conditions, _.or([
-      { storeName: db.RegExp({ regexp: where.keyword, options: 'i' }) },
-      { taskName: db.RegExp({ regexp: where.keyword, options: 'i' }) }
+      { storeName: db.RegExp({ regexp: escapeRegExp(keyword), options: 'i' }) },
+      { taskName: db.RegExp({ regexp: escapeRegExp(keyword), options: 'i' }) }
     ]))
   }
 
@@ -88,13 +104,20 @@ exports.main = async (event, context) => {
   const openid = wxContext.OPENID
   const { action = 'list', page = 1, pageSize = 20, where = {}, targetUserName = '' } = event
 
+  const safePage = Math.max(1, Math.floor(Number(page) || 1))
+  const safePageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, Math.floor(Number(pageSize) || 20)))
+  const safeWhere = where && typeof where === 'object' && !Array.isArray(where) ? where : {}
+  const safeTargetUserName = typeof targetUserName === 'string'
+    ? targetUserName.trim().slice(0, 50)
+    : ''
+
   const caller = await getCaller(openid)
   if (caller && caller.disabled) {
     return { success: false, error: '账号已停用，请联系管理员' }
   }
   const role = (caller && MANAGER_ROLES.includes(caller.role)) ? caller.role : 'sales'
   const isManager = MANAGER_ROLES.includes(role)
-  const queryConditions = buildBaseConditions({ isManager, openid, targetUserName, where })
+  const queryConditions = buildBaseConditions({ isManager, openid, targetUserName: safeTargetUserName, where: safeWhere })
 
   try {
     if (action === 'stats') {
@@ -149,8 +172,8 @@ exports.main = async (event, context) => {
     const listRes = await db.collection('inspections')
       .where(queryConditions)
       .orderBy('createdAt', 'desc')
-      .skip((page - 1) * pageSize)
-      .limit(pageSize)
+      .skip((safePage - 1) * safePageSize)
+      .limit(safePageSize)
       .field({
         _id: true,
         taskName: true,
@@ -192,8 +215,8 @@ exports.main = async (event, context) => {
       success: true,
       isManager,
       total,
-      page,
-      pageSize,
+      page: safePage,
+      pageSize: safePageSize,
       list
     }
   } catch (err) {

@@ -219,7 +219,7 @@ MIT
 - `inspections`（个人巡检记录）：云函数必须按 `_openid` 过滤，只能查自己的。
 - `products`（团队共享产品库）：云函数**不**按 `_openid` 过滤，全员看到同一份数据，`_openid` 只做审计用途。
 
-当前版本没有做角色权限限制（任何登录用户都能维护产品库），这是"先跑起来"的简化设计，后续要收紧的话在 `cloudfunctions/products/index.js` 里加一次角色校验即可。详见 `DATABASE_SCHEMA.md` 里的 `products` 集合说明。
+产品库查询对登录用户开放，但新增、编辑、下架仅允许 `admin` 角色，服务端统一校验。详见 `DATABASE_SCHEMA.md` 里的 `products` 集合说明。
 
 ## 如何把自己设为管理员（admin）
 

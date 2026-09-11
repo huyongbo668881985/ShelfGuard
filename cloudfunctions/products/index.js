@@ -5,14 +5,13 @@
 // - inspections 是"个人巡检记录"，必须按 _openid 过滤，见 getHistory 的教训。
 // - products 是"团队共享资料库"，所有登录用户都应该能看到同一份产品清单，
 //   所以这里【不】按 _openid 过滤查询结果，_openid 只记录"谁创建的"用于审计。
-// - 当前版本没有做角色权限控制（任何登录用户都能增删改），这是"先跑起来"的
-//   简化设计。以后如果要限制只有管理员能维护产品库，在 add/update/remove 这几个
-//   分支里加一次 users 表的 role 校验即可，不需要改前端调用方式。
+// - 产品库写操作仅允许 admin，避免普通业务员误改团队共享资料。
 
 const cloud = require('wx-server-sdk')
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV })
 
 const db = cloud.database()
+const ADMIN_ROLES = ['admin']
 
 const EDITABLE_FIELDS = ['brandName', 'productLine', 'aliases', 'photos', 'isActive']
 
@@ -24,6 +23,12 @@ function pickEditableFields(product) {
     }
   })
   return picked
+}
+
+async function isAdmin(openid) {
+  if (!openid) return false
+  const res = await db.collection('users').where({ _openid: openid }).get()
+  return !!(res.data[0] && ADMIN_ROLES.includes(res.data[0].role) && !res.data[0].disabled)
 }
 
 exports.main = async (event, context) => {
@@ -80,6 +85,9 @@ exports.main = async (event, context) => {
 
       // 新增产品
       case 'add': {
+        if (!(await isAdmin(openid))) {
+          return { success: false, error: '只有管理员可以维护产品库' }
+        }
         if (!product || !product.brandName) {
           return { success: false, error: '缺少品牌名称' }
         }
@@ -100,6 +108,9 @@ exports.main = async (event, context) => {
 
       // 更新产品
       case 'update': {
+        if (!(await isAdmin(openid))) {
+          return { success: false, error: '只有管理员可以维护产品库' }
+        }
         if (!productId) {
           return { success: false, error: '缺少 productId' }
         }
@@ -113,6 +124,9 @@ exports.main = async (event, context) => {
 
       // 下架产品（软删除，保留历史巡检报告里对这条产品资料的可追溯性）
       case 'remove': {
+        if (!(await isAdmin(openid))) {
+          return { success: false, error: '只有管理员可以维护产品库' }
+        }
         if (!productId) {
           return { success: false, error: '缺少 productId' }
         }

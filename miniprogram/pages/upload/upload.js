@@ -240,7 +240,9 @@ Page({
 
       try {
         const filePath = photo.compressedPath || photo.originalPath
-        const fileName = `inspections/${Date.now()}-${i}-${Math.random().toString(36).substr(2, 6)}.jpg`
+        const owner = app.globalData.openid
+        if (!owner) throw new Error('登录状态已失效，请重新进入小程序')
+        const fileName = `inspections/${owner}/${Date.now()}-${i}-${Math.random().toString(36).substr(2, 6)}.jpg`
 
         const uploadRes = await wx.cloud.uploadFile({
           cloudPath: fileName,
