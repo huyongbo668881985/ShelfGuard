@@ -83,6 +83,15 @@ Component({
         // 恢复透明度
         ctx.globalAlpha = 1
 
+        // 等待一帧渲染缓冲后再导出，避免部分机型导出空白图
+        await new Promise(resolve => {
+          if (typeof canvas.requestAnimationFrame === 'function') {
+            canvas.requestAnimationFrame(resolve)
+          } else {
+            setTimeout(resolve, 30)
+          }
+        })
+
         // 导出为临时文件
         const tempPath = await new Promise((resolve, reject) => {
           wx.canvasToTempFilePath({
@@ -137,48 +146,50 @@ Component({
     },
 
     /**
-     * 底部水印
+     * 底部水印（动态行高与超长截断，避免空行与文字溢出）
      */
     _drawBottomWatermark(ctx, width, height, config, params) {
       const { padding, baseFontSize, titleFontSize, lineSpacing, dateTime } = params
+      const maxTextWidth = width - padding * 2
 
-      // 背景条高度
-      const bgHeight = lineSpacing * 4 + padding * 2
+      const lines = []
+      if (config.taskName) {
+        lines.push({ text: config.taskName, isTitle: true })
+      }
+      if (config.storeName) {
+        lines.push({ text: `门店：${config.storeName}`, isTitle: false })
+      }
+      if (config.address) {
+        lines.push({ text: `位置：${config.address}`, isTitle: false })
+      }
+      const bottomText = [config.userName, dateTime].filter(Boolean).join('  ')
+      if (bottomText) {
+        lines.push({ text: bottomText, isTitle: false })
+      }
+
+      const totalLines = Math.max(1, lines.length)
+      const bgHeight = (totalLines - 1) * lineSpacing + titleFontSize + padding * 2
       const bgY = height - bgHeight
 
       // 绘制半透明背景
       ctx.fillStyle = config.bgColor || 'rgba(0, 0, 0, 0.4)'
       ctx.fillRect(0, bgY, width, bgHeight)
 
-      // LOGO（右上角）
-      let logoSize = 0
-      if (config.showLogo && config.logoPath) {
-        // LOGO 绘制逻辑（简化处理，实际需异步加载）
-        logoSize = 80 * (width / 750)
-      }
-
-      // 文字颜色
+      // 绘制动态文本
       ctx.fillStyle = config.color || '#ffffff'
       ctx.textAlign = 'left'
 
-      // 任务名称（大字号）
-      ctx.font = `bold ${titleFontSize}px sans-serif`
-      ctx.fillText(config.taskName || '', padding, bgY + padding + titleFontSize)
-
-      // 门店名称
-      ctx.font = `${baseFontSize}px sans-serif`
-      if (config.storeName) {
-        ctx.fillText(`门店：${config.storeName}`, padding, bgY + padding + titleFontSize + lineSpacing)
-      }
-
-      // 位置信息
-      if (config.address) {
-        ctx.fillText(`位置：${config.address}`, padding, bgY + padding + titleFontSize + lineSpacing * 2)
-      }
-
-      // 业务员 + 时间（底部一行）
-      const bottomText = `${config.userName || ''}  ${dateTime}`
-      ctx.fillText(bottomText, padding, bgY + padding + titleFontSize + lineSpacing * 3)
+      let currentY = bgY + padding + titleFontSize
+      lines.forEach((item, idx) => {
+        if (item.isTitle) {
+          ctx.font = `bold ${titleFontSize}px sans-serif`
+        } else {
+          ctx.font = `${baseFontSize}px sans-serif`
+        }
+        const safeText = this._truncateText(ctx, item.text, maxTextWidth)
+        ctx.fillText(safeText, padding, currentY)
+        currentY += lineSpacing
+      })
     },
 
     /**
@@ -186,8 +197,17 @@ Component({
      */
     _drawTopWatermark(ctx, width, height, config, params) {
       const { padding, baseFontSize, titleFontSize, lineSpacing, dateTime } = params
+      const maxTextWidth = width - padding * 2
 
-      const bgHeight = lineSpacing * 3 + padding * 2
+      const lines = []
+      if (config.taskName) lines.push({ text: config.taskName, isTitle: true })
+      if (config.storeName) lines.push({ text: `门店：${config.storeName}`, isTitle: false })
+      if (config.address) lines.push({ text: `位置：${config.address}`, isTitle: false })
+      const bottomText = [config.userName, dateTime].filter(Boolean).join('  ')
+      if (bottomText) lines.push({ text: bottomText, isTitle: false })
+
+      const totalLines = Math.max(1, lines.length)
+      const bgHeight = (totalLines - 1) * lineSpacing + titleFontSize + padding * 2
 
       // 绘制半透明背景
       ctx.fillStyle = config.bgColor || 'rgba(0, 0, 0, 0.4)'
@@ -197,19 +217,40 @@ Component({
       ctx.fillStyle = config.color || '#ffffff'
       ctx.textAlign = 'left'
 
-      // 任务名称
-      ctx.font = `bold ${titleFontSize}px sans-serif`
-      ctx.fillText(config.taskName || '', padding, padding + titleFontSize)
+      let currentY = padding + titleFontSize
+      lines.forEach((item) => {
+        if (item.isTitle) {
+          ctx.font = `bold ${titleFontSize}px sans-serif`
+        } else {
+          ctx.font = `${baseFontSize}px sans-serif`
+        }
+        const safeText = this._truncateText(ctx, item.text, maxTextWidth)
+        ctx.fillText(safeText, padding, currentY)
+        currentY += lineSpacing
+      })
+    },
 
-      // 门店 + 位置
-      ctx.font = `${baseFontSize}px sans-serif`
-      if (config.storeName) {
-        ctx.fillText(`门店：${config.storeName}`, padding, padding + titleFontSize + lineSpacing)
+    /**
+     * 测量并截断文本，超出宽度补省略号
+     */
+    _truncateText(ctx, text, maxWidth) {
+      if (!text || !maxWidth) return text || ''
+      if (ctx.measureText(text).width <= maxWidth) return text
+
+      let low = 0
+      let high = text.length
+      let best = text
+      while (low <= high) {
+        const mid = Math.floor((low + high) / 2)
+        const sub = text.slice(0, mid) + '...'
+        if (ctx.measureText(sub).width <= maxWidth) {
+          best = sub
+          low = mid + 1
+        } else {
+          high = mid - 1
+        }
       }
-
-      // 业务员 + 时间
-      const infoText = `${config.userName || ''}  ${dateTime}`
-      ctx.fillText(infoText, padding, padding + titleFontSize + lineSpacing * 2)
+      return best
     },
 
     /**

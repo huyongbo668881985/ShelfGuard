@@ -1,4 +1,16 @@
 <!--pages/report/report.wxml-->
+<wxs module="tools">
+  function getComplianceColor(score) {
+    if (!score && score !== 0) return '#4caf50';
+    if (score >= 80) return '#2e7d32';
+    if (score >= 60) return '#ff9800';
+    return '#f44336';
+  }
+  module.exports = {
+    getComplianceColor: getComplianceColor
+  };
+</wxs>
+
 <view class="report-page">
   <!-- 加载中 -->
   <view class="loading-state" wx:if="{{loading}}">
@@ -50,7 +62,13 @@
 
     <!-- 陈列照片 -->
     <view class="card photo-section">
-      <view class="section-title">陈列照片 ({{detail.photoCount || 1}}张)</view>
+      <view class="photo-section-header">
+        <view class="section-title">陈列照片 ({{detail.photoCount || 1}}张)</view>
+        <view class="photo-quick-actions" wx:if="{{detail.photoURLs && detail.photoURLs.length > 0}}">
+          <text class="quick-action-btn" bindtap="sharePhoto">📤 发微信</text>
+          <text class="quick-action-btn" bindtap="savePhoto">💾 存相册</text>
+        </view>
+      </view>
       <view class="photo-grid">
         <image
           wx:for="{{detail.photoURLs}}"
@@ -84,42 +102,62 @@
           <view class="compliance-item" wx:if="{{detail.aiReport.displayCompliance.labelOrientation}}">
             <view class="compliance-header">
               <text class="compliance-name">正标朝向</text>
-              <text class="compliance-score" style="color: {{getComplianceColor(detail.aiReport.displayCompliance.labelOrientation.score)}}">{{detail.aiReport.displayCompliance.labelOrientation.score}}分</text>
+              <text class="compliance-score" style="color: {{tools.getComplianceColor(detail.aiReport.displayCompliance.labelOrientation.score)}}">{{detail.aiReport.displayCompliance.labelOrientation.score}}分</text>
             </view>
             <view class="compliance-bar">
-              <view class="compliance-fill" style="width: {{detail.aiReport.displayCompliance.labelOrientation.score}}%; background: {{getComplianceColor(detail.aiReport.displayCompliance.labelOrientation.score)}}"></view>
+              <view class="compliance-fill" style="width: {{detail.aiReport.displayCompliance.labelOrientation.score}}%; background: {{tools.getComplianceColor(detail.aiReport.displayCompliance.labelOrientation.score)}}"></view>
             </view>
             <text class="compliance-detail">{{detail.aiReport.displayCompliance.labelOrientation.detail}}</text>
           </view>
           <view class="compliance-item" wx:if="{{detail.aiReport.displayCompliance.neatness}}">
             <view class="compliance-header">
               <text class="compliance-name">整齐度</text>
-              <text class="compliance-score" style="color: {{getComplianceColor(detail.aiReport.displayCompliance.neatness.score)}}">{{detail.aiReport.displayCompliance.neatness.score}}分</text>
+              <text class="compliance-score" style="color: {{tools.getComplianceColor(detail.aiReport.displayCompliance.neatness.score)}}">{{detail.aiReport.displayCompliance.neatness.score}}分</text>
             </view>
             <view class="compliance-bar">
-              <view class="compliance-fill" style="width: {{detail.aiReport.displayCompliance.neatness.score}}%; background: {{getComplianceColor(detail.aiReport.displayCompliance.neatness.score)}}"></view>
+              <view class="compliance-fill" style="width: {{detail.aiReport.displayCompliance.neatness.score}}%; background: {{tools.getComplianceColor(detail.aiReport.displayCompliance.neatness.score)}}"></view>
             </view>
             <text class="compliance-detail">{{detail.aiReport.displayCompliance.neatness.detail}}</text>
           </view>
           <view class="compliance-item" wx:if="{{detail.aiReport.displayCompliance.goldenPosition}}">
             <view class="compliance-header">
               <text class="compliance-name">黄金位置</text>
-              <text class="compliance-score" style="color: {{getComplianceColor(detail.aiReport.displayCompliance.goldenPosition.score)}}">{{detail.aiReport.displayCompliance.goldenPosition.score}}分</text>
+              <text class="compliance-score" style="color: {{tools.getComplianceColor(detail.aiReport.displayCompliance.goldenPosition.score)}}">{{detail.aiReport.displayCompliance.goldenPosition.score}}分</text>
             </view>
             <view class="compliance-bar">
-              <view class="compliance-fill" style="width: {{detail.aiReport.displayCompliance.goldenPosition.score}}%; background: {{getComplianceColor(detail.aiReport.displayCompliance.goldenPosition.score)}}"></view>
+              <view class="compliance-fill" style="width: {{detail.aiReport.displayCompliance.goldenPosition.score}}%; background: {{tools.getComplianceColor(detail.aiReport.displayCompliance.goldenPosition.score)}}"></view>
             </view>
             <text class="compliance-detail">{{detail.aiReport.displayCompliance.goldenPosition.detail}}</text>
+          </view>
+          <view class="compliance-item" wx:if="{{detail.aiReport.displayCompliance.brandConcentration}}">
+            <view class="compliance-header">
+              <text class="compliance-name">集中陈列</text>
+              <text class="compliance-score" style="color: {{tools.getComplianceColor(detail.aiReport.displayCompliance.brandConcentration.score)}}">{{detail.aiReport.displayCompliance.brandConcentration.score}}分</text>
+            </view>
+            <view class="compliance-bar">
+              <view class="compliance-fill" style="width: {{detail.aiReport.displayCompliance.brandConcentration.score}}%; background: {{tools.getComplianceColor(detail.aiReport.displayCompliance.brandConcentration.score)}}"></view>
+            </view>
+            <text class="compliance-detail">{{detail.aiReport.displayCompliance.brandConcentration.detail}}</text>
           </view>
           <view class="compliance-item" wx:if="{{detail.aiReport.displayCompliance.priceTagMatch}}">
             <view class="compliance-header">
               <text class="compliance-name">价签对应</text>
-              <text class="compliance-score" style="color: {{getComplianceColor(detail.aiReport.displayCompliance.priceTagMatch.score)}}">{{detail.aiReport.displayCompliance.priceTagMatch.score}}分</text>
+              <text class="compliance-score" style="color: {{tools.getComplianceColor(detail.aiReport.displayCompliance.priceTagMatch.score)}}">{{detail.aiReport.displayCompliance.priceTagMatch.score}}分</text>
             </view>
             <view class="compliance-bar">
-              <view class="compliance-fill" style="width: {{detail.aiReport.displayCompliance.priceTagMatch.score}}%; background: {{getComplianceColor(detail.aiReport.displayCompliance.priceTagMatch.score)}}"></view>
+              <view class="compliance-fill" style="width: {{detail.aiReport.displayCompliance.priceTagMatch.score}}%; background: {{tools.getComplianceColor(detail.aiReport.displayCompliance.priceTagMatch.score)}}"></view>
             </view>
             <text class="compliance-detail">{{detail.aiReport.displayCompliance.priceTagMatch.detail}}</text>
+          </view>
+          <view class="compliance-item" wx:if="{{detail.aiReport.displayCompliance.shelfFullness}}">
+            <view class="compliance-header">
+              <text class="compliance-name">货架饱满度</text>
+              <text class="compliance-score" style="color: {{tools.getComplianceColor(detail.aiReport.displayCompliance.shelfFullness.score)}}">{{detail.aiReport.displayCompliance.shelfFullness.score}}分</text>
+            </view>
+            <view class="compliance-bar">
+              <view class="compliance-fill" style="width: {{detail.aiReport.displayCompliance.shelfFullness.score}}%; background: {{tools.getComplianceColor(detail.aiReport.displayCompliance.shelfFullness.score)}}"></view>
+            </view>
+            <text class="compliance-detail">{{detail.aiReport.displayCompliance.shelfFullness.detail}}</text>
           </view>
         </view>
       </view>
@@ -221,7 +259,7 @@
       <text class="fail-icon">!</text>
       <text class="fail-text">AI 分析失败</text>
       <text class="fail-error" wx:if="{{detail.analyzeError}}">{{detail.analyzeError}}</text>
-      <button class="btn-secondary refresh-btn" bindtap="refresh">重试</button>
+      <button class="btn-primary refresh-btn" bindtap="retryAnalysis">重新进行 AI 分析</button>
     </view>
 
     <!-- 底部操作栏：报告页是流程的终点，之前没有明确的下一步入口，

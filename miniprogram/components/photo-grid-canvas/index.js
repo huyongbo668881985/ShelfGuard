@@ -86,6 +86,15 @@ Component({
           this._drawCover(ctx, img, x, y, CELL_SIZE, CELL_SIZE)
         })
 
+        // 等待一帧渲染缓冲后再导出，避免部分机型导出空白图
+        await new Promise(resolve => {
+          if (typeof canvas.requestAnimationFrame === 'function') {
+            canvas.requestAnimationFrame(resolve)
+          } else {
+            setTimeout(resolve, 30)
+          }
+        })
+
         const tempPath = await new Promise((resolve, reject) => {
           wx.canvasToTempFilePath({
             canvas,

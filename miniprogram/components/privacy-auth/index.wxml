@@ -11,7 +11,12 @@
     <view class="privacy-contract" bindtap="openContract">查看完整《小程序隐私保护指引》</view>
     <view class="privacy-actions">
       <view class="privacy-btn privacy-refuse" bindtap="onRefuse">暂不使用</view>
-      <view class="privacy-btn privacy-agree" bindtap="onAgree">同意并继续</view>
+      <button
+        id="agree-btn"
+        class="privacy-btn privacy-agree"
+        open-type="agreePrivacyAuthorization"
+        bindagreeprivacyauthorization="onAgree"
+      >同意并继续</button>
     </view>
   </view>
 </view>

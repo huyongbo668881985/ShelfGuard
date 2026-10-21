@@ -31,7 +31,11 @@ Page({
       total: 0,
       avgScore: 0,
       thisWeek: 0
-    }
+    },
+
+    // 晚间集中分析：今日全天巡检汇总结论日报
+    latestDailyReport: null,
+    showDailyModal: false
   },
 
   onLoad() {
@@ -191,7 +195,7 @@ Page({
     return item
   },
 
-  // 加载统计信息
+  // 加载统计信息与今日汇总结论
   async loadStats() {
     try {
       const where = this.buildWhereCondition()
@@ -205,11 +209,58 @@ Page({
       })
 
       if (res.result && res.result.success) {
-        this.setData({ stats: res.result.stats })
+        this.setData({
+          stats: res.result.stats,
+          latestDailyReport: res.result.latestDailyReport || null
+        })
       }
     } catch (err) {
       console.error('加载统计失败:', err)
     }
+  },
+
+  // 打开今日巡检汇总结论完整弹窗
+  viewDailyReportDetail() {
+    this.setData({ showDailyModal: true })
+  },
+
+  closeDailyModal() {
+    this.setData({ showDailyModal: false })
+  },
+
+  // 复制日报结论文字到剪贴板，方便一键转发到微信工作群
+  copyDailySummary() {
+    const report = this.data.latestDailyReport && this.data.latestDailyReport.report
+    if (!report) return
+
+    const lines = [
+      `📋【${report.summaryTitle || '白酒终端巡检综合分析日报'}】`,
+      `📅 日期：${this.data.latestDailyReport.date || '今日'}`,
+      `⭐ 综合评分：${report.overallScore}分（${report.overallLevel || '良好'}）`,
+      `🏬 巡检门店：${this.data.latestDailyReport.inspectionCount || 0}家`,
+      `\n💡 核心结论：\n${report.summaryConclusion || '暂无'}`,
+      `\n⚠️ 今日共性问题：`
+    ]
+
+    if (Array.isArray(report.commonIssues)) {
+      report.commonIssues.forEach((issue, idx) => {
+        lines.push(`${idx + 1}. [${issue.category}] ${issue.description} (${issue.affectStores || ''})`)
+      })
+    }
+
+    if (Array.isArray(report.actionPlanTomorrow) && report.actionPlanTomorrow.length > 0) {
+      lines.push(`\n🎯 明日行动指南：`)
+      report.actionPlanTomorrow.forEach((act, idx) => {
+        lines.push(`${idx + 1}. ${act.action}`)
+      })
+    }
+
+    wx.setClipboardData({
+      data: lines.join('\n'),
+      success: () => {
+        wx.showToast({ title: '日报文字已复制，可直接发微信群', icon: 'none', duration: 2500 })
+      }
+    })
   },
 
   // 点击记录

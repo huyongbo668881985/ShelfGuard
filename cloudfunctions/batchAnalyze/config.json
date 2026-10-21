@@ -2,11 +2,12 @@
   "permissions": {
     "openapi": []
   },
+  "timeout": 60,
   "triggers": [
     {
       "name": "batchAnalyzeTimer",
       "type": "timer",
-      "config": "0 */2 * * * * *"
+      "config": "0 */2 * * * *"
     }
   ]
 }

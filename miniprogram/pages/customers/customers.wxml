@@ -63,50 +63,52 @@
     <scroll-view class="editor-content" scroll-y>
       <view class="form-item">
         <text class="form-label">门店名称 *</text>
-        <textarea
+        <input
           class="form-input"
-          style="color: #1a1a2e; background: #fff; height: 80rpx;"
+          style="color: #1a1a2e; background: #fff; height: 80rpx; line-height: 80rpx;"
           placeholder="如：XX超市XX店"
           placeholder-style="color: #999;"
           value="{{form.storeName}}"
           bindinput="onStoreNameInput"
-        ></textarea>
+        />
       </view>
 
       <view class="form-item">
         <text class="form-label">地址（可选）</text>
-        <textarea
+        <input
           class="form-input"
-          style="color: #1a1a2e; background: #fff; height: 80rpx;"
+          style="color: #1a1a2e; background: #fff; height: 80rpx; line-height: 80rpx;"
           placeholder="如：XX路XX号"
           placeholder-style="color: #999;"
           value="{{form.address}}"
           bindinput="onAddressInput"
-        ></textarea>
+        />
       </view>
 
       <view class="form-item">
         <text class="form-label">联系人（可选）</text>
-        <textarea
+        <input
           class="form-input"
-          style="color: #1a1a2e; background: #fff; height: 80rpx;"
+          style="color: #1a1a2e; background: #fff; height: 80rpx; line-height: 80rpx;"
           placeholder="如：王经理"
           placeholder-style="color: #999;"
           value="{{form.contactName}}"
           bindinput="onContactNameInput"
-        ></textarea>
+        />
       </view>
 
       <view class="form-item">
         <text class="form-label">联系电话（可选）</text>
-        <textarea
+        <input
           class="form-input"
-          style="color: #1a1a2e; background: #fff; height: 80rpx;"
+          type="number"
+          maxlength="11"
+          style="color: #1a1a2e; background: #fff; height: 80rpx; line-height: 80rpx;"
           placeholder="如：13800138000"
           placeholder-style="color: #999;"
           value="{{form.contactPhone}}"
           bindinput="onContactPhoneInput"
-        ></textarea>
+        />
       </view>
 
       <view class="form-item">

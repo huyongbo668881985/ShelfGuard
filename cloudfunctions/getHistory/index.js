@@ -133,35 +133,60 @@ exports.main = async (event, context) => {
       const weekConditions = _.and(statsConditions, { createdAt: _.gte(weekAgo) })
       const weekRes = await db.collection('inspections').where(weekConditions).count()
 
-      // 平均分：游标遍历全部有分数的记录再求平均，避免之前 .limit(100) 截断导致
-      // 业务员记录一多或管理者看全员时平均分明显失真。
+      // 平均分：使用云数据库原生聚合管道直接在引擎层计算平均分，取代循环分页串行查询，毫秒级响应
+      const $ = db.command.aggregate
       let avgScore = 0
-      let totalScore = 0
-      let scoreCount = 0
-      const BATCH_SIZE = 100
-      for (let skip = 0; ; skip += BATCH_SIZE) {
-        const batch = await db.collection('inspections')
-          .where(_.and(statsConditions, { 'aiReport.score': _.exists(true) }))
-          .field({ 'aiReport.score': true })
-          .skip(skip)
-          .limit(BATCH_SIZE)
-          .get()
-
-        if (batch.data.length === 0) break
-        for (const item of batch.data) {
-          totalScore += (item.aiReport?.score || 0)
-          scoreCount++
+      try {
+        const avgRes = await db.collection('inspections')
+          .aggregate()
+          .match(_.and(statsConditions, { 'aiReport.score': _.exists(true) }))
+          .group({
+            _id: null,
+            avgScore: $.avg('$aiReport.score')
+          })
+          .end()
+        if (avgRes.list && avgRes.list.length > 0 && avgRes.list[0].avgScore != null) {
+          avgScore = Math.round(avgRes.list[0].avgScore)
         }
-        if (batch.data.length < BATCH_SIZE) break
+      } catch (aggErr) {
+        console.error('聚合计算平均分失败，降级为空:', aggErr)
       }
-      if (scoreCount > 0) {
-        avgScore = Math.round(totalScore / scoreCount)
+
+      // 顺便获取最新的每日汇总结论，供历史页置顶卡片展示（严格遵守业务员数据隔离）
+      let latestDailyReport = null
+      const dailyWhere = {}
+      if (isManager) {
+        if (safeTargetUserName) dailyWhere.userName = safeTargetUserName
+      } else {
+        dailyWhere._openid = openid
+      }
+      try {
+        const dailyRes = await db.collection('dailyReports')
+          .where(dailyWhere)
+          .orderBy('generatedAt', 'desc')
+          .limit(1)
+          .get()
+        if (dailyRes.data && dailyRes.data.length > 0) {
+          latestDailyReport = dailyRes.data[0]
+        }
+      } catch (e) {
+        try {
+          const sRes = await db.collection('settings').doc('global').get()
+          const fallbackReport = (sRes.data && sRes.data.latestDailyReport) || null
+          if (fallbackReport) {
+            // 校验归属：普通业务员只能读取属于自己的快照
+            if (isManager || fallbackReport._openid === openid) {
+              latestDailyReport = fallbackReport
+            }
+          }
+        } catch (se) {}
       }
 
       return {
         success: true,
         isManager,
-        stats: { total: totalRes.total, thisWeek: weekRes.total, avgScore }
+        stats: { total: totalRes.total, thisWeek: weekRes.total, avgScore },
+        latestDailyReport
       }
     }
 

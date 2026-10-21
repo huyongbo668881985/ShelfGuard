@@ -97,6 +97,18 @@
       <text class="composing-text">正在添加水印...</text>
     </view>
 
+    <!-- 快捷分享工具条：发微信/存相册 -->
+    <view class="preview-share-bar" wx:if="{{!composing && watermarkedPath}}">
+      <view class="share-btn" bindtap="shareToWechat">
+        <text class="share-icon">📤</text>
+        <text class="share-text">发微信好友</text>
+      </view>
+      <view class="share-btn" bindtap="saveToAlbum">
+        <text class="share-icon">💾</text>
+        <text class="share-text">存入相册</text>
+      </view>
+    </view>
+
     <!-- 操作按钮 -->
     <view class="preview-actions">
       <button class="btn-secondary" bindtap="retakePhoto">重新拍照</button>

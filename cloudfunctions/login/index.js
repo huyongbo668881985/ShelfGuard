@@ -59,12 +59,34 @@ exports.main = async (event, context) => {
       return { openid, userInfo: { ...safeUserInfo, _openid: openid } }
     }
 
-    // 查询用户信息
+    // 查询用户信息（新用户首次登录时自动初始化创建，避免业务员首次提交巡检时因用户不存在被拦截）
     const userRes = await db.collection('users').where({ _openid: openid }).get()
 
     let userInfoResult = null
     if (userRes.data.length > 0) {
       userInfoResult = userRes.data[0]
+    } else {
+      // 首次登录自动创建记录
+      const defaultUser = {
+        _openid: openid,
+        role: 'sales',
+        disabled: false,
+        name: '',
+        phone: '',
+        department: '',
+        createdAt: db.serverDate(),
+        updatedAt: db.serverDate()
+      }
+      try {
+        const addRes = await db.collection('users').add({ data: defaultUser })
+        userInfoResult = { _id: addRes._id, ...defaultUser }
+      } catch (addErr) {
+        // 若存在极小概率的并发插入，重新查询一次
+        const recheck = await db.collection('users').where({ _openid: openid }).get()
+        if (recheck.data.length > 0) {
+          userInfoResult = recheck.data[0]
+        }
+      }
     }
 
     return {

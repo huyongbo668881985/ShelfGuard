@@ -115,6 +115,12 @@ Page({
           if (this.data.refreshTimer === timer) this.setData({ refreshTimer: null })
           // 重新加载完整详情
           this.loadDetail(id)
+        } else if (detail.status === 'analyze_failed') {
+          // 熔断：云端已确定分析失败，立即中止轮询，避免持续空转 90 秒
+          clearInterval(timer)
+          if (this.data.refreshTimer === timer) this.setData({ refreshTimer: null })
+          this.setData({ detail })
+          wx.showToast({ title: 'AI 分析未成功，可点击重试', icon: 'none' })
         }
       } catch (err) {
         console.error('轮询失败:', err)
@@ -122,6 +128,121 @@ Page({
     }, 3000)
 
     this.setData({ refreshTimer: timer })
+  },
+
+  // 真正的重试 AI 分析（不再只是空刷页面）
+  async retryAnalysis() {
+    const { detail, inspectionId } = this.data
+    if (!detail) return
+
+    wx.showLoading({ title: '正在重新触发...', mask: true })
+    try {
+      this.setData({
+        'detail.status': 'analyzing',
+        'detail.analyzeError': ''
+      })
+      // 触发 analyzeImage 云函数
+      wx.cloud.callFunction({
+        name: 'analyzeImage',
+        data: {
+          inspectionId,
+          fileIDs: detail.photoFileIDs || []
+        }
+      }).catch(err => console.error('后台分析请求:', err))
+
+      wx.hideLoading()
+      wx.showToast({ title: '已开始重新分析', icon: 'none' })
+      this.startPolling(inspectionId)
+    } catch (err) {
+      wx.hideLoading()
+      wx.showToast({ title: err.message || '重试失败', icon: 'none' })
+    }
+  },
+
+  // 分享单张照片到微信（原生菜单：发送给朋友/收藏/保存）
+  async sharePhoto(e) {
+    const url = e.currentTarget.dataset.url || (this.data.detail && this.data.detail.photoURLs && this.data.detail.photoURLs[0])
+    if (!url) {
+      wx.showToast({ title: '未找到照片', icon: 'none' })
+      return
+    }
+
+    wx.showLoading({ title: '准备图片中...' })
+    try {
+      // 微信 showShareImageMenu 需要本地文件路径
+      const localPath = await this.downloadImageToLocal(url)
+      wx.hideLoading()
+
+      if (typeof wx.showShareImageMenu === 'function') {
+        wx.showShareImageMenu({
+          path: localPath,
+          fail: (err) => {
+            if (err && err.errMsg && !err.errMsg.includes('cancel')) {
+              // 降级为大图预览长按保存/转发
+              wx.previewImage({ current: url, urls: this.data.detail.photoURLs || [url] })
+            }
+          }
+        })
+      } else {
+        // 低版本基础库降级预览长按发微信
+        wx.previewImage({ current: url, urls: this.data.detail.photoURLs || [url] })
+      }
+    } catch (err) {
+      wx.hideLoading()
+      console.error('准备分享图片失败:', err)
+      wx.showToast({ title: '图片加载失败', icon: 'none' })
+    }
+  },
+
+  // 保存照片到系统相册
+  async savePhoto(e) {
+    const url = e.currentTarget.dataset.url || (this.data.detail && this.data.detail.photoURLs && this.data.detail.photoURLs[0])
+    if (!url) return
+
+    wx.showLoading({ title: '正在保存...' })
+    try {
+      const localPath = await this.downloadImageToLocal(url)
+      wx.saveImageToPhotosAlbum({
+        filePath: localPath,
+        success: () => {
+          wx.hideLoading()
+          wx.showToast({ title: '已存入系统相册', icon: 'success' })
+        },
+        fail: (err) => {
+          wx.hideLoading()
+          if (err && err.errMsg && err.errMsg.includes('auth deny')) {
+            wx.showModal({
+              title: '需要相册权限',
+              content: '请在设置中开启相册权限，用于保存巡检照片',
+              confirmText: '去设置',
+              success: (r) => { if (r.confirm) wx.openSetting() }
+            })
+          } else {
+            wx.showToast({ title: '保存失败', icon: 'none' })
+          }
+        }
+      })
+    } catch (err) {
+      wx.hideLoading()
+      wx.showToast({ title: '下载照片失败', icon: 'none' })
+    }
+  },
+
+  // 工具：下载网络图片为本地临时文件
+  downloadImageToLocal(url) {
+    return new Promise((resolve, reject) => {
+      if (url.startsWith('wxfile://') || url.startsWith('http://tmp') || url.startsWith('/tmp/')) {
+        return resolve(url)
+      }
+      wx.downloadFile({
+        url,
+        success: (res) => {
+          if (res.statusCode === 200) resolve(res.tempFilePath)
+          else reject(new Error('下载失败'))
+        },
+        fail: reject
+      })
+    })
   },
 
   // 拉取集中分析时间（用于报告页"排队中"提示）

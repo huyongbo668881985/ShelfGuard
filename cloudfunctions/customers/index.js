@@ -30,7 +30,17 @@ exports.main = async (event, context) => {
   const openid = wxContext.OPENID
   const { action, customer, customerId } = event
 
+  if (!openid) {
+    return { success: false, error: '未获取到用户身份' }
+  }
+
   try {
+    // 停用账号拦截：已停用的离职业务员不可读写客户库
+    const callerRes = await db.collection('users').where({ _openid: openid }).get()
+    if (callerRes.data[0] && callerRes.data[0].disabled) {
+      return { success: false, error: '账号已停用，请联系管理员' }
+    }
+
     switch (action) {
       // 获取当前业务员自己的客户列表（默认只返回未停用的）
       case 'list': {

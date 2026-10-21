@@ -18,6 +18,11 @@ Page({
         front: '',
         back: '',
         side: ''
+      },
+      photoURLs: {
+        front: '',
+        back: '',
+        side: ''
       }
     },
     saving: false
@@ -60,7 +65,8 @@ Page({
         brandName: '',
         productLine: '',
         aliasesText: '',
-        photos: { front: '', back: '', side: '' }
+        photos: { front: '', back: '', side: '' },
+        photoURLs: { front: '', back: '', side: '' }
       }
     })
   },
@@ -79,6 +85,11 @@ Page({
           front: (item.photos && item.photos.front) || '',
           back: (item.photos && item.photos.back) || '',
           side: (item.photos && item.photos.side) || ''
+        },
+        photoURLs: {
+          front: (item.photoURLs && item.photoURLs.front) || (item.photos && item.photos.front) || '',
+          back: (item.photoURLs && item.photoURLs.back) || (item.photos && item.photos.back) || '',
+          side: (item.photoURLs && item.photoURLs.side) || (item.photos && item.photos.side) || ''
         }
       }
     })
@@ -108,6 +119,7 @@ Page({
       const chooseRes = await wx.chooseMedia({
         count: 1,
         mediaType: ['image'],
+        sizeType: ['compressed'],
         sourceType: ['album', 'camera']
       })
       const tempPath = chooseRes.tempFiles[0].tempFilePath
@@ -119,7 +131,10 @@ Page({
         filePath: tempPath
       })
 
-      this.setData({ [`form.photos.${slot}`]: uploadRes.fileID })
+      this.setData({
+        [`form.photos.${slot}`]: uploadRes.fileID,
+        [`form.photoURLs.${slot}`]: tempPath
+      })
     } catch (err) {
       if (err.errMsg && err.errMsg.includes('cancel')) return
       console.error('上传参考照失败:', err)
@@ -131,7 +146,10 @@ Page({
 
   onRemovePhoto(e) {
     const slot = e.currentTarget.dataset.slot
-    this.setData({ [`form.photos.${slot}`]: '' })
+    this.setData({
+      [`form.photos.${slot}`]: '',
+      [`form.photoURLs.${slot}`]: ''
+    })
   },
 
   onPreviewPhoto(e) {

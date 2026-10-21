@@ -141,6 +141,76 @@ async function drainQueue({ settings, startedAt, ignoreDeadlineForFirst = false 
   const batchSize = Math.max(1, Math.min(10, settings.batchSize || DEFAULT_SETTINGS.batchSize))
   const results = { processed: 0, succeeded: 0, failed: 0, reclaimed, remaining: 0, details: [] }
 
+  // 核心特性：集中分析模式下，按业务员（_openid）聚合其待分析的全部巡检照片，生成《今日巡检综合分析日报》
+  // 先找到第一位有 pending 记录的业务员，将其名下待分析记录加锁（pending -> analyzing）后统一汇总分析。
+  // 单轮只处理一位业务员的汇总，确保单次执行稳稳控制在 60 秒硬上限内。
+  try {
+    const firstPendingRes = await db.collection('inspections')
+      .where({ status: 'pending' })
+      .orderBy('createdAt', 'asc')
+      .limit(1)
+      .field({ _id: true, _openid: true })
+      .get()
+
+    if (firstPendingRes.data && firstPendingRes.data.length > 0) {
+      const targetOpenid = firstPendingRes.data[0]._openid || ''
+      const userPendingRes = await db.collection('inspections')
+        .where(targetOpenid ? { status: 'pending', _openid: targetOpenid } : { status: 'pending' })
+        .orderBy('createdAt', 'asc')
+        .limit(15)
+        .field({ _id: true, storeName: true, analyzeAttempts: true, photoFileIDs: true })
+        .get()
+
+      const candidates = (userPendingRes.data || []).filter(
+        r => Array.isArray(r.photoFileIDs) && r.photoFileIDs.length > 0
+      )
+
+      if (candidates.length > 0) {
+        const candidateIds = candidates.map(c => c._id)
+        // 先加锁：将这批 pending 记录原子更新为 analyzing，防止并发定时器重复认领
+        const claimBatchRes = await db.collection('inspections')
+          .where({
+            _id: _.in(candidateIds),
+            status: 'pending'
+          })
+          .update({
+            data: {
+              status: 'analyzing',
+              analyzeStartedAt: db.serverDate(),
+              analyzeAttempts: _.inc(1)
+            }
+          })
+
+        const claimedCount = (claimBatchRes.stats && claimBatchRes.stats.updated) || 0
+        if (claimedCount > 0) {
+          console.log(`[batchAnalyze] 已锁定业务员(${targetOpenid})的 ${claimedCount} 条巡检记录，正在聚合生成今日汇总结论...`)
+          results.processed += claimedCount
+          const summaryRes = await cloud.callFunction({
+            name: 'analyzeImage',
+            data: {
+              action: 'dailySummary',
+              inspectionIds: candidateIds
+            }
+          })
+          const ok = summaryRes.result && summaryRes.result.success
+          if (ok) {
+            console.log('[batchAnalyze] 今日汇总结论生成成功！')
+            results.dailyReportGenerated = true
+            results.succeeded += claimedCount
+          } else {
+            results.failed += claimedCount
+          }
+          results.remaining = await countPending()
+          return results
+        }
+      }
+    }
+  } catch (summaryErr) {
+    console.error('[batchAnalyze] 聚合今日汇总结论异常:', summaryErr)
+    results.remaining = await countPending()
+    return results
+  }
+
   for (let i = 0; i < batchSize; i++) {
     // 时间到了就收手，剩下的交给下一次定时触发
     const elapsed = Date.now() - startedAt

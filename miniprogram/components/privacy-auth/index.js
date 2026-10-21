@@ -31,14 +31,13 @@ Component({
       }
     },
 
-    onAgree() {
+    onAgree(e) {
       const app = getApp()
       const resolve = app.globalData._privacyResolve
-      const event = app.globalData._privacyEvent
       this.hide()
       if (typeof resolve === 'function') {
         // 调用 resolve 表示用户已同意隐私协议，让原本被拦截的接口继续授权
-        resolve({ event, resolve })
+        resolve({ event: 'agree', buttonId: 'agree-btn' })
         app.globalData._privacyResolve = null
         app.globalData._privacyEvent = null
       }

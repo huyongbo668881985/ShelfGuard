@@ -84,20 +84,47 @@ exports.main = async (event, context) => {
   try {
     // 服务端账号状态校验：停用账号一律拒绝提交（前端只是 UX 提示，这里才是硬边界）
     const userRes = await db.collection('users').where({ _openid: openid }).get()
-    const user = userRes.data[0]
+    let user = userRes.data[0]
     if (user && user.disabled) {
       return { success: false, error: '账号已停用，无法提交巡检' }
     }
+    // 自动兜底建档：避免新用户初次提交因时序未及时建档而被阻断
     if (!user) {
-      return { success: false, error: '用户资料不存在，请重新登录后再试' }
+      const newUser = {
+        _openid: openid,
+        role: 'sales',
+        disabled: false,
+        name: typeof userName === 'string' ? userName.slice(0, MAX_USER_NAME) : '',
+        phone: '',
+        department: '',
+        createdAt: db.serverDate(),
+        updatedAt: db.serverDate()
+      }
+      try {
+        const uRes = await db.collection('users').add({ data: newUser })
+        user = { _id: uRes._id, ...newUser }
+      } catch (e) {
+        user = newUser
+      }
+    } else if (!user.name && typeof userName === 'string' && userName.trim()) {
+      // 若原账号没有名字，把本次填写的业务员姓名补全
+      const trimName = userName.trim().slice(0, MAX_USER_NAME)
+      user.name = trimName
+      db.collection('users').doc(user._id).update({
+        data: { name: trimName, updatedAt: db.serverDate() }
+      }).catch(console.error)
     }
+
+    const finalUserName = (user && typeof user.name === 'string' && user.name)
+      ? user.name.slice(0, MAX_USER_NAME)
+      : (typeof userName === 'string' ? userName.slice(0, MAX_USER_NAME) : '')
 
     const addRes = await db.collection('inspections').add({
       data: {
         _openid: openid,                 // 显式写入归属，便于 sales 仅看自己的记录
         taskName: taskName.trim(),
         storeName: safeStoreName,
-        userName: typeof user.name === 'string' ? user.name.slice(0, MAX_USER_NAME) : '',
+        userName: finalUserName,
         customerId: safeCustomerId,
         photoFileIDs: fileIDs,
         photoCount: fileIDs.length,

@@ -381,3 +381,368 @@
   border-radius: 8rpx;
   font-size: 26rpx;
 }
+
+/* 今日汇总结论卡片 */
+.daily-summary-card {
+  margin: 0 30rpx 24rpx;
+  background: linear-gradient(145deg, #ffffff 0%, #f6f8fb 100%);
+  border-radius: 20rpx;
+  padding: 28rpx 30rpx;
+  box-shadow: 0 4rpx 16rpx rgba(28, 61, 90, 0.08);
+  border: 2rpx solid rgba(194, 147, 59, 0.25);
+}
+
+.daily-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16rpx;
+}
+
+.daily-title-group {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+}
+
+.daily-icon {
+  font-size: 38rpx;
+}
+
+.daily-main-title {
+  font-size: 28rpx;
+  font-weight: bold;
+  color: #1C3D5A;
+  display: block;
+}
+
+.daily-date-sub {
+  font-size: 22rpx;
+  color: #888;
+}
+
+.daily-score-badge {
+  text-align: center;
+  padding: 6rpx 18rpx;
+  border-radius: 14rpx;
+  min-width: 80rpx;
+}
+
+.daily-score-badge.score-high {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.daily-score-badge.score-mid {
+  background: #fff3e0;
+  color: #e65100;
+}
+
+.daily-score-badge.score-low {
+  background: #ffebee;
+  color: #c62828;
+}
+
+.daily-score-number {
+  font-size: 34rpx;
+  font-weight: bold;
+  line-height: 1;
+  display: block;
+}
+
+.daily-score-text {
+  font-size: 20rpx;
+}
+
+.daily-conclusion-text {
+  font-size: 26rpx;
+  color: #333;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-bottom: 16rpx;
+}
+
+.daily-card-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 14rpx;
+  border-top: 1rpx dashed #e8ebf0;
+}
+
+.daily-issues-preview {
+  font-size: 22rpx;
+  color: #d9534f;
+  max-width: 70%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.daily-view-link {
+  font-size: 24rpx;
+  color: var(--color-accent, #C2933B);
+  font-weight: 500;
+}
+
+/* 完整日报模态弹窗 */
+.daily-modal-mask {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 1000;
+}
+
+.daily-modal-panel {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  background: #fff;
+  border-radius: 32rpx 32rpx 0 0;
+  max-height: 82vh;
+  z-index: 1001;
+  display: flex;
+  flex-direction: column;
+}
+
+.daily-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 30rpx 40rpx 20rpx;
+  border-bottom: 1rpx solid #eee;
+}
+
+.daily-modal-title .title-main {
+  font-size: 32rpx;
+  font-weight: bold;
+  color: #1C3D5A;
+  display: block;
+}
+
+.daily-modal-title .title-sub {
+  font-size: 24rpx;
+  color: #999;
+}
+
+.daily-modal-close {
+  font-size: 36rpx;
+  color: #999;
+  padding: 10rpx;
+}
+
+.daily-modal-scroll {
+  flex: 1;
+  padding: 24rpx 36rpx;
+  box-sizing: border-box;
+}
+
+.daily-score-block {
+  display: flex;
+  align-items: center;
+  gap: 28rpx;
+  background: #f8fafc;
+  padding: 24rpx;
+  border-radius: 16rpx;
+  margin-bottom: 24rpx;
+}
+
+.score-circle {
+  width: 130rpx;
+  height: 130rpx;
+  border-radius: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.score-circle.score-high {
+  background: #2e7d32;
+  color: #fff;
+}
+
+.score-circle.score-mid {
+  background: #ff9800;
+  color: #fff;
+}
+
+.score-big {
+  font-size: 40rpx;
+  font-weight: bold;
+  line-height: 1;
+}
+
+.score-lvl {
+  font-size: 20rpx;
+}
+
+.conclusion-desc {
+  flex: 1;
+}
+
+.desc-title {
+  font-size: 26rpx;
+  font-weight: bold;
+  color: #1C3D5A;
+  display: block;
+  margin-bottom: 8rpx;
+}
+
+.desc-body {
+  font-size: 26rpx;
+  color: #444;
+  line-height: 1.6;
+}
+
+.daily-section-card {
+  background: #fff;
+  border: 1rpx solid #eef1f5;
+  border-radius: 16rpx;
+  padding: 24rpx;
+  margin-bottom: 24rpx;
+}
+
+.section-badge {
+  font-size: 28rpx;
+  font-weight: bold;
+  color: #1C3D5A;
+  display: block;
+  margin-bottom: 16rpx;
+}
+
+.overview-grid {
+  display: flex;
+  gap: 20rpx;
+  margin-bottom: 16rpx;
+}
+
+.overview-item {
+  flex: 1;
+  background: #f8fafc;
+  padding: 16rpx;
+  border-radius: 12rpx;
+  text-align: center;
+}
+
+.ov-label {
+  font-size: 22rpx;
+  color: #888;
+  display: block;
+}
+
+.ov-val {
+  font-size: 32rpx;
+  font-weight: bold;
+  color: #1C3D5A;
+}
+
+.ov-sit {
+  font-size: 24rpx;
+  color: #555;
+  line-height: 1.5;
+  display: block;
+}
+
+.daily-issue-item {
+  padding: 14rpx 0;
+  border-bottom: 1rpx dashed #f0f0f0;
+}
+.daily-issue-item:last-child {
+  border-bottom: none;
+}
+
+.issue-top {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 6rpx;
+}
+
+.issue-cat {
+  font-size: 26rpx;
+  font-weight: bold;
+  color: #d9534f;
+}
+
+.issue-aff {
+  font-size: 22rpx;
+  color: #888;
+}
+
+.issue-desc {
+  font-size: 24rpx;
+  color: #444;
+  line-height: 1.5;
+}
+
+.daily-action-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 16rpx;
+  padding: 12rpx 0;
+}
+
+.action-prio {
+  font-size: 20rpx;
+  font-weight: bold;
+  background: #1C3D5A;
+  color: #fff;
+  padding: 4rpx 10rpx;
+  border-radius: 6rpx;
+  flex-shrink: 0;
+}
+
+.action-text-group {
+  flex: 1;
+}
+
+.action-main {
+  font-size: 26rpx;
+  color: #222;
+  font-weight: 500;
+  display: block;
+}
+
+.action-target {
+  font-size: 22rpx;
+  color: #888;
+}
+
+.ranking-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 14rpx 0;
+  border-bottom: 1rpx solid #f8f8f8;
+  font-size: 26rpx;
+}
+
+.ranking-item:last-child {
+  border-bottom: none;
+}
+
+.rk-store {
+  color: #333;
+}
+
+.rk-score {
+  color: #1C3D5A;
+  font-weight: 500;
+}
+
+.daily-modal-footer {
+  display: flex;
+  gap: 20rpx;
+  padding: 24rpx 36rpx 40rpx;
+  border-top: 1rpx solid #eee;
+}
+
+.daily-modal-footer .modal-btn {
+  flex: 1;
+  font-size: 28rpx;
+  height: 84rpx;
+  line-height: 84rpx;
+  margin: 0;
+}

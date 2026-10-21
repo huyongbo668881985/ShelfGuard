@@ -25,6 +25,34 @@
     </view>
   </view>
 
+  <!-- 今日巡检汇总结论卡片（晚间集中分析生成的大盘结论） -->
+  <view class="daily-summary-card" wx:if="{{latestDailyReport && latestDailyReport.report}}" bindtap="viewDailyReportDetail">
+    <view class="daily-card-top">
+      <view class="daily-title-group">
+        <text class="daily-icon">📊</text>
+        <view>
+          <text class="daily-main-title">{{latestDailyReport.report.summaryTitle || '今日终端巡检综合分析日报'}}</text>
+          <text class="daily-date-sub">{{latestDailyReport.date}} · 汇总 {{latestDailyReport.inspectionCount}} 家门店</text>
+        </view>
+      </view>
+      <view class="daily-score-badge score-{{latestDailyReport.report.overallScore >= 80 ? 'high' : latestDailyReport.report.overallScore >= 60 ? 'mid' : 'low'}}">
+        <text class="daily-score-number">{{latestDailyReport.report.overallScore}}</text>
+        <text class="daily-score-text">{{latestDailyReport.report.overallLevel || '良好'}}</text>
+      </view>
+    </view>
+
+    <view class="daily-conclusion-text">
+      {{latestDailyReport.report.summaryConclusion}}
+    </view>
+
+    <view class="daily-card-footer">
+      <text class="daily-issues-preview" wx:if="{{latestDailyReport.report.commonIssues && latestDailyReport.report.commonIssues.length > 0}}">
+        ⚠️ 共性问题：{{latestDailyReport.report.commonIssues[0].category}} - {{latestDailyReport.report.commonIssues[0].description}}
+      </text>
+      <text class="daily-view-link">查看完整日报 ›</text>
+    </view>
+  </view>
+
   <!-- 搜索栏 -->
   <view class="search-bar">
     <view class="search-input-wrapper">
@@ -184,6 +212,93 @@
         />
         <text class="filter-username-apply" bindtap="onApplyUserNameFilter">确定</text>
       </view>
+    </view>
+  </view>
+
+  <!-- 今日巡检汇总结论完整弹窗 -->
+  <view class="daily-modal-mask" wx:if="{{showDailyModal}}" bindtap="closeDailyModal"></view>
+  <view class="daily-modal-panel {{showDailyModal ? 'show' : ''}}" wx:if="{{showDailyModal}}">
+    <view class="daily-modal-header">
+      <view class="daily-modal-title">
+        <text class="title-main">{{latestDailyReport.report.summaryTitle || '今日巡检综合分析日报'}}</text>
+        <text class="title-sub">{{latestDailyReport.date}} · 共评估 {{latestDailyReport.inspectionCount}} 家门店</text>
+      </view>
+      <text class="daily-modal-close" bindtap="closeDailyModal">✕</text>
+    </view>
+
+    <scroll-view class="daily-modal-scroll" scroll-y="true">
+      <!-- 总评卡片 -->
+      <view class="daily-score-block">
+        <view class="score-circle score-{{latestDailyReport.report.overallScore >= 80 ? 'high' : 'mid'}}">
+          <text class="score-big">{{latestDailyReport.report.overallScore}}</text>
+          <text class="score-lvl">{{latestDailyReport.report.overallLevel || '良好'}}</text>
+        </view>
+        <view class="conclusion-desc">
+          <text class="desc-title">💡 综合诊断结论</text>
+          <text class="desc-body">{{latestDailyReport.report.summaryConclusion}}</text>
+        </view>
+      </view>
+
+      <!-- 我方品牌表现 -->
+      <view class="daily-section-card" wx:if="{{latestDailyReport.report.ownBrandOverview}}">
+        <text class="section-badge">🏷️ 我方品牌终端大盘</text>
+        <view class="overview-grid">
+          <view class="overview-item">
+            <text class="ov-label">排面占比</text>
+            <text class="ov-val">{{latestDailyReport.report.ownBrandOverview.facingSharePercent}}%</text>
+          </view>
+          <view class="overview-item">
+            <text class="ov-label">黄金位占比</text>
+            <text class="ov-val">{{latestDailyReport.report.ownBrandOverview.goldenPositionRatio || '--'}}</text>
+          </view>
+        </view>
+        <text class="ov-sit">{{latestDailyReport.report.ownBrandOverview.competitiveSituation}}</text>
+      </view>
+
+      <!-- 今日共性问题 Top3 -->
+      <view class="daily-section-card" wx:if="{{latestDailyReport.report.commonIssues && latestDailyReport.report.commonIssues.length > 0}}">
+        <text class="section-badge">⚠️ 今日共性问题</text>
+        <view class="issue-list">
+          <view class="daily-issue-item" wx:for="{{latestDailyReport.report.commonIssues}}" wx:key="index">
+            <view class="issue-top">
+              <text class="issue-cat">{{item.category}}</text>
+              <text class="issue-aff">{{item.affectStores}}</text>
+            </view>
+            <text class="issue-desc">{{item.description}}</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 明日整改行动指南 -->
+      <view class="daily-section-card" wx:if="{{latestDailyReport.report.actionPlanTomorrow && latestDailyReport.report.actionPlanTomorrow.length > 0}}">
+        <text class="section-badge">🎯 明日行动指南</text>
+        <view class="action-list">
+          <view class="daily-action-item" wx:for="{{latestDailyReport.report.actionPlanTomorrow}}" wx:key="index">
+            <text class="action-prio">{{item.priority || 'P' + (index + 1)}}</text>
+            <view class="action-text-group">
+              <text class="action-main">{{item.action}}</text>
+              <text class="action-target" wx:if="{{item.target}}">目标：{{item.target}}</text>
+            </view>
+          </view>
+        </view>
+      </view>
+
+      <!-- 门店红黑榜简表 -->
+      <view class="daily-section-card" wx:if="{{latestDailyReport.report.storeRankings && latestDailyReport.report.storeRankings.length > 0}}">
+        <text class="section-badge">🏬 巡检门店表现简表</text>
+        <view class="ranking-list">
+          <view class="ranking-item" wx:for="{{latestDailyReport.report.storeRankings}}" wx:key="index">
+            <text class="rk-store">{{item.storeName}}</text>
+            <text class="rk-score">{{item.score}}分 · {{item.status}}</text>
+          </view>
+        </view>
+      </view>
+    </scroll-view>
+
+    <!-- 底部操作栏：一键复制发微信群 / 关闭 -->
+    <view class="daily-modal-footer">
+      <button class="btn-secondary modal-btn" bindtap="closeDailyModal">关闭</button>
+      <button class="btn-primary modal-btn" bindtap="copyDailySummary">📋 复制日报发微信群</button>
     </view>
   </view>
 </view>

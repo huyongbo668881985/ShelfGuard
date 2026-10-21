@@ -70,38 +70,38 @@
     <scroll-view class="editor-content" scroll-y>
       <view class="form-item">
         <text class="form-label">品牌名称 *</text>
-        <textarea
+        <input
           class="form-input"
           style="color: #1a1a2e; background: #fff; height: 80rpx;"
           placeholder="如：XX酒业"
           placeholder-style="color: #999;"
           value="{{form.brandName}}"
           bindinput="onBrandNameInput"
-        ></textarea>
+        />
       </view>
 
       <view class="form-item">
         <text class="form-label">产品线 / 系列（可选）</text>
-        <textarea
+        <input
           class="form-input"
           style="color: #1a1a2e; background: #fff; height: 80rpx;"
           placeholder="如：经典系列"
           placeholder-style="color: #999;"
           value="{{form.productLine}}"
           bindinput="onProductLineInput"
-        ></textarea>
+        />
       </view>
 
       <view class="form-item">
         <text class="form-label">别名（用中文逗号分隔，可选）</text>
-        <textarea
+        <input
           class="form-input"
           style="color: #1a1a2e; background: #fff; height: 80rpx;"
           placeholder="如：简称1，简称2"
           placeholder-style="color: #999;"
           value="{{form.aliasesText}}"
           bindinput="onAliasesInput"
-        ></textarea>
+        />
         <text class="form-tip">AI 识别时可能用不同名字描述同一产品，填写别名有助于统计时正确归类</text>
       </view>
 
@@ -113,7 +113,7 @@
             <text class="slot-label">正面</text>
           </view>
           <view class="photo-slot filled" wx:else>
-            <image class="slot-img" src="{{form.photos.front}}" mode="aspectFill" data-url="{{form.photos.front}}" bindtap="onPreviewPhoto"></image>
+            <image class="slot-img" src="{{form.photoURLs.front || form.photos.front}}" mode="aspectFill" data-url="{{form.photoURLs.front || form.photos.front}}" bindtap="onPreviewPhoto"></image>
             <text class="slot-remove" data-slot="front" bindtap="onRemovePhoto">✕</text>
           </view>
 
@@ -122,7 +122,7 @@
             <text class="slot-label">背面</text>
           </view>
           <view class="photo-slot filled" wx:else>
-            <image class="slot-img" src="{{form.photos.back}}" mode="aspectFill" data-url="{{form.photos.back}}" bindtap="onPreviewPhoto"></image>
+            <image class="slot-img" src="{{form.photoURLs.back || form.photos.back}}" mode="aspectFill" data-url="{{form.photoURLs.back || form.photos.back}}" bindtap="onPreviewPhoto"></image>
             <text class="slot-remove" data-slot="back" bindtap="onRemovePhoto">✕</text>
           </view>
 
@@ -131,7 +131,7 @@
             <text class="slot-label">侧面</text>
           </view>
           <view class="photo-slot filled" wx:else>
-            <image class="slot-img" src="{{form.photos.side}}" mode="aspectFill" data-url="{{form.photos.side}}" bindtap="onPreviewPhoto"></image>
+            <image class="slot-img" src="{{form.photoURLs.side || form.photos.side}}" mode="aspectFill" data-url="{{form.photoURLs.side || form.photos.side}}" bindtap="onPreviewPhoto"></image>
             <text class="slot-remove" data-slot="side" bindtap="onRemovePhoto">✕</text>
           </view>
         </view>

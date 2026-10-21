@@ -433,6 +433,56 @@ Page({
     })
   },
 
+  // 快捷分享水印照片到微信（原生发送给朋友/收藏/保存）
+  shareToWechat() {
+    const { watermarkedPath } = this.data
+    if (!watermarkedPath) {
+      wx.showToast({ title: '照片尚未合成完成', icon: 'none' })
+      return
+    }
+
+    if (typeof wx.showShareImageMenu === 'function') {
+      wx.showShareImageMenu({
+        path: watermarkedPath,
+        fail: (err) => {
+          if (err && err.errMsg && !err.errMsg.includes('cancel')) {
+            wx.previewImage({ current: watermarkedPath, urls: [watermarkedPath] })
+          }
+        }
+      })
+    } else {
+      wx.previewImage({ current: watermarkedPath, urls: [watermarkedPath] })
+    }
+  },
+
+  // 保存打好水印的照片到手机相册
+  saveToAlbum() {
+    const { watermarkedPath } = this.data
+    if (!watermarkedPath) {
+      wx.showToast({ title: '照片尚未合成完成', icon: 'none' })
+      return
+    }
+
+    wx.saveImageToPhotosAlbum({
+      filePath: watermarkedPath,
+      success: () => {
+        wx.showToast({ title: '已存入系统相册', icon: 'success' })
+      },
+      fail: (err) => {
+        if (err && err.errMsg && err.errMsg.includes('auth deny')) {
+          wx.showModal({
+            title: '需要相册权限',
+            content: '请在设置中开启相册权限，用于保存带水印的巡检照片',
+            confirmText: '去设置',
+            success: (r) => { if (r.confirm) wx.openSetting() }
+          })
+        } else if (err && err.errMsg && !err.errMsg.includes('cancel')) {
+          wx.showToast({ title: '保存失败', icon: 'none' })
+        }
+      }
+    })
+  },
+
   // 确认照片，跳转上传页
   confirmPhoto() {
     const { watermarkedPath, location, taskName } = this.data
