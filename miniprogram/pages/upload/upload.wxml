@@ -47,6 +47,14 @@
     </view>
   </scroll-view>
 
+  <!-- 发微信好友（本地水印图） -->
+  <view class="share-row" wx:if="{{photos.length > 0 && (status === 'ready' || status === 'error')}}">
+    <view class="share-btn" bindtap="shareToWechat">
+      <text class="share-icon">📤</text>
+      <text class="share-text">发微信好友</text>
+    </view>
+  </view>
+
   <!-- 巡检信息 -->
   <view class="info-card card">
     <view class="info-row">
@@ -111,8 +119,7 @@
   <!-- 已提交状态（集中分析模式：提交即完成，不用原地等 AI） -->
   <view class="submitted-section" wx:if="{{status === 'submitted'}}">
     <text class="submitted-icon">✓</text>
-    <text class="submitted-title">已提交，照片已入队</text>
-    <text class="submitted-hint">AI 分析将在每天 {{analyzeTime}} 集中进行，稍后可在「历史」中查看报告</text>
+    <text class="submitted-title">已提交</text>
     <view class="submitted-actions">
       <button class="btn-secondary" bindtap="viewReport">查看记录</button>
       <button class="btn-primary" bindtap="continueVisit">继续拜访下一家</button>
@@ -144,7 +151,7 @@
       <block wx:elif="{{status === 'uploading'}}">上传中...</block>
       <block wx:elif="{{status === 'analyzing'}}">AI 分析中...</block>
       <block wx:elif="{{status === 'error'}}">重试上传</block>
-      <block wx:else>上传并分析</block>
+      <block wx:else>上传</block>
     </button>
   </view>
 </view>

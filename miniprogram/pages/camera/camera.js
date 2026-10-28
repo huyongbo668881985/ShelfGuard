@@ -455,6 +455,8 @@ Page({
           confirmBtnText: `下一步（${watermarkedList.length}张）`,
           composing: false
         })
+        // 合成成功后默认存入系统相册（不再展示手动存相册按钮）
+        this.autoSaveToAlbum(watermarkedList)
       } else {
         let sourcePath
         if (capturedPhotos.length === 1) {
@@ -537,6 +539,8 @@ Page({
         watermarkedPath: watermarkedPath,
         composing: false
       })
+      // 合成成功后默认存入系统相册（不再展示手动存相册按钮）
+      this.autoSaveToAlbum([watermarkedPath])
 
     } catch (err) {
       console.error('水印合成失败:', err)
@@ -579,83 +583,26 @@ Page({
     })
   },
 
-  currentPreviewPath() {
-    const paths = this.data.watermarkedPaths || []
-    if (paths.length > 1) {
-      return paths[this.data.previewIndex] || paths[0] || this.data.watermarkedPath
-    }
-    return this.data.watermarkedPath
-  },
+  // 水印合成成功后自动存入系统相册（多图逐张保存，只弹一次结果提示）
+  async autoSaveToAlbum(paths) {
+    const list = (paths || []).filter(Boolean)
+    if (list.length === 0) return
 
-  // 快捷分享当前预览图到微信（原生发送给朋友/收藏/保存）
-  shareToWechat() {
-    const path = this.currentPreviewPath()
-    if (!path) {
-      wx.showToast({ title: '照片尚未合成完成', icon: 'none' })
-      return
-    }
-    const urls = (this.data.watermarkedPaths && this.data.watermarkedPaths.length)
-      ? this.data.watermarkedPaths
-      : [path]
-
-    if (typeof wx.showShareImageMenu === 'function') {
-      wx.showShareImageMenu({
-        path,
-        fail: (err) => {
-          if (err && err.errMsg && !err.errMsg.includes('cancel')) {
-            wx.previewImage({ current: path, urls })
-          }
-        }
-      })
-    } else {
-      wx.previewImage({ current: path, urls })
-    }
-  },
-
-  // 保存当前预览图到手机相册
-  saveToAlbum() {
-    const path = this.currentPreviewPath()
-    if (!path) {
-      wx.showToast({ title: '照片尚未合成完成', icon: 'none' })
-      return
+    const showLoading = list.length > 1
+    if (showLoading) {
+      wx.showLoading({ title: `保存中 0/${list.length}`, mask: true })
     }
 
-    wx.saveImageToPhotosAlbum({
-      filePath: path,
-      success: () => {
-        wx.showToast({ title: '已存入系统相册', icon: 'success' })
-      },
-      fail: (err) => {
-        if (err && err.errMsg && err.errMsg.includes('auth deny')) {
-          wx.showModal({
-            title: '需要相册权限',
-            content: '请在设置中开启相册权限，用于保存带水印的巡检照片',
-            confirmText: '去设置',
-            success: (r) => { if (r.confirm) wx.openSetting() }
-          })
-        } else if (err && err.errMsg && !err.errMsg.includes('cancel')) {
-          wx.showToast({ title: '保存失败', icon: 'none' })
-        }
-      }
-    })
-  },
-
-  // 精度模式：把所有水印图逐张存入相册
-  async saveAllToAlbum() {
-    const paths = this.data.watermarkedPaths || []
-    if (paths.length === 0) {
-      wx.showToast({ title: '没有可保存的照片', icon: 'none' })
-      return
-    }
-    wx.showLoading({ title: `保存中 0/${paths.length}`, mask: true })
     let ok = 0
     let denied = false
-    for (let i = 0; i < paths.length; i++) {
-      wx.showLoading({ title: `保存中 ${i + 1}/${paths.length}`, mask: true })
+    for (let i = 0; i < list.length; i++) {
+      if (showLoading) {
+        wx.showLoading({ title: `保存中 ${i + 1}/${list.length}`, mask: true })
+      }
       try {
         await new Promise((resolve, reject) => {
           wx.saveImageToPhotosAlbum({
-            filePath: paths[i],
+            filePath: list[i],
             success: resolve,
             fail: reject
           })
@@ -668,20 +615,32 @@ Page({
         }
       }
     }
-    wx.hideLoading()
+
+    if (showLoading) wx.hideLoading()
+
     if (denied) {
       wx.showModal({
         title: '需要相册权限',
-        content: '请在设置中开启相册权限，用于保存带水印的巡检照片',
+        content: '请在设置中开启相册权限，用于保存带水印的拜访照片',
         confirmText: '去设置',
         success: (r) => { if (r.confirm) wx.openSetting() }
       })
       return
     }
-    wx.showToast({
-      title: ok === paths.length ? `已全部存入（${ok}张）` : `已保存 ${ok}/${paths.length} 张`,
-      icon: ok === paths.length ? 'success' : 'none'
-    })
+
+    if (ok === 0) {
+      wx.showToast({ title: '保存失败', icon: 'none' })
+      return
+    }
+
+    if (list.length === 1) {
+      wx.showToast({ title: '已存入系统相册', icon: 'success' })
+    } else {
+      wx.showToast({
+        title: ok === list.length ? `已全部存入（${ok}张）` : `已保存 ${ok}/${list.length} 张`,
+        icon: ok === list.length ? 'success' : 'none'
+      })
+    }
   },
 
   // 确认照片，跳转上传页

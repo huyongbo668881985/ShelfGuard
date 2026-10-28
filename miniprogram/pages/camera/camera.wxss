@@ -286,29 +286,6 @@
   font-size: 32rpx;
 }
 
-.preview-share-bar {
-  display: flex;
-  justify-content: center;
-  gap: 40rpx;
-  padding: 20rpx 30rpx 0;
-  background: rgba(0, 0, 0, 0.85);
-}
-
-.preview-share-bar .share-btn {
-  display: flex;
-  align-items: center;
-  gap: 12rpx;
-  background: rgba(255, 255, 255, 0.15);
-  padding: 14rpx 32rpx;
-  border-radius: 36rpx;
-  color: #fff;
-  font-size: 26rpx;
-}
-
-.preview-share-bar .share-btn:active {
-  background: rgba(255, 255, 255, 0.3);
-}
-
 .preview-actions {
   display: flex;
   gap: 24rpx;

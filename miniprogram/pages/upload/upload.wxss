@@ -199,6 +199,33 @@
   color: #333;
 }
 
+/* 发微信好友 */
+.share-row {
+  display: flex;
+  justify-content: center;
+  padding: 24rpx 30rpx 0;
+  background: #fff;
+}
+
+.share-btn {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  background: #f0f3f7;
+  padding: 16rpx 40rpx;
+  border-radius: 40rpx;
+  color: #1C3D5A;
+  font-size: 28rpx;
+}
+
+.share-btn:active {
+  background: #e2e8f0;
+}
+
+.share-icon {
+  font-size: 30rpx;
+}
+
 /* 已提交状态（集中分析模式） */
 .submitted-section {
   display: flex;
@@ -224,16 +251,7 @@
   font-size: 32rpx;
   font-weight: bold;
   color: #1a1a2e;
-  margin-bottom: 12rpx;
-}
-
-.submitted-hint {
-  font-size: 26rpx;
-  color: #999;
-  text-align: center;
-  line-height: 1.6;
   margin-bottom: 36rpx;
-  padding: 0 20rpx;
 }
 
 .submitted-actions {

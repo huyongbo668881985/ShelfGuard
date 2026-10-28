@@ -1,5 +1,5 @@
 {
-  "navigationBarTitleText": "巡检拍照",
+  "navigationBarTitleText": "拜访拍照",
   "disableScroll": true,
   "usingComponents": {
     "watermark-canvas": "/components/watermark-canvas/index",

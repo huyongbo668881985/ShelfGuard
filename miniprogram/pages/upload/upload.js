@@ -508,6 +508,31 @@ Page({
     }
   },
 
+  // 把本地水印图发给微信好友（与原先相机预览页同款能力）
+  shareToWechat() {
+    const photos = this.data.photos || []
+    const urls = photos
+      .map(p => p.compressedPath || p.originalPath)
+      .filter(Boolean)
+    if (!urls.length) {
+      wx.showToast({ title: '暂无照片', icon: 'none' })
+      return
+    }
+    const path = urls[0]
+    if (typeof wx.showShareImageMenu === 'function') {
+      wx.showShareImageMenu({
+        path,
+        fail: (err) => {
+          if (err && err.errMsg && !err.errMsg.includes('cancel')) {
+            wx.previewImage({ current: path, urls })
+          }
+        }
+      })
+    } else {
+      wx.previewImage({ current: path, urls })
+    }
+  },
+
   // ============================================================
   // 提交完成后的两个出口
   // ============================================================

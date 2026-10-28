@@ -128,22 +128,6 @@
       <text class="composing-text">正在添加水印...</text>
     </view>
 
-    <!-- 快捷分享工具条：当前图发微信/存相册；多图可全部存相册 -->
-    <view class="preview-share-bar" wx:if="{{!composing && watermarkedPath}}">
-      <view class="share-btn" bindtap="shareToWechat">
-        <text class="share-icon">📤</text>
-        <text class="share-text">{{watermarkedPaths.length > 1 ? '发当前图' : '发微信好友'}}</text>
-      </view>
-      <view class="share-btn" bindtap="saveToAlbum">
-        <text class="share-icon">💾</text>
-        <text class="share-text">{{watermarkedPaths.length > 1 ? '存当前图' : '存入相册'}}</text>
-      </view>
-      <view class="share-btn" wx:if="{{watermarkedPaths.length > 1}}" bindtap="saveAllToAlbum">
-        <text class="share-icon">📚</text>
-        <text class="share-text">全部存相册</text>
-      </view>
-    </view>
-
     <!-- 操作按钮 -->
     <view class="preview-actions">
       <button class="btn-secondary" bindtap="retakePhoto">重新拍照</button>
