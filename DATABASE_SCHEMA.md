@@ -510,3 +510,87 @@ const countRes = await db.collection('inspections')
   })
   .count()
 ```
+
+
+## 集合：shelfMonthlyByStore（店月排面汇总，预计算）
+
+由云函数 `shelfStats` 每晚（或管理员手动 `action: rebuild`）写入。看板/单店趋势**只读**本表与 `shelfMonthlyOverall`，不在打开时全库现算。
+
+### 字段结构
+
+```json
+{
+  "_id": "s_<ownerOpenid>_<customerId>_<YYYY-MM>",
+  "ownerOpenid": "string",       // 该店月归属业务员 openid（客户库私有，按拜访人聚合）
+  "customerId": "string",        // customers._id
+  "storeName": "string",
+  "userName": "string",
+  "yearMonth": "YYYY-MM",
+  "visitCount": "number",        // 当月有 customerId 的拜访次数
+  "avgSharePercent": "number|null", // 当月各次可用我方排面份额的算术平均；无可用份额则为 null
+  "lastSharePercent": "number|null",
+  "avgScore": "number|null",
+  "lastScore": "number|null",
+  "lastInspectionId": "string",
+  "shareSampleCount": "number",  // 计入平均的份额样本数
+  "updatedAt": "Date"
+}
+```
+
+### 排面口径
+
+优先 `aiReport.ownBrandOverview.facingSharePercent` → `competitiveAnalysis.brands` 中「我方品牌」或命中产品库 `brandName` 的份额之和 → 再用 `productIdentification.facingCount` 推算我方占比。**无可用数据的记录不计入平均值（不造 0）。**
+
+### 索引建议
+
+```javascript
+db.collection('shelfMonthlyByStore').createIndex({
+  ownerOpenid: 1,
+  yearMonth: 1
+}, { name: 'idx_owner_month' })
+
+db.collection('shelfMonthlyByStore').createIndex({
+  customerId: 1,
+  yearMonth: 1
+}, { name: 'idx_customer_month' })
+```
+
+---
+
+## 集合：shelfMonthlyOverall（整体月汇总，预计算）
+
+### 字段结构
+
+```json
+{
+  "_id": "o_team_<YYYY-MM> | o_user_<openid>_<YYYY-MM>",
+  "yearMonth": "YYYY-MM",
+  "scope": "team | user",
+  "ownerOpenid": "string",       // team 时为空串
+  "customerCount": "number",     // 当月至少拜访 1 次的去重客户数
+  "avgSharePercent": "number|null", // 各店月 avgSharePercent 再平均
+  "totalVisits": "number",
+  "avgVisitsPerCustomer": "number",
+  "lowVisitThreshold": "number", // 默认 2，可写在 settings.global.lowVisitThreshold
+  "lowVisitCount": "number",
+  "lowVisitCustomers": [{ "customerId": "string", "storeName": "string", "visitCount": "number" }],
+  "storeShareSampleCount": "number",
+  "updatedAt": "Date"
+}
+```
+
+- 管理者看板读 `scope=team`
+- 业务员看板读 `scope=user` 且 `ownerOpenid=本人`
+- 环比：上月；同比：去年同月；也可传 `compareYearMonth` 对比任意月
+
+### 索引建议
+
+```javascript
+db.collection('shelfMonthlyOverall').createIndex({
+  scope: 1,
+  ownerOpenid: 1,
+  yearMonth: 1
+}, { name: 'idx_scope_owner_month' })
+```
+
+> 两集合均需在云开发控制台**手动创建**后，再上传部署 `shelfStats` 云函数（含定时触发器 `0 0 3 * * *`，每天 03:00 北京时间重建近 14 个月）。

@@ -1,0 +1,82 @@
+<!--pages/photo-detail/photo-detail.wxml-->
+<view class="pd-page">
+  <view class="filter-card">
+    <view class="filter-row" wx:if="{{isManager}}">
+      <text class="filter-lab">业务员</text>
+      <input
+        class="filter-input"
+        placeholder="姓名，空=全部"
+        value="{{filterUserName}}"
+        bindinput="onUserNameInput"
+        bindconfirm="onApplyFilters"
+      />
+    </view>
+    <view class="filter-row" bindtap="onPickCustomer">
+      <text class="filter-lab">客户</text>
+      <text class="filter-val">{{filterStoreName || '全部客户'}}</text>
+      <text class="filter-clear" wx:if="{{filterCustomerId}}" catchtap="onClearCustomer">清除</text>
+    </view>
+    <view class="filter-row dates">
+      <view class="date-col">
+        <text class="filter-lab">开始</text>
+        <picker mode="date" value="{{startDate}}" bindchange="onStartDateChange">
+          <text class="filter-val">{{startDate || '不限'}}</text>
+        </picker>
+      </view>
+      <view class="date-col">
+        <text class="filter-lab">结束</text>
+        <picker mode="date" value="{{endDate}}" bindchange="onEndDateChange">
+          <text class="filter-val">{{endDate || '不限'}}</text>
+        </picker>
+      </view>
+    </view>
+    <view class="filter-actions">
+      <button class="btn-secondary mini-btn" size="mini" bindtap="onResetFilters">重置</button>
+      <button class="btn-primary mini-btn" size="mini" bindtap="onApplyFilters">查询</button>
+    </view>
+  </view>
+
+  <view class="list-meta" wx:if="{{!loading || list.length}}">共 {{total}} 条</view>
+
+  <view class="list-container" wx:if="{{list.length > 0}}">
+    <view
+      class="photo-item"
+      wx:for="{{list}}"
+      wx:key="_id"
+      data-id="{{item._id}}"
+      bindtap="onTapItem"
+    >
+      <view class="thumb-wrap">
+        <image
+          class="thumb"
+          src="{{item.thumbnailURL || item.thumbnailFileID}}"
+          mode="aspectFill"
+          wx:if="{{item.thumbnailURL || item.thumbnailFileID}}"
+        ></image>
+        <view class="thumb-ph" wx:else>📷</view>
+      </view>
+      <view class="item-body">
+        <view class="item-top">
+          <text class="item-store">{{item.storeName || item.taskName || '未命名'}}</text>
+          <text class="item-share" wx:if="{{item.sharePercent != null}}">{{item.sharePercent}}%</text>
+        </view>
+        <view class="item-mid">
+          <text class="item-user">{{item.userName || '—'}}</text>
+          <text class="item-dot">·</text>
+          <text class="item-time">{{item.fullDate}}</text>
+        </view>
+        <view class="item-bottom" wx:if="{{item.aiReport && item.aiReport.score != null}}">
+          <text class="item-score">评分 {{item.aiReport.score}}</text>
+          <text class="item-status" wx:if="{{item.statusText}}">{{item.statusText}}</text>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <view class="empty" wx:if="{{!loading && list.length === 0}}">
+    <text>暂无符合条件的照片</text>
+  </view>
+
+  <view class="loading-more" wx:if="{{loading}}">加载中…</view>
+  <view class="loading-more" wx:elif="{{!hasMore && list.length > 0}}">没有更多了</view>
+</view>

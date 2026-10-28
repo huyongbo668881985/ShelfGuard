@@ -341,5 +341,13 @@ Page({
       showFilter: false
     })
     this.refreshList()
+  },
+
+  goDashboard() {
+    wx.navigateTo({ url: '/pages/dashboard/dashboard' })
+  },
+
+  goPhotoDetail() {
+    wx.navigateTo({ url: '/pages/photo-detail/photo-detail' })
   }
 })

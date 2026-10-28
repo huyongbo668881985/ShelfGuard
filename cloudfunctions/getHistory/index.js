@@ -31,6 +31,31 @@ function normalizeScore(value) {
   return Number.isFinite(score) && score >= 0 && score <= 100 ? score : null
 }
 
+
+function extractListSharePercent(aiReport) {
+  if (!aiReport || typeof aiReport !== 'object') return null
+  const ov = aiReport.ownBrandOverview
+  if (ov && ov.facingSharePercent != null) {
+    const n = Number(ov.facingSharePercent)
+    if (Number.isFinite(n) && n >= 0 && n <= 100) return Math.round(n * 10) / 10
+  }
+  const brands = aiReport.competitiveAnalysis && aiReport.competitiveAnalysis.brands
+  if (Array.isArray(brands)) {
+    const own = brands.find(b => b && (b.brand === '我方品牌' || b.isOwn === true))
+    if (own && own.sharePercent != null) {
+      const n = Number(own.sharePercent)
+      if (Number.isFinite(n) && n >= 0 && n <= 100) return Math.round(n * 10) / 10
+    }
+    // 列表展示：若只有一个品牌带份额，作为参考展示（完整我方识别在 shelfStats 重建时做）
+    const withShare = brands.filter(b => b && b.sharePercent != null && Number.isFinite(Number(b.sharePercent)))
+    if (withShare.length === 1) {
+      const n = Number(withShare[0].sharePercent)
+      if (n >= 0 && n <= 100) return Math.round(n * 10) / 10
+    }
+  }
+  return null
+}
+
 async function getCaller(openid) {
   try {
     const res = await db.collection('users').where({ _openid: openid }).get()
@@ -46,16 +71,23 @@ function buildBaseConditions({ isManager, openid, targetUserName, where }) {
   const ninetyDaysAgo = new Date()
   ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90)
 
-  // 前端只传原语（startDateISO / scoreMin / scoreMax / keyword），
+  // 前端只传原语（startDateISO / endDateISO / customerId / scoreMin / scoreMax / keyword），
   // db.command 命令对象由服务端重建——命令对象经 callFunction JSON 序列化会丢失
   // 内部字段，前端直接透传 _.gte / _.and / _.lt 会导致筛选条件被静默丢弃。
-  let createdAtCondition = _.gte(ninetyDaysAgo)
+  let startDate = ninetyDaysAgo
   if (where && where.startDateISO) {
-    const startDate = new Date(where.startDateISO)
-    if (!isNaN(startDate.getTime())) {
-      createdAtCondition = _.gte(startDate)
-    }
+    const parsed = new Date(where.startDateISO)
+    if (!isNaN(parsed.getTime())) startDate = parsed
   }
+  let endDate = null
+  if (where && where.endDateISO) {
+    const parsed = new Date(where.endDateISO)
+    if (!isNaN(parsed.getTime())) endDate = parsed
+  }
+
+  let createdAtCondition = endDate
+    ? _.and(_.gte(startDate), _.lte(endDate))
+    : _.gte(startDate)
 
   let conditions = {
     createdAt: createdAtCondition
@@ -69,6 +101,12 @@ function buildBaseConditions({ isManager, openid, targetUserName, where }) {
   } else {
     // 普通业务员：忽略任何 targetUserName，强制只能看自己
     conditions._openid = openid
+  }
+
+  // 按客户库门店精确筛选（照片明细 / 单店历史）
+  if (where && where.customerId) {
+    const customerId = String(where.customerId).trim().slice(0, 64)
+    if (customerId) conditions.customerId = customerId
   }
 
   const scoreMin = normalizeScore(where && where.scoreMin)
@@ -209,6 +247,7 @@ exports.main = async (event, context) => {
         taskName: true,
         storeName: true,
         userName: true,
+        customerId: true,
         photoFileIDs: true,
         photoCount: true,
         location: true,
@@ -240,12 +279,17 @@ exports.main = async (event, context) => {
       }
       if (item.aiReport && typeof item.aiReport === 'object') {
         const ar = item.aiReport
+        const sharePercent = extractListSharePercent(ar)
+        item.sharePercent = sharePercent
         item.aiReport = {
           score: ar.score,
           scoreLevel: ar.scoreLevel,
           summary: ar.summary,
-          metadata: ar.metadata
+          metadata: ar.metadata,
+          sharePercent
         }
+      } else {
+        item.sharePercent = null
       }
       return item
     })

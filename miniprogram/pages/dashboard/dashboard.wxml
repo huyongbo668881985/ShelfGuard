@@ -1,0 +1,116 @@
+<!--pages/dashboard/dashboard.wxml-->
+<view class="dash-page">
+  <view class="month-bar">
+    <picker mode="date" fields="month" value="{{yearMonth}}-01" bindchange="onYearMonthChange">
+      <view class="month-picker">
+        <text class="month-label">统计月份</text>
+        <text class="month-value">{{yearMonth}}</text>
+        <text class="month-arrow">▾</text>
+      </view>
+    </picker>
+    <picker mode="date" fields="month" value="{{compareYearMonth || yearMonth}}-01" bindchange="onCompareMonthChange">
+      <view class="month-picker secondary">
+        <text class="month-label">对比月</text>
+        <text class="month-value">{{compareYearMonth || '可选'}}</text>
+        <text class="month-arrow">▾</text>
+      </view>
+    </picker>
+  </view>
+
+  <view class="hint-card" wx:if="{{empty && !loading}}">
+    <text>该月暂无预计算数据。管理员可下拉刷新触发重建，或等待每晚 03:00 自动汇总。</text>
+  </view>
+
+  <view class="hero-card" wx:if="{{overall}}">
+    <view class="hero-label">整体平均排面</view>
+    <view class="hero-value-row">
+      <text class="hero-value">{{overall.avgSharePercent != null ? overall.avgSharePercent : '—'}}</text>
+      <text class="hero-unit" wx:if="{{overall.avgSharePercent != null}}">%</text>
+    </view>
+    <view class="hero-sub">店月平均再平均 · 更新以夜间汇总为准</view>
+  </view>
+
+  <view class="cmp-grid" wx:if="{{overall}}">
+    <view class="cmp-card">
+      <text class="cmp-title">环比上月</text>
+      <text class="cmp-ym">{{mom.compareYearMonth || '—'}}</text>
+      <text class="cmp-delta {{mom.deltaPoints > 0 ? 'up' : mom.deltaPoints < 0 ? 'down' : ''}}">
+        {{mom.available ? ((mom.deltaPoints > 0 ? '+' : '') + mom.deltaPoints + ' pt') : '暂无'}}
+      </text>
+      <text class="cmp-base" wx:if="{{mom.baselineSharePercent != null}}">对照 {{mom.baselineSharePercent}}%</text>
+    </view>
+    <view class="cmp-card">
+      <text class="cmp-title">同比去年</text>
+      <text class="cmp-ym">{{yoy.compareYearMonth || '—'}}</text>
+      <text class="cmp-delta {{yoy.deltaPoints > 0 ? 'up' : yoy.deltaPoints < 0 ? 'down' : ''}}">
+        {{yoy.available ? ((yoy.deltaPoints > 0 ? '+' : '') + yoy.deltaPoints + ' pt') : '暂无'}}
+      </text>
+      <text class="cmp-base" wx:if="{{yoy.baselineSharePercent != null}}">对照 {{yoy.baselineSharePercent}}%</text>
+    </view>
+    <view class="cmp-card" wx:if="{{vsMonth}}">
+      <text class="cmp-title">对比所选月</text>
+      <text class="cmp-ym">{{vsMonth.compareYearMonth}}</text>
+      <text class="cmp-delta {{vsMonth.deltaPoints > 0 ? 'up' : vsMonth.deltaPoints < 0 ? 'down' : ''}}">
+        {{vsMonth.available ? ((vsMonth.deltaPoints > 0 ? '+' : '') + vsMonth.deltaPoints + ' pt') : '暂无'}}
+      </text>
+      <text class="cmp-base" wx:if="{{vsMonth.baselineSharePercent != null}}">对照 {{vsMonth.baselineSharePercent}}%</text>
+    </view>
+  </view>
+
+  <view class="stats-row" wx:if="{{overall}}">
+    <view class="stat-chip">
+      <text class="stat-num">{{overall.customerCount}}</text>
+      <text class="stat-lab">拜访客户数</text>
+    </view>
+    <view class="stat-chip">
+      <text class="stat-num">{{overall.avgVisitsPerCustomer != null ? overall.avgVisitsPerCustomer : '—'}}</text>
+      <text class="stat-lab">店均拜访</text>
+    </view>
+    <view class="stat-chip" bindtap="onTapLowVisit">
+      <text class="stat-num warn">{{overall.lowVisitCount}}</text>
+      <text class="stat-lab">拜访&lt;{{overall.lowVisitThreshold}}次</text>
+    </view>
+  </view>
+
+  <view class="section-card">
+    <view class="section-head">
+      <text class="section-title">单店排面</text>
+      <text class="section-action" bindtap="onPickStore">选择客户</text>
+    </view>
+    <view class="store-picked" wx:if="{{storeName}}">
+      <text class="store-name">{{storeName}}</text>
+      <text class="store-clear" bindtap="onClearStore">清除</text>
+    </view>
+    <view class="store-empty" wx:else>
+      <text>从客户库选择门店后，查看该店各月排面、环比与同比</text>
+    </view>
+
+    <block wx:if="{{storeTrend}}">
+      <view class="store-hero">
+        <text class="store-share">{{storeTrend.current && storeTrend.current.avgSharePercent != null ? storeTrend.current.avgSharePercent + '%' : '—'}}</text>
+        <text class="store-share-lab">本月平均排面</text>
+      </view>
+      <view class="store-cmp">
+        <text>环比 {{storeTrend.mom.available ? ((storeTrend.mom.deltaPoints > 0 ? '+' : '') + storeTrend.mom.deltaPoints + ' pt') : '暂无'}}</text>
+        <text class="dot">·</text>
+        <text>同比 {{storeTrend.yoy.available ? ((storeTrend.yoy.deltaPoints > 0 ? '+' : '') + storeTrend.yoy.deltaPoints + ' pt') : '暂无'}}</text>
+      </view>
+      <scroll-view scroll-x class="trend-scroll">
+        <view class="trend-row">
+          <view class="trend-item" wx:for="{{storeTrend.series}}" wx:key="yearMonth">
+            <text class="trend-ym">{{item.yearMonth}}</text>
+            <text class="trend-val">{{item.avgSharePercent != null ? item.avgSharePercent + '%' : '—'}}</text>
+            <text class="trend-visits">{{item.visitCount}}次</text>
+          </view>
+        </view>
+      </scroll-view>
+    </block>
+  </view>
+
+  <view class="action-row">
+    <button class="btn-primary action-btn" bindtap="goPhotoDetail">照片明细</button>
+    <button class="btn-secondary action-btn" wx:if="{{isManager}}" bindtap="onRebuild" loading="{{rebuilding}}">立即重建统计</button>
+  </view>
+
+  <view class="footnote">数据每天凌晨自动汇总一次；环比=上月，同比=去年同月。默认拜访不足阈值 N={{defaultN}}。</view>
+</view>

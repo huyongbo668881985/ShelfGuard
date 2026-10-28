@@ -1,0 +1,9 @@
+{
+  "name": "shelfStats",
+  "version": "1.0.0",
+  "description": "排面统计夜间预计算与看板查询",
+  "main": "index.js",
+  "dependencies": {
+    "wx-server-sdk": "~2.6.3"
+  }
+}

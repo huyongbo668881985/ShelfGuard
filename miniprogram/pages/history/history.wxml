@@ -25,6 +25,18 @@
     </view>
   </view>
 
+  <!-- 排面看板 / 照片明细入口 -->
+  <view class="dash-entry-row">
+    <view class="dash-entry-btn" bindtap="goDashboard">
+      <text class="dash-entry-icon">📈</text>
+      <text class="dash-entry-text">排面看板</text>
+    </view>
+    <view class="dash-entry-btn" bindtap="goPhotoDetail">
+      <text class="dash-entry-icon">🖼️</text>
+      <text class="dash-entry-text">照片明细</text>
+    </view>
+  </view>
+
   <!-- 今日巡检汇总结论卡片（晚间集中分析生成的大盘结论） -->
   <view class="daily-summary-card" wx:if="{{latestDailyReport && latestDailyReport.report}}" bindtap="viewDailyReportDetail">
     <view class="daily-card-top">

@@ -3,6 +3,8 @@
     "pages/camera/camera",
     "pages/upload/upload",
     "pages/history/history",
+    "pages/dashboard/dashboard",
+    "pages/photo-detail/photo-detail",
     "pages/report/report",
     "pages/products/products",
     "pages/customers/customers",

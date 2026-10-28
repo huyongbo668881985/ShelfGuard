@@ -746,3 +746,33 @@
   line-height: 84rpx;
   margin: 0;
 }
+
+
+/* 排面看板入口 */
+.dash-entry-row {
+  display: flex;
+  gap: 16rpx;
+  padding: 0 30rpx 20rpx;
+}
+
+.dash-entry-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10rpx;
+  background: #fff;
+  border-radius: 12rpx;
+  padding: 20rpx 16rpx;
+  box-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.04);
+}
+
+.dash-entry-icon {
+  font-size: 28rpx;
+}
+
+.dash-entry-text {
+  font-size: 26rpx;
+  color: var(--color-primary);
+  font-weight: 500;
+}
