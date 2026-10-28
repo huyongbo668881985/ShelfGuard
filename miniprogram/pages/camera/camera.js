@@ -10,6 +10,8 @@ const TASK_NAME_DEFAULT = '永丰特8：常规拜访'
 
 Page({
   data: {
+    needsApproval: false,
+    approvalBannerText: '',
     // 相机配置
     devicePosition: 'back',
     flashMode: 'auto',
@@ -23,11 +25,11 @@ Page({
     location: null,
     selectedCustomerId: '', // 从客户库选中的客户 _id，跟着这次巡检一起提交，方便以后按客户查
 
-    // 水印样式配置
+    // 水印样式配置（默认无黑框纯透明悬浮，带立体微阴影）
     watermarkConfig: {
       position: 'bottom',
       color: '#ffffff',
-      bgColor: 'rgba(0, 0, 0, 0.4)',
+      bgColor: 'transparent',
       opacity: 1,
       fontSize: 16,
       showLogo: true
@@ -36,6 +38,9 @@ Page({
     // 拍照状态
     photoTempPath: '',
     watermarkedPath: '',
+    watermarkedPaths: [],
+    previewIndex: 0,
+    confirmBtnText: '下一步',
     showPreview: false,
     composing: false,
 
@@ -45,7 +50,10 @@ Page({
     maxPhotos: 6,
 
     // 设置面板
-    showSettings: false
+    showSettings: false,
+
+    // traffic=拼图；quality=多图各自打水印后直传
+    imageMode: 'traffic'
   },
 
   onLoad(options) {
@@ -53,6 +61,7 @@ Page({
     this.loadUserInfo(options)
     // 获取位置
     this.getLocation()
+    this.loadImageMode()
 
     // 登录是异步的，camera 作为首页在 onLoad 时可能还没拿到用户信息
     // （业务员默认姓名存在云端 users 集合）。若此刻还没有姓名，等登录完成
@@ -62,7 +71,27 @@ Page({
     }
   },
 
+  
+  refreshApprovalBanner() {
+    const app = getApp()
+    const me = app.globalData.userInfo
+    if (!me) {
+      this.setData({ needsApproval: false, approvalBannerText: '' })
+      return
+    }
+    const role = me.role || app.globalData.userRole || 'sales'
+    const approvedOk = (
+      me.approved === true ||
+      ((me.approved === undefined || me.approved === null) && (role === 'admin' || role === 'manager'))
+    )
+    this.setData({
+      needsApproval: !approvedOk,
+      approvalBannerText: approvedOk ? '' : '账号待管理员审批，批准前无法提交巡检'
+    })
+  },
+
   onShow() {
+    this.refreshApprovalBanner()
     // 隐私授权补弹：app.js 的 wx.onNeedPrivacyAuthorize 拦截触发时，
     // 若当时弹窗组件尚未挂载会置 _privacyPending 标记，这里在页面显示时补弹一次
     if (app.globalData._privacyPending) {
@@ -93,12 +122,21 @@ Page({
     const selected = app.globalData.selectedCustomer
     if (selected) {
       app.globalData.selectedCustomer = null
-      this.setData({
-        storeName: selected.storeName || '',
-        address: selected.address || this.data.address,
-        selectedCustomerId: selected._id
-      })
-      wx.showToast({ title: `已选择：${selected.storeName}`, icon: 'none' })
+      if (selected.isNoStore) {
+        this.setData({
+          storeName: '',
+          selectedCustomerId: '',
+          address: (this.data.location && this.data.location.address) || this.data.address
+        })
+        wx.showToast({ title: '已切换为无门店模式', icon: 'none' })
+      } else {
+        this.setData({
+          storeName: selected.storeName || '',
+          address: selected.address || this.data.address,
+          selectedCustomerId: selected._id
+        })
+        wx.showToast({ title: `已选择：${selected.storeName}`, icon: 'none' })
+      }
     }
   },
 
@@ -203,13 +241,15 @@ Page({
 
   // 输入处理
   onTaskNameInput(e) {
-    this.setData({ taskName: e.detail.value })
+    const v = String(e.detail.value || '').replace(/[\r\n]+/g, ' ').slice(0, 50)
+    this.setData({ taskName: v })
     // 记住上次填的任务名，下次进入默认带出（可更改）
-    wx.setStorageSync('shelfguard_lastTaskName', e.detail.value)
+    wx.setStorageSync('shelfguard_lastTaskName', v)
   },
 
   onUserNameInput(e) {
-    this.setData({ userName: e.detail.value })
+    const v = String(e.detail.value || '').replace(/[\r\n]+/g, ' ').slice(0, 50)
+    this.setData({ userName: v })
   },
 
   // 切换水印位置
@@ -259,6 +299,16 @@ Page({
 
     const query = (lat != null && lng != null) ? `&lat=${lat}&lng=${lng}` : ''
     wx.navigateTo({ url: `/pages/customers/customers?mode=select${query}` })
+  },
+
+  // 一键清空门店（切换为无门店/沿街巡检模式）
+  onClearStore() {
+    this.setData({
+      storeName: '',
+      selectedCustomerId: '',
+      address: (this.data.location && this.data.location.address) || this.data.address
+    })
+    wx.showToast({ title: '已清空门店', icon: 'none' })
   },
 
   // 拍照：每次拍一张加入 capturedPhotos 数组，不立即预览，方便连续拍多张
@@ -343,8 +393,41 @@ Page({
     this.setData({ capturedPhotos })
   },
 
-  // 完成拍照：1张直接走原来的单图水印流程；多张先拼成一张网格大图，
-  // 再对拼好的这张大图打水印（水印只打一次，不是每张小图各打一次）
+
+  loadImageMode() {
+    let mode = 'traffic'
+    try {
+      const local = wx.getStorageSync('shelfguard_imageMode')
+      if (local === 'quality' || local === 'traffic') mode = local
+      else if (app.globalData.systemConfig && app.globalData.systemConfig.imageMode) {
+        mode = app.globalData.systemConfig.imageMode === 'quality' ? 'quality' : 'traffic'
+      }
+    } catch (_) {}
+    this.setData({ imageMode: mode })
+    // 后台刷新团队默认
+    wx.cloud.callFunction({ name: 'settings', data: { action: 'get' } }).then(res => {
+      if (res.result && res.result.success && res.result.settings) {
+        const s = res.result.settings
+        app.globalData.systemConfig = {
+          ...(app.globalData.systemConfig || {}),
+          analyzeMode: s.analyzeMode,
+          analyzeTime: s.analyzeTime,
+          imageMode: s.imageMode === 'quality' ? 'quality' : 'traffic'
+        }
+        // 本地无显式偏好时跟随团队设置
+        try {
+          const local = wx.getStorageSync('shelfguard_imageMode')
+          if (!local) {
+            this.setData({ imageMode: app.globalData.systemConfig.imageMode })
+          }
+        } catch (_) {}
+      }
+    }).catch(() => {})
+  },
+
+  // 完成拍照：1张直接走原来的单图水印流程；
+  // 流量优先(traffic)：多张拼成网格大图再打水印；
+  // 精度优先(quality)：跳过拼图，每张各自打水印后多 fileID 直传。
   async finishCapture() {
     const { capturedPhotos } = this.data
     if (capturedPhotos.length === 0) {
@@ -355,25 +438,67 @@ Page({
     this.setData({ showPreview: true, composing: true })
 
     try {
-      let sourcePath
-      if (capturedPhotos.length === 1) {
-        sourcePath = capturedPhotos[0]
-      } else {
-        const gridComp = this.selectComponent('#photoGridCanvas')
-        if (!gridComp) {
-          throw new Error('拼图组件未找到')
-        }
-        gridComp.setData({ imagePaths: capturedPhotos })
-        sourcePath = await gridComp.compose()
-      }
+      const qualityMode = this.data.imageMode === 'quality' && capturedPhotos.length > 1
 
-      this.setData({ photoTempPath: sourcePath })
-      await this.composeWatermark(sourcePath)
+      if (qualityMode) {
+        // 精度优先：每张单独打水印，确认时带多路径去上传页
+        const watermarkedList = []
+        for (let i = 0; i < capturedPhotos.length; i++) {
+          const wm = await this.composeWatermarkPath(capturedPhotos[i])
+          watermarkedList.push(wm)
+        }
+        this.setData({
+          photoTempPath: watermarkedList[0],
+          watermarkedPath: watermarkedList[0],
+          watermarkedPaths: watermarkedList,
+          previewIndex: 0,
+          confirmBtnText: `下一步（${watermarkedList.length}张）`,
+          composing: false
+        })
+      } else {
+        let sourcePath
+        if (capturedPhotos.length === 1) {
+          sourcePath = capturedPhotos[0]
+        } else {
+          const gridComp = this.selectComponent('#photoGridCanvas')
+          if (!gridComp) {
+            throw new Error('拼图组件未找到')
+          }
+          gridComp.setData({ imagePaths: capturedPhotos })
+          sourcePath = await gridComp.compose()
+        }
+
+        this.setData({
+          photoTempPath: sourcePath,
+          watermarkedPaths: [],
+          previewIndex: 0,
+          confirmBtnText: '下一步'
+        })
+        await this.composeWatermark(sourcePath)
+      }
     } catch (err) {
       console.error('拼图/合成失败:', err)
       this.setData({ composing: false })
       wx.showToast({ title: '处理失败，请重试', icon: 'none' })
     }
+  },
+
+  // 只返回水印路径，不写页面状态（精度模式连拍用）
+  async composeWatermarkPath(imagePath) {
+    const watermarkComp = this.selectComponent('#watermarkCanvas')
+    if (!watermarkComp) throw new Error('水印组件未找到')
+    const now = new Date()
+    const dateTime = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+    const watermark = {
+      ...this.data.watermarkConfig,
+      taskName: this.data.taskName,
+      storeName: this.data.storeName,
+      userName: this.data.userName,
+      address: this.data.address,
+      dateTime
+    }
+    watermarkComp.setData({ imagePath, watermark })
+    return await watermarkComp.compose()
   },
 
   // 合成水印
@@ -428,43 +553,75 @@ Page({
     this.setData({
       photoTempPath: '',
       watermarkedPath: '',
+      watermarkedPaths: [],
+      previewIndex: 0,
+      confirmBtnText: '下一步',
       showPreview: false,
       capturedPhotos: []
     })
   },
 
-  // 快捷分享水印照片到微信（原生发送给朋友/收藏/保存）
+  onPreviewSwiperChange(e) {
+    const idx = (e.detail && e.detail.current) || 0
+    const paths = this.data.watermarkedPaths || []
+    this.setData({
+      previewIndex: idx,
+      watermarkedPath: paths[idx] || this.data.watermarkedPath
+    })
+  },
+
+  onSelectPreviewThumb(e) {
+    const idx = Number(e.currentTarget.dataset.index) || 0
+    const paths = this.data.watermarkedPaths || []
+    this.setData({
+      previewIndex: idx,
+      watermarkedPath: paths[idx] || this.data.watermarkedPath
+    })
+  },
+
+  currentPreviewPath() {
+    const paths = this.data.watermarkedPaths || []
+    if (paths.length > 1) {
+      return paths[this.data.previewIndex] || paths[0] || this.data.watermarkedPath
+    }
+    return this.data.watermarkedPath
+  },
+
+  // 快捷分享当前预览图到微信（原生发送给朋友/收藏/保存）
   shareToWechat() {
-    const { watermarkedPath } = this.data
-    if (!watermarkedPath) {
+    const path = this.currentPreviewPath()
+    if (!path) {
       wx.showToast({ title: '照片尚未合成完成', icon: 'none' })
       return
     }
+    const urls = (this.data.watermarkedPaths && this.data.watermarkedPaths.length)
+      ? this.data.watermarkedPaths
+      : [path]
 
     if (typeof wx.showShareImageMenu === 'function') {
       wx.showShareImageMenu({
-        path: watermarkedPath,
+        path,
         fail: (err) => {
           if (err && err.errMsg && !err.errMsg.includes('cancel')) {
-            wx.previewImage({ current: watermarkedPath, urls: [watermarkedPath] })
+            wx.previewImage({ current: path, urls })
           }
         }
       })
     } else {
-      wx.previewImage({ current: watermarkedPath, urls: [watermarkedPath] })
+      wx.previewImage({ current: path, urls })
     }
   },
 
-  // 保存打好水印的照片到手机相册
+  // 保存当前预览图到手机相册
   saveToAlbum() {
-    const { watermarkedPath } = this.data
-    if (!watermarkedPath) {
+    const path = this.currentPreviewPath()
+    if (!path) {
       wx.showToast({ title: '照片尚未合成完成', icon: 'none' })
       return
     }
 
     wx.saveImageToPhotosAlbum({
-      filePath: watermarkedPath,
+      filePath: path,
       success: () => {
         wx.showToast({ title: '已存入系统相册', icon: 'success' })
       },
@@ -480,6 +637,50 @@ Page({
           wx.showToast({ title: '保存失败', icon: 'none' })
         }
       }
+    })
+  },
+
+  // 精度模式：把所有水印图逐张存入相册
+  async saveAllToAlbum() {
+    const paths = this.data.watermarkedPaths || []
+    if (paths.length === 0) {
+      wx.showToast({ title: '没有可保存的照片', icon: 'none' })
+      return
+    }
+    wx.showLoading({ title: `保存中 0/${paths.length}`, mask: true })
+    let ok = 0
+    let denied = false
+    for (let i = 0; i < paths.length; i++) {
+      wx.showLoading({ title: `保存中 ${i + 1}/${paths.length}`, mask: true })
+      try {
+        await new Promise((resolve, reject) => {
+          wx.saveImageToPhotosAlbum({
+            filePath: paths[i],
+            success: resolve,
+            fail: reject
+          })
+        })
+        ok++
+      } catch (err) {
+        if (err && err.errMsg && err.errMsg.includes('auth deny')) {
+          denied = true
+          break
+        }
+      }
+    }
+    wx.hideLoading()
+    if (denied) {
+      wx.showModal({
+        title: '需要相册权限',
+        content: '请在设置中开启相册权限，用于保存带水印的巡检照片',
+        confirmText: '去设置',
+        success: (r) => { if (r.confirm) wx.openSetting() }
+      })
+      return
+    }
+    wx.showToast({
+      title: ok === paths.length ? `已全部存入（${ok}张）` : `已保存 ${ok}/${paths.length} 张`,
+      icon: ok === paths.length ? 'success' : 'none'
     })
   },
 
@@ -526,18 +727,22 @@ Page({
 
   // 跳转到上传页
   navigateToUpload(location) {
-    const { watermarkedPath, address, taskName, storeName, userName, selectedCustomerId } = this.data
-    wx.navigateTo({
-      url: `/pages/upload/upload?` +
-        `photoPath=${encodeURIComponent(watermarkedPath)}` +
-        `&lat=${location.latitude}` +
-        `&lng=${location.longitude}` +
-        `&address=${encodeURIComponent(address)}` +
-        `&taskName=${encodeURIComponent(taskName)}` +
-        `&storeName=${encodeURIComponent(storeName)}` +
-        `&userName=${encodeURIComponent(userName)}` +
-        `&customerId=${encodeURIComponent(selectedCustomerId || '')}`
-    })
+    const { watermarkedPath, watermarkedPaths, address, taskName, storeName, userName, selectedCustomerId } = this.data
+    const multi = Array.isArray(watermarkedPaths) && watermarkedPaths.length > 1
+    let url = `/pages/upload/upload?` +
+      `lat=${location.latitude}` +
+      `&lng=${location.longitude}` +
+      `&address=${encodeURIComponent(address)}` +
+      `&taskName=${encodeURIComponent(taskName)}` +
+      `&storeName=${encodeURIComponent(storeName)}` +
+      `&userName=${encodeURIComponent(userName)}` +
+      `&customerId=${encodeURIComponent(selectedCustomerId || '')}`
+    if (multi) {
+      url += `&photoPaths=${encodeURIComponent(JSON.stringify(watermarkedPaths))}`
+    } else {
+      url += `&photoPath=${encodeURIComponent(watermarkedPath)}`
+    }
+    wx.navigateTo({ url })
     // 提交后重置拍照状态：camera 是 tabBar 页，report 页的"再拍一张"是
     // wx.switchTab 回来，不会重新触发 onLoad，如果不在这里清空，
     // capturedPhotos/showPreview 这些会带着上一次巡检的照片留在页面上
@@ -545,6 +750,9 @@ Page({
       capturedPhotos: [],
       photoTempPath: '',
       watermarkedPath: '',
+      watermarkedPaths: [],
+      previewIndex: 0,
+      confirmBtnText: '下一步',
       showPreview: false
     })
   },

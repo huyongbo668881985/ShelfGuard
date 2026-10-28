@@ -1,5 +1,6 @@
 <!--pages/camera/camera.wxml-->
 <view class="camera-page">
+  <view class="approval-banner" wx:if="{{needsApproval}}">{{approvalBannerText}}</view>
   <!-- 相机预览区域 -->
   <view class="camera-wrapper" wx:if="{{!showPreview && !showSettings}}">
     <camera
@@ -57,7 +58,9 @@
         <cover-view class="capture-count">已拍 {{capturedPhotos.length}}/{{maxPhotos}}</cover-view>
 
         <cover-view class="capture-finish-btn" wx:if="{{capturedPhotos.length > 0}}" bindtap="finishCapture">
-          <cover-view>{{capturedPhotos.length > 1 ? '完成拼图' : '完成'}}</cover-view>
+          <cover-view wx:if="{{capturedPhotos.length <= 1}}">完成</cover-view>
+          <cover-view wx:elif="{{imageMode === 'quality'}}">完成上传（精度）</cover-view>
+          <cover-view wx:else>完成拼图</cover-view>
         </cover-view>
       </cover-view>
     </camera>
@@ -84,28 +87,60 @@
   </view>
 
 
-  <!-- 照片预览区域 -->
+  <!-- 照片预览区域：精度模式多图可滑，并标明共 N 张 -->
   <view class="preview-wrapper" wx:if="{{showPreview}}">
-    <image
-      class="preview-image"
-      src="{{watermarkedPath || photoTempPath}}"
-      mode="aspectFit"
-    ></image>
+    <block wx:if="{{watermarkedPaths.length > 1}}">
+      <swiper
+        class="preview-swiper"
+        current="{{previewIndex}}"
+        bindchange="onPreviewSwiperChange"
+        indicator-dots="{{true}}"
+        indicator-color="rgba(255,255,255,0.35)"
+        indicator-active-color="#fff"
+      >
+        <swiper-item wx:for="{{watermarkedPaths}}" wx:key="*this">
+          <image class="preview-image" src="{{item}}" mode="aspectFit"></image>
+        </swiper-item>
+      </swiper>
+      <view class="preview-count-badge">共 {{watermarkedPaths.length}} 张 · 第 {{previewIndex + 1}} 张</view>
+      <scroll-view class="preview-thumbs" scroll-x="{{true}}" enable-flex="{{true}}">
+        <view
+          class="preview-thumb {{previewIndex === index ? 'active' : ''}}"
+          wx:for="{{watermarkedPaths}}"
+          wx:key="*this"
+          data-index="{{index}}"
+          bindtap="onSelectPreviewThumb"
+        >
+          <image class="preview-thumb-img" src="{{item}}" mode="aspectFill"></image>
+        </view>
+      </scroll-view>
+    </block>
+    <block wx:else>
+      <image
+        class="preview-image"
+        src="{{watermarkedPath || photoTempPath}}"
+        mode="aspectFit"
+      ></image>
+    </block>
 
     <!-- 合成中提示 -->
     <view class="composing-mask" wx:if="{{composing}}">
       <text class="composing-text">正在添加水印...</text>
     </view>
 
-    <!-- 快捷分享工具条：发微信/存相册 -->
+    <!-- 快捷分享工具条：当前图发微信/存相册；多图可全部存相册 -->
     <view class="preview-share-bar" wx:if="{{!composing && watermarkedPath}}">
       <view class="share-btn" bindtap="shareToWechat">
         <text class="share-icon">📤</text>
-        <text class="share-text">发微信好友</text>
+        <text class="share-text">{{watermarkedPaths.length > 1 ? '发当前图' : '发微信好友'}}</text>
       </view>
       <view class="share-btn" bindtap="saveToAlbum">
         <text class="share-icon">💾</text>
-        <text class="share-text">存入相册</text>
+        <text class="share-text">{{watermarkedPaths.length > 1 ? '存当前图' : '存入相册'}}</text>
+      </view>
+      <view class="share-btn" wx:if="{{watermarkedPaths.length > 1}}" bindtap="saveAllToAlbum">
+        <text class="share-icon">📚</text>
+        <text class="share-text">全部存相册</text>
       </view>
     </view>
 
@@ -113,7 +148,7 @@
     <view class="preview-actions">
       <button class="btn-secondary" bindtap="retakePhoto">重新拍照</button>
       <button class="btn-primary" bindtap="confirmPhoto" disabled="{{composing}}">
-        下一步
+        {{confirmBtnText}}
       </button>
     </view>
   </view>
@@ -133,39 +168,44 @@
       <!-- 任务名称 -->
       <view class="setting-item">
         <text class="setting-label">任务名称</text>
-        <textarea
+        <input
           class="setting-input"
           style="color: #1a1a2e; background: #fff; height: 80rpx;"
           placeholder="请输入任务名称"
           placeholder-class="setting-ph"
           placeholder-style="color: #999;"
           value="{{taskName}}"
+          maxlength="50"
           bindinput="onTaskNameInput"
           adjust-position="{{false}}"
-        ></textarea>
+        />
       </view>
 
-      <!-- 门店：必须从客户库选择，不允许手输 -->
+      <!-- 门店：可从客户库选择，也可一键清空/设为无门店模式 -->
       <view class="setting-item">
         <text class="setting-label">门店</text>
-        <view class="select-store" bindtap="chooseCustomer">
-          <text class="select-store-text {{storeName ? '' : 'placeholder'}}">{{storeName || '选择门店'}}</text>
-          <text class="setting-arrow">›</text>
+        <view class="select-store-wrap">
+          <view class="select-store" bindtap="chooseCustomer">
+            <text class="select-store-text {{storeName ? '' : 'placeholder'}}">{{storeName || '无门店（沿街巡检）'}}</text>
+            <text class="setting-arrow">›</text>
+          </view>
+          <text class="store-clear-btn" wx:if="{{storeName}}" catchtap="onClearStore">清除</text>
         </view>
       </view>
 
       <!-- 业务员姓名 -->
       <view class="setting-item">
         <text class="setting-label">业务员姓名</text>
-        <textarea
+        <input
           class="setting-input"
           style="color: #1a1a2e; background: #fff; height: 80rpx;"
           placeholder="请输入姓名"
           placeholder-class="setting-ph"
           placeholder-style="color: #999;"
           value="{{userName}}"
+          maxlength="50"
           bindinput="onUserNameInput"
-        ></textarea>
+        />
       </view>
 
       <!-- 水印位置 -->

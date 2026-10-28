@@ -31,11 +31,13 @@ exports.main = async (event, context) => {
   try {
     switch (action) {
       case 'listUsers':
-        return await handleListUsers(openid)
+        return await handleListUsers(openid, event)
       case 'setRole':
         return await handleSetRole(openid, event)
       case 'setDisabled':
         return await handleSetDisabled(openid, event)
+      case 'setApproved':
+        return await handleSetApproved(openid, event)
       default:
         return { success: false, error: `未知操作: ${action}` }
     }
@@ -63,18 +65,34 @@ function maskOpenid(openid) {
 // ============================================================
 // 列出用户（仅 admin）
 // ============================================================
-async function handleListUsers(openid) {
+function parsePaging(event) {
+  let limit = parseInt(event && event.limit, 10)
+  if (isNaN(limit) || limit <= 0) limit = 50
+  if (limit > 100) limit = 100
+  let page = parseInt(event && event.page, 10)
+  if (isNaN(page) || page < 1) page = 1
+  let skip = parseInt(event && event.skip, 10)
+  if (isNaN(skip) || skip < 0) skip = (page - 1) * limit
+  return { limit, page, skip }
+}
+
+async function handleListUsers(openid, event = {}) {
   const me = await getCaller(openid)
   if (!me || !ADMIN_ROLES.includes(me.role)) {
     return { success: false, error: '只有管理员可以查看用户列表' }
   }
 
+  const { limit, page, skip } = parsePaging(event)
+  const countRes = await db.collection('users').count()
+  const total = countRes.total || 0
+
   const res = await db.collection('users')
     .orderBy('createdAt', 'desc')
-    .limit(100)
+    .skip(skip)
+    .limit(limit)
     .get()
 
-  const list = res.data.map(u => ({
+  const list = (res.data || []).map(u => ({
     _id: u._id,
     openidMasked: maskOpenid(u._openid),
     name: u.name || '',
@@ -83,10 +101,24 @@ async function handleListUsers(openid) {
     role: u.role || 'sales',
     roleLabel: ROLE_LABELS[u.role || 'sales'] || u.role || 'sales',
     disabled: !!u.disabled,
+    // 兼容展示：无字段时 admin/manager 视为已批准，sales 视为未批准
+    approved: u.approved === true || (
+      (u.approved === undefined || u.approved === null) &&
+      (u.role === 'admin' || u.role === 'manager')
+    ),
     createdAt: u.createdAt || null
   }))
 
-  return { success: true, list, meRole: me.role }
+  return {
+    success: true,
+    list,
+    total,
+    page,
+    limit,
+    skip,
+    hasMore: skip + list.length < total,
+    meRole: me.role
+  }
 }
 
 // ============================================================
@@ -120,7 +152,11 @@ async function handleSetRole(openid, event) {
   }
 
   await db.collection('users').doc(target._id).update({
-    data: { role, updatedAt: db.serverDate() }
+    data: {
+      role,
+      approved: true,   // 管理员改角色视为批准准入
+      updatedAt: db.serverDate()
+    }
   })
 
   // 角色变更审计（存真实 openid 便于追溯）
@@ -171,13 +207,55 @@ async function handleSetDisabled(openid, event) {
 
   const willDisable = !!disabled
 
+  const updateData = {
+    disabled: willDisable,
+    disabledAt: willDisable ? db.serverDate() : null,
+    disabledBy: willDisable ? openid : ''
+  }
+  // 启用账号时一并批准，避免「正常但未批准」卡死业务员
+  if (!willDisable) {
+    updateData.approved = true
+  }
+
   await db.collection('users').doc(target._id).update({
-    data: {
-      disabled: willDisable,
-      disabledAt: willDisable ? db.serverDate() : null,
-      disabledBy: willDisable ? openid : ''
-    }
+    data: updateData
   })
 
   return { success: true, disabled: willDisable }
+}
+
+// ============================================================
+// 批准 / 取消批准（仅 admin）
+// ============================================================
+async function handleSetApproved(openid, event) {
+  const me = await getCaller(openid)
+  if (!me || !ADMIN_ROLES.includes(me.role)) {
+    return { success: false, error: '只有管理员可以审批用户' }
+  }
+
+  const { targetId, approved } = event
+  if (!targetId) {
+    return { success: false, error: '参数错误' }
+  }
+
+  const targetDoc = await db.collection('users').doc(targetId).get()
+  const target = targetDoc.data
+  if (!target) {
+    return { success: false, error: '目标用户不存在' }
+  }
+  if (target._openid === openid) {
+    return { success: false, error: '不能取消自己的批准状态' }
+  }
+
+  const willApprove = !!approved
+  await db.collection('users').doc(target._id).update({
+    data: {
+      approved: willApprove,
+      approvedAt: willApprove ? db.serverDate() : null,
+      approvedBy: willApprove ? openid : '',
+      updatedAt: db.serverDate()
+    }
+  })
+
+  return { success: true, approved: willApprove }
 }

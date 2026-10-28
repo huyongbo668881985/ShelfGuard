@@ -9,7 +9,12 @@ Page({
   data: {
     loading: true,
     users: [],
-    meRole: ''
+    meRole: '',
+    page: 1,
+    pageSize: 50,
+    hasMore: false,
+    total: 0,
+    loadingMore: false
   },
 
   async onShow() {
@@ -39,29 +44,48 @@ Page({
       }, 800)
       return
     }
-    this.loadUsers()
+    this.loadUsers({ reset: true })
   },
 
   onPullDownRefresh() {
-    this.loadUsers().then(() => wx.stopPullDownRefresh())
+    this.loadUsers({ reset: true }).then(() => wx.stopPullDownRefresh())
   },
 
-  async loadUsers() {
-    this.setData({ loading: true })
+  async loadUsers({ reset = true } = {}) {
+    if (reset) {
+      this.setData({ loading: true, page: 1 })
+    } else {
+      if (!this.data.hasMore || this.data.loadingMore) return
+      this.setData({ loadingMore: true })
+    }
+    const page = reset ? 1 : this.data.page
+    const pageSize = this.data.pageSize
     try {
-      const res = await wx.cloud.callFunction({ name: 'users', data: { action: 'listUsers' } })
+      const res = await wx.cloud.callFunction({
+        name: 'users',
+        data: { action: 'listUsers', page, limit: pageSize }
+      })
       if (!res.result || !res.result.success) {
         throw new Error((res.result && res.result.error) || '加载失败')
       }
+      const list = res.result.list || []
       this.setData({
         loading: false,
-        users: res.result.list,
-        meRole: res.result.meRole
+        loadingMore: false,
+        users: reset ? list : (this.data.users || []).concat(list),
+        meRole: res.result.meRole,
+        page: page + 1,
+        hasMore: !!res.result.hasMore,
+        total: res.result.total || 0
       })
     } catch (err) {
-      this.setData({ loading: false })
+      this.setData({ loading: false, loadingMore: false })
       wx.showToast({ title: err.message || '加载失败', icon: 'none' })
     }
+  },
+
+  loadMoreUsers() {
+    this.loadUsers({ reset: false })
   },
 
   // 改角色：弹出选项，调用 users.setRole
@@ -87,7 +111,7 @@ Page({
             throw new Error(res.result && res.result.error || '操作失败')
           }
           wx.showToast({ title: '已更新', icon: 'success' })
-          this.loadUsers()
+          this.loadUsers({ reset: true })
         } catch (err) {
           wx.hideLoading()
           wx.showToast({ title: err.message || '操作失败', icon: 'none' })
@@ -98,6 +122,40 @@ Page({
   },
 
   // 停用 / 启用：调用 users.setDisabled
+  // 批准业务员准入（未批准时显示按钮）
+  async toggleApproved(e) {
+    const targetId = e.currentTarget.dataset.id
+    const approved = e.currentTarget.dataset.approved
+    if (approved) return
+
+    const confirm = await new Promise(resolve => {
+      wx.showModal({
+        title: '批准账号',
+        content: '确定批准该用户？批准后其可提交巡检与触发分析。',
+        success: x => resolve(x.confirm),
+        fail: () => resolve(false)
+      })
+    })
+    if (!confirm) return
+
+    wx.showLoading({ title: '处理中', mask: true })
+    try {
+      const res = await wx.cloud.callFunction({
+        name: 'users',
+        data: { action: 'setApproved', targetId, approved: true }
+      })
+      wx.hideLoading()
+      if (!res.result || !res.result.success) {
+        throw new Error(res.result && res.result.error || '操作失败')
+      }
+      wx.showToast({ title: '已批准', icon: 'success' })
+      this.loadUsers({ reset: true })
+    } catch (err) {
+      wx.hideLoading()
+      wx.showToast({ title: err.message || '操作失败', icon: 'none' })
+    }
+  },
+
   async toggleDisabled(e) {
     const targetId = e.currentTarget.dataset.id
     const disabled = e.currentTarget.dataset.disabled
@@ -126,7 +184,7 @@ Page({
         throw new Error(res.result && res.result.error || '操作失败')
       }
       wx.showToast({ title: `已${actionText}`, icon: 'success' })
-      this.loadUsers()
+      this.loadUsers({ reset: true })
     } catch (err) {
       wx.hideLoading()
       wx.showToast({ title: err.message || '操作失败', icon: 'none' })

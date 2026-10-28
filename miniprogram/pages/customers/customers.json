@@ -1,5 +1,9 @@
 {
   "navigationBarTitleText": "客户管理",
   "enablePullDownRefresh": true,
-  "backgroundTextStyle": "dark"
+  "onReachBottomDistance": 80,
+  "backgroundTextStyle": "dark",
+  "usingComponents": {
+    "privacy-auth": "/components/privacy-auth/index"
+  }
 }

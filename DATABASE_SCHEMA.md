@@ -95,24 +95,32 @@
 }
 ```
 
-### 索引建议
+### 索引建议（必须在云开发控制台创建，否则 where + orderBy 会报错）
 
 ```javascript
-// 按用户 + 时间倒序查询（历史记录页）
+// 【必须】按用户 + 时间倒序（历史记录页、sales 本人队列）
+// 对应查询：where({ _openid }).orderBy('createdAt', 'desc')
 db.collection('inspections').createIndex({
   _openid: 1,
   createdAt: -1
 })
 
-// 管理者按业务员姓名 + 时间查询（历史记录页"按业务员筛选"）
+// 【必须】按状态 + 时间（batchAnalyze / settings 队列统计 / 重排失败）
+// 对应查询：where({ status: 'pending'|'analyzing'|'analyze_failed' }).orderBy('createdAt', 'asc'|'desc')
+db.collection('inspections').createIndex({
+  status: 1,
+  createdAt: -1
+})
+
+// 【建议】管理者按业务员姓名 + 时间（历史记录"按业务员筛选"）
 db.collection('inspections').createIndex({
   userName: 1,
   createdAt: -1
 })
 
-// 按状态查询（待分析/失败记录）
+// 【建议】按客户回看巡检（若做客户详情历史）
 db.collection('inspections').createIndex({
-  status: 1,
+  customerId: 1,
   createdAt: -1
 })
 ```
@@ -155,6 +163,10 @@ pending → analyze_failed   (记录没有照片等脏数据，直接判失败�
   "department": "string",             // 部门（可选）
 
   // === 账号状态 ===
+  "approved": "boolean",              // 是否已批准使用（P0）。新用户默认 false；admin/manager 或显式 true 可提交/分析。
+                                      //   老用户无此字段时：admin/manager 仍可用；sales 需管理员点「批准」或「启用」。
+  "approvedAt": "Date",               // 批准时间
+  "approvedBy": "string",             // 批准人 openid
   "disabled": "boolean",              // 是否停用（由 admin 在「用户与权限管理」里置 true）。
                                       //   停用后无法提交巡检、查看记录/报告、改设置；历史数据不受影响。
   "disabledAt": "Date",               // 停用时间
@@ -185,6 +197,11 @@ pending → analyze_failed   (记录没有照片等脏数据，直接判失败�
 db.collection('users').createIndex({
   _openid: 1
 }, { unique: true })
+
+// 【建议】进销存同步按手机号匹配业务员
+db.collection('users').createIndex({
+  phone: 1
+})
 ```
 
 ---
@@ -245,6 +262,16 @@ db.collection('users').createIndex({
 
 `analyzeImage` 云函数在每次分析前会查询 `isActive: true` 的产品，拼成一段"本品牌产品资料"文本追加进 AI 的 user prompt（纯文本方式，不消耗图片 token）。如果后续发现某个小众品牌模型识别不准，可以考虑把参考照片也作为 few-shot 图片一起传给模型，但那样每次分析请求都会多出好几张图，token/调用成本会明显上升，建议先用文本方式跑一段时间看效果，需要再加。
 
+### 索引建议
+
+```javascript
+// 【建议】产品库分页列表：where({ isActive: true }).orderBy('createdAt', 'desc')
+db.collection('products').createIndex({
+  isActive: 1,
+  createdAt: -1
+})
+```
+
 ---
 
 ## 集合：customers（客户/门店资料）
@@ -260,12 +287,14 @@ db.collection('users').createIndex({
 ```json
 {
   "_id": "string",                    // 自动生成
-  "_openid": "string",                // 创建人 = 所属业务员，查询过滤的依据
+  "_openid": "string",                // 创建人 / 所属业务员，查询过滤的依据
 
   "storeName": "string",              // 门店名称（必填）
   "address": "string",                // 地址（可选，纯文本，不参与距离计算）
   "contactName": "string",            // 联系人（可选）
   "contactPhone": "string",           // 联系电话（可选）
+
+  "jxcCustomerId": "number",          // 进销存系统 (jxc-app) 中的客户 ID，用于同步去重与关联（可选）
 
   "location": {                       // 门店坐标（可选，但不填就不会出现在"就近排序"里）
     "latitude": "number",
@@ -278,9 +307,37 @@ db.collection('users').createIndex({
 }
 ```
 
+### 进销存 (jxc-app) 客户打通机制
+- **定时增量同步（云函数 syncJxcCustomers）**：
+  - 接入进销存 `/api/v1/customers` 端点，基于 API Key 隔离各租户。
+  - **业务员对齐（方式 A）**：根据进销存业务员账号（手机号）或姓名，自动匹配 ShelfGuard `users` 中的业务员 `_openid`；未匹配到的客户由系统管理员兜底。
+  - **坐标对齐（策略 B）**：同步时坐标 `location` 初始为 `null`；当业务员在现场首次提交该门店的巡检时（`submitInspection`），系统自动将当次水印定位回填为此门店的经纬度坐标，此后该门店即可参与相机页的"就近排序"。
+  - **防覆盖保护**：后续增量同步进销存资料时，**绝不覆盖**已在现场打卡定位成功的 `location` 坐标。
+
 ### 使用方式
 
 相机页"选择客户"时，前端会带上当前定位坐标查询 `customers` 云函数的 `list` 动作（已经是按 `_openid` 过滤过的自己的客户），拿到列表后用 Haversine 公式在前端算直线距离并排序——业务员的客户一般就几十个，前端算完全够用，不需要后端做地理索引。选中后会把 `storeName`/`address` 回填到水印信息里，客户的 `_id` 也会跟着这次巡检一起存进 `inspections.customerId` 字段，方便以后"按客户查历史"。
+
+### 索引建议（必须在云开发控制台创建）
+
+```javascript
+// 【必须】进销存同步去重：syncJxcCustomers 按 jxcCustomerId 批量 _.in
+db.collection('customers').createIndex({
+  jxcCustomerId: 1
+})
+
+// 【必须】业务员私有列表分页：where({ _openid, isActive: true }).orderBy('createdAt', 'desc')
+db.collection('customers').createIndex({
+  _openid: 1,
+  createdAt: -1
+})
+
+// 【建议】同业务员下按门店名查找（手工去重 / 兼容绑 jxc）
+db.collection('customers').createIndex({
+  _openid: 1,
+  storeName: 1
+})
+```
 
 ---
 
@@ -299,9 +356,6 @@ cloud://env-id.xxx/
 
 文件命名规则：`{timestamp}-{index}-{random}.jpg`
 
----
-
----
 
 ## 集合：settings（系统配置）
 
@@ -320,6 +374,9 @@ API Key（`dashscopeApiKey`）明文只存在这里、只在 `analyzeImage` 云�
   "analyzeTime": "string",            // 集中分析开始时间，北京时间 HH:mm，默认 '21:00'
   "windowMinutes": "number",          // 从开始时间起允许跑多久（分钟），默认 180
   "batchSize": "number",              // 每次定时触发最多处理几条，默认 2（云函数 60s 超时限制下建议 ≤3）
+  "imageMode": "string",              // 拍照上传策略：'traffic'（拼图省流量，默认）| 'quality'（多图全分辨率直传）
+                                      //   管理员保存写入团队默认；业务员可本机 storage 覆盖（shelfguard_imageMode）
+  "analyzeDailyLimit": "number",      // 每用户每日 analyzeImage 配额，默认 50（P0）
 
   // === API Key ===
   "dashscopeApiKey": "string",        // 通义千问 DashScope API Key（明文，仅服务端可读）
@@ -333,6 +390,19 @@ API Key（`dashscopeApiKey`）明文只存在这里、只在 `analyzeImage` 云�
     "failed": "number",
     "reclaimed": "number",
     "remaining": "number"
+  },
+
+  // === 进销存 (jxc-app) 同步配置 ===
+  "jxcBaseUrl": "string",             // 进销存服务基础地址，如 "http://192.168.1.100:3000"
+  "jxcApiKey": "string",              // 租户绑定的 API Key（明文仅服务端可见，前端获取掩码）
+  "jxcLastSyncAt": "Date",            // 最近一次从进销存同步的时间
+  "jxcLastSyncTriggeredBy": "string", // 'timer' | 'manual' | 触发人 openid
+  "jxcLastSyncSummary": {             // 最近一次同步统计
+    "totalFetched": "number",
+    "added": "number",
+    "updated": "number",
+    "unchanged": "number",
+    "errors": "number"
   },
 
   "updatedAt": "Date",
@@ -357,6 +427,48 @@ API Key（`dashscopeApiKey`）明文只存在这里、只在 `analyzeImage` 云�
 ### 部署注意
 
 `settings` 集合**必须先在云开发控制台手动创建**。若未创建，首次保存会报 `-502005 database collection not exists`。创建空集合后即可正常读写。
+
+---
+
+---
+
+## 集合：analyzeQuota（AI 分析日配额，P0）
+
+按用户、按自然日累计 `analyzeImage` 调用次数，防止滥用烧额度。由 `analyzeImage` 云函数读写。
+
+### 字段结构
+
+```json
+{
+  "_id": "string",
+  "_openid": "string",
+  "date": "string",                   // 业务日 YYYY-MM-DD（Asia/Shanghai）
+  "count": "number",                  // 当日已用次数
+  "updatedAt": "Date"
+}
+```
+
+### 索引建议（必须）
+
+```javascript
+// 【必须】按人+日查改配额
+db.collection('analyzeQuota').createIndex({
+  _openid: 1,
+  date: 1
+}, { unique: true })
+```
+
+> 集合需在云开发控制台**手动创建**。若不存在，云函数会 soft-fail 放行（不阻断分析），但配额形同虚设。
+
+---
+
+## 云存储孤儿文件清理
+
+路径约定：`inspections/<openid>/...` 或历史扁平 `inspections/...`。
+
+1. **客户端（已实现）**：`upload` 页在 `uploadFile` 成功但 `submitInspection` 失败时，会尽力 `wx.cloud.deleteFile` 刚上传的 fileID，避免留下无文档引用的孤儿。
+2. **管理员补漏（已实现）**：`settings` 云函数 `action: 'cleanupOrphans'`，仅 admin。调用：`{ action: 'cleanupOrphans', fileIDs: string[], dryRun?: boolean }`；服务端对照 `inspections` 的 `photos` / `fileID` / `analyzedFileID(s)`，删除未被引用的。可在开发者工具「云函数测试」里跑，或后续接到管理页按钮。
+3. **定时全量扫桶**：微信云存储无官方稳定的「按前缀列目录」API；当前最小可用是「客户端失败即删 + admin 按 fileID 补漏」。若要定时，可把上传成功的 fileID 先写入 `pendingUploads` 集合，提交成功再清除标记。
 
 ---
 

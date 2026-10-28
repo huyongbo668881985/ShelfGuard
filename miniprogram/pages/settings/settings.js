@@ -23,18 +23,29 @@ Page({
     analyzeTime: '21:00',
     windowMinutes: 180,
     batchSize: 2,
+    imageMode: 'traffic', // traffic | quality
 
     // API Key（明文只在输入时存在于本页，保存后服务端只回掩码）
     hasApiKey: false,
     apiKeyMasked: '',
     apiKeyInput: '',
 
-    // 队列统计
-    queue: { pending: 0, analyzing: 0, failed: 0 },
+    // 队列统计（sales 为本人；admin/manager 为团队）
+    queue: { pending: 0, analyzing: 0, failed: 0, scope: 'self' },
+    queueScopeLabel: '我的队列',
 
     // 上次运行信息
     lastRunText: '',
     lastRunSummaryText: '',
+
+    // 进销存同步相关
+    jxcBaseUrl: '',
+    hasJxcApiKey: false,
+    jxcApiKeyMasked: '',
+    jxcApiKeyInput: '',
+    jxcLastSyncText: '',
+    jxcLastSyncSummaryText: '',
+    syncingJxc: false,
 
     // 首管理员激活（仅当系统还没有任何管理员、且当前用户不是管理员时展示）
     showActivate: false,
@@ -75,6 +86,14 @@ Page({
       // 把服务端认定的最新角色同步到全局，避免激活后跳转到 admin 页时被旧角色拦住
       syncRole(result.role)
 
+      // 同步到全局，供相机页读取
+      app.globalData.systemConfig = {
+        ...(app.globalData.systemConfig || {}),
+        analyzeMode: s.analyzeMode,
+        analyzeTime: s.analyzeTime,
+        imageMode: s.imageMode === 'quality' ? 'quality' : 'traffic'
+      }
+
       this.setData({
         loading: false,
         canEdit: result.canEdit,
@@ -84,11 +103,18 @@ Page({
         analyzeTime: s.analyzeTime,
         windowMinutes: s.windowMinutes,
         batchSize: s.batchSize,
+        imageMode: s.imageMode === 'quality' ? 'quality' : 'traffic',
         hasApiKey: s.hasApiKey,
         apiKeyMasked: s.apiKeyMasked,
-        queue: result.queue,
+        queue: result.queue || { pending: 0, analyzing: 0, failed: 0, scope: 'self' },
+        queueScopeLabel: (result.queue && result.queue.scope === 'team') ? '团队队列' : '我的队列',
         lastRunText: this.formatLastRun(s.lastRunAt, s.lastRunTriggeredBy),
-        lastRunSummaryText: this.formatSummary(s.lastRunSummary)
+        lastRunSummaryText: this.formatSummary(s.lastRunSummary),
+        jxcBaseUrl: s.jxcBaseUrl || '',
+        hasJxcApiKey: s.hasJxcApiKey || false,
+        jxcApiKeyMasked: s.jxcApiKeyMasked || '',
+        jxcLastSyncText: this.formatLastRun(s.jxcLastSyncAt, s.jxcLastSyncTriggeredBy),
+        jxcLastSyncSummaryText: this.formatJxcSummary(s.jxcLastSyncSummary)
       })
     } catch (err) {
       console.error('读取设置失败:', err)
@@ -110,11 +136,31 @@ Page({
     return `处理 ${summary.processed} 条，成功 ${summary.succeeded}，失败 ${summary.failed}，剩余 ${summary.remaining}`
   },
 
+  formatJxcSummary(summary) {
+    if (!summary) return ''
+    return `拉取 ${summary.totalFetched} 条，新增 ${summary.added}，更新 ${summary.updated}，无变动 ${summary.unchanged}${summary.errors ? '，异常 ' + summary.errors : ''}`
+  },
+
   // ---------- 表单交互 ----------
 
   onSelectMode(e) {
     if (!this.checkEditable()) return
     this.setData({ analyzeMode: e.currentTarget.dataset.mode })
+  },
+
+  onSelectImageMode(e) {
+    // 识别精度 vs 流量：所有人可改本机偏好；管理员保存时还会写入团队默认
+    const mode = e.currentTarget.dataset.mode
+    if (mode !== 'quality' && mode !== 'traffic') return
+    this.setData({ imageMode: mode })
+    try { wx.setStorageSync('shelfguard_imageMode', mode) } catch (_) {}
+    app.globalData.systemConfig = {
+      ...(app.globalData.systemConfig || {}),
+      imageMode: mode
+    }
+    if (!this.data.canEdit) {
+      wx.showToast({ title: mode === 'quality' ? '已选精度优先' : '已选流量优先', icon: 'none' })
+    }
   },
 
   onTimeChange(e) {
@@ -132,6 +178,14 @@ Page({
 
   onApiKeyInput(e) {
     this.setData({ apiKeyInput: e.detail.value })
+  },
+
+  onJxcBaseUrlInput(e) {
+    this.setData({ jxcBaseUrl: e.detail.value })
+  },
+
+  onJxcApiKeyInput(e) {
+    this.setData({ jxcApiKeyInput: e.detail.value })
   },
 
   checkEditable() {
@@ -152,11 +206,16 @@ Page({
       analyzeMode: this.data.analyzeMode,
       analyzeTime: this.data.analyzeTime,
       windowMinutes: this.data.windowMinutes,
-      batchSize: this.data.batchSize
+      batchSize: this.data.batchSize,
+      imageMode: this.data.imageMode,
+      jxcBaseUrl: this.data.jxcBaseUrl
     }
     // 输入框留空表示"不改动已有 Key"，不要把空值传上去覆盖掉
     if (this.data.apiKeyInput && this.data.apiKeyInput.trim()) {
       payload.dashscopeApiKey = this.data.apiKeyInput.trim()
+    }
+    if (this.data.jxcApiKeyInput && this.data.jxcApiKeyInput.trim()) {
+      payload.jxcApiKey = this.data.jxcApiKeyInput.trim()
     }
 
     this.setData({ saving: true })
@@ -168,7 +227,7 @@ Page({
       if (!res.result || !res.result.success) {
         throw new Error((res.result && res.result.error) || '保存失败')
       }
-      this.setData({ apiKeyInput: '' })
+      this.setData({ apiKeyInput: '', jxcApiKeyInput: '' })
       wx.showToast({ title: '已保存', icon: 'success' })
       this.loadSettings()
     } catch (err) {
@@ -201,6 +260,72 @@ Page({
       this.loadSettings()
     } catch (err) {
       wx.showToast({ title: err.message || '清除失败', icon: 'none' })
+    }
+  },
+
+  async onClearJxcApiKey() {
+    if (!this.checkEditable()) return
+    const confirm = await new Promise(resolve => {
+      wx.showModal({
+        title: '清除进销存 API Key',
+        content: '清除后将暂停自动拉取进销存客户。确定清除？',
+        success: r => resolve(r.confirm),
+        fail: () => resolve(false)
+      })
+    })
+    if (!confirm) return
+
+    try {
+      const res = await wx.cloud.callFunction({
+        name: 'settings',
+        data: { action: 'save', settings: { clearJxcApiKey: true } }
+      })
+      if (!res.result || !res.result.success) {
+        throw new Error((res.result && res.result.error) || '清除失败')
+      }
+      wx.showToast({ title: '已清除', icon: 'success' })
+      this.loadSettings()
+    } catch (err) {
+      wx.showToast({ title: err.message || '清除失败', icon: 'none' })
+    }
+  },
+
+  async onManualSyncJxc() {
+    if (!this.checkEditable()) return
+    if (this.data.syncingJxc) return
+
+    this.setData({ syncingJxc: true })
+    wx.showLoading({ title: '正在同步客户...', mask: true })
+
+    try {
+      const res = await wx.cloud.callFunction({
+        name: 'syncJxcCustomers',
+        data: { manual: true }
+      })
+      wx.hideLoading()
+
+      const result = res.result
+      if (!result || !result.success) {
+        throw new Error((result && result.error) || '同步失败')
+      }
+
+      const s = result.summary || {}
+      wx.showModal({
+        title: '同步完成',
+        content: `成功从进销存拉取 ${s.totalFetched || 0} 家客户\n新增: ${s.added || 0} 家\n更新: ${s.updated || 0} 家\n无变动: ${s.unchanged || 0} 家${s.errors ? '\n异常: ' + s.errors + ' 家' : ''}`,
+        showCancel: false
+      })
+      this.loadSettings()
+    } catch (err) {
+      wx.hideLoading()
+      console.error('手动同步进销存失败:', err)
+      wx.showModal({
+        title: '同步失败',
+        content: err.message || '网络连接或接口配置异常，请检查服务地址与 API Key',
+        showCancel: false
+      })
+    } finally {
+      this.setData({ syncingJxc: false })
     }
   },
 

@@ -107,7 +107,7 @@ ShelfGuard/
 ### 3. 部署云函数
 
 右键每个云函数目录，选择「上传并部署：云端安装依赖」。需要部署的云函数：
-`login` / `analyzeImage` / `getReport` / `getHistory` / `customers` / `products` / `geocode` / `settings` / `batchAnalyze` / **`submitInspection`** / **`users`**。
+`login` / `analyzeImage` / `getReport` / `getHistory` / `customers` / `products` / `geocode` / `settings` / `batchAnalyze` / **`submitInspection`** / **`users`** / **`syncJxcCustomers`**。
 
 > `submitInspection`：收口巡检记录的创建（服务端鉴权 + 写归属），替代原来小程序端直写 `inspections` 集合。
 > `users`：用户与权限管理（仅 admin 可调），提供用户列表 / 角色调整 / 停用启用。
@@ -248,7 +248,7 @@ MIT
 - **报告详情直发**：报告详情页陈列照片提供「发微信」和「存相册」快捷操作。
 
 ### 3. 核心 Bug 全面清零
-- 🔴 **[致命] 新用户首次使用无法提交巡检**：`login` 云函数补齐未建档自动创建 `sales` 账号逻辑，`submitInspection` 增加用户自动兜底建档，彻底解决新业务员因时序未建档被拦截的死循环。
+- 🔴 **[致命] 新用户首次使用无法提交巡检（建档时序）**：`login` / `submitInspection` 兜底建档已修。**注意**：当前已开启 `approved` 审批——新 sales 建档后默认未批准，须管理员批准后才能提交；这与「建档死循环」是两件事，勿再理解为「谁装谁就能提交」。
 - 🔴 **[阻断] report.wxml 模板语法错误**：修复原生 WXML 无法直接执行 JS 函数的缺陷，通过内联 `<wxs>` 模块正确计算规范度进度条与得分颜色，告别透明进度条。
 - 🟠 **[体验] 报告详情页「假重试」与轮询空转**：点击重试改为真正调用 `analyzeImage` 云函数重新打标，并在轮询中加入 `analyze_failed` 状态及时熔断，避免白跑 90 秒。
 - 🟠 **[合规] 隐私授权弹窗符合微信最新规范**：`privacy-auth` 同意按钮升级为 `<button open-type="agreePrivacyAuthorization">` 官方开放能力，消除审核合规风险。
@@ -275,3 +275,44 @@ MIT
 - [数据库设计](./DATABASE_SCHEMA.md) — 集合结构、索引、查询示例
 - [测试清单](./TEST_CHECKLIST.md) — 完整本地测试流程
 - [优化路线图](./ROADMAP.md) — 后续功能规划
+
+
+## 账号准入（approved 审批，已开启）
+
+- 新业务员首次登录会建 `users` 记录，默认 `approved: false`，**不能**提交巡检 / 触发分析。
+- 管理员在「用户与权限管理」中点「批准」（或「启用」）后即可用。
+- `admin` / `manager`：无 `approved` 字段时仍视为可用；用激活码激活首管理员时写入 `approved: true`。
+- 上传页：未登录先 `await app.login()`；`NOT_APPROVED` 友好提示且**不会**进入离线队列。
+- 相机页：未批准时顶部黄条提示「账号待管理员审批」。
+- 旧 sales 无 `approved` 字段：部署后会被拦截，请管理员批量点一次批准。
+
+## P1 能力说明（分页 / 离线 / 进销存 / 孤儿文件 / 精度模式）
+
+### 客户与产品列表分页
+- 云函数 `customers` / `products` 的 `list` 支持 `page` + `limit`（默认 50，最大 100），返回 `total` / `hasMore`。
+- 小程序列表页上拉加载更多，底部显示「已加载 x/total」。
+
+### 客户端离线待上传队列
+- 与云端 `inspections.status=pending` **不是一回事**：离线队列是「照片还没成功写成巡检文档」。
+- 实现：`miniprogram/utils/offlineQueue.js`；上传页「存入待上传队列」、断网/提交失败自动入队；登录成功与网络恢复时静默 `flush`；上传页横幅「待上传 N 条」+「一键补传」。
+- 补传路径：本地持久化照片 → `wx.cloud.uploadFile` → `submitInspection`；成功出队并删本地缓存。
+
+### 识别精度 vs 流量
+- 设置页「拍照上传策略」：`traffic`（默认，多图拼网格）/ `quality`（跳过拼图，多 fileID 全分辨率直传）。
+- 管理员「保存」写入 `settings.global.imageMode`；业务员可本机切换（`shelfguard_imageMode`）。
+
+### 队列统计按角色
+- `settings.get` 返回的 pending/analyzing/failed：admin/manager 为团队 `scope:'team'`；sales 仅本人 `scope:'self'`。
+
+### 进销存同步 `syncJxcCustomers`
+1. 开发者工具右键 `cloudfunctions/syncJxcCustomers` →「上传并部署：云端安装依赖」。
+2. 控制台确认定时触发器 `0 */30 * * * *`（每 30 分钟）；也可在设置页配置 `jxcBaseUrl` / `jxcApiKey` 后手动触发（若前端已接）。
+3. 对齐规则：优先用进销存业务员**手机号**匹配 `users.phone`；重名不自动认领；`users` 分页拉全（不再死 limit 100）。
+4. 控制台为 `customers` 建索引 `jxcCustomerId`（见 `DATABASE_SCHEMA.md`）。
+
+### 云存储孤儿文件
+- 客户端：`uploadFile` 成功但 `submitInspection` 失败时会 `wx.cloud.deleteFile` 刚上传的 fileID。
+- 管理员补漏：云函数测试调用 `settings`，`{ "action": "cleanupOrphans", "fileIDs": ["cloud://..."], "dryRun": true }`；确认后去掉 `dryRun` 真正删除。详解见 `DATABASE_SCHEMA.md`「云存储孤儿文件清理」。
+
+### 必须创建的复合索引
+见 `DATABASE_SCHEMA.md`：至少 `inspections(_openid, createdAt)`、`inspections(status, createdAt)`、`customers(jxcCustomerId)`、`customers(_openid, createdAt)`、`analyzeQuota(_openid, date)`。

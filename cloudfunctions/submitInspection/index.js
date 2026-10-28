@@ -22,6 +22,18 @@ const MAX_USER_NAME = 50    // 业务员姓名长度上限
 const MAX_CUSTOMER_ID = 64  // 客户 _id 长度上限
 const MAX_ADDRESS = 300     // 地址文本长度上限
 
+
+// 准入批准：approved===true 放行；老数据无 approved 字段时，admin/manager 视为已批准；
+// 纯 sales 无字段或 approved!==true 一律拒绝提交（避免锁死现有管理员）。
+function isUserApproved(user) {
+  if (!user) return false
+  if (user.approved === true) return true
+  if (user.approved === undefined || user.approved === null) {
+    return user.role === 'admin' || user.role === 'manager'
+  }
+  return false
+}
+
 function isValidFileID(id, openid) {
   if (typeof id !== 'string' || !id.startsWith('cloud://')) return false
   // 上传端使用 inspections/<openid>/... 目录，防止把已知的他人 fileID
@@ -94,6 +106,7 @@ exports.main = async (event, context) => {
         _openid: openid,
         role: 'sales',
         disabled: false,
+        approved: false,   // 新业务员默认未批准，需管理员审批后才能提交
         name: typeof userName === 'string' ? userName.slice(0, MAX_USER_NAME) : '',
         phone: '',
         department: '',
@@ -115,6 +128,11 @@ exports.main = async (event, context) => {
       }).catch(console.error)
     }
 
+    // 未批准业务员拒绝提交（admin/manager 老数据无字段仍可用）
+    if (!isUserApproved(user)) {
+      return { success: false, error: '等待管理员审批', code: 'NOT_APPROVED' }
+    }
+
     const finalUserName = (user && typeof user.name === 'string' && user.name)
       ? user.name.slice(0, MAX_USER_NAME)
       : (typeof userName === 'string' ? userName.slice(0, MAX_USER_NAME) : '')
@@ -134,6 +152,42 @@ exports.main = async (event, context) => {
         createdAt: db.serverDate()
       }
     })
+
+    // 策略 B 闭环：关联客户且有有效定位、客户尚无坐标时，回填门店坐标。
+    // 必须校验客户归属：仅允许回填本人名下客户，防止拿别人的 customerId 改坐标。
+    // 归属不匹配则丢弃关联（不写客户表），巡检记录本身已落库不受影响。
+    let boundCustomerId = safeCustomerId
+    if (safeCustomerId) {
+      try {
+        const custDoc = await db.collection('customers').doc(safeCustomerId).get()
+        const cust = custDoc && custDoc.data
+        if (!cust || cust._openid !== openid) {
+          console.warn(`跳过客户定位回填：customerId=${safeCustomerId} 不存在或不属于当前用户`)
+          boundCustomerId = ''
+          // 巡检已写入的 customerId 若越权则清空，避免脏关联
+          if (addRes && addRes._id) {
+            await db.collection('inspections').doc(addRes._id).update({
+              data: { customerId: '' }
+            }).catch(e => console.warn('清空越权 customerId 失败:', e.message))
+          }
+        } else if (safeLocation.latitude && safeLocation.longitude) {
+          if (!cust.location || !cust.location.latitude || !cust.location.longitude) {
+            await db.collection('customers').doc(safeCustomerId).update({
+              data: {
+                location: {
+                  latitude: safeLocation.latitude,
+                  longitude: safeLocation.longitude,
+                  address: safeLocation.address || cust.address || ''
+                },
+                updatedAt: db.serverDate()
+              }
+            })
+          }
+        }
+      } catch (locErr) {
+        console.warn('自动回填客户定位失败（不影响巡检提交）:', locErr.message)
+      }
+    }
 
     return { success: true, inspectionId: addRes._id }
   } catch (err) {

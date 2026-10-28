@@ -49,6 +49,7 @@ exports.main = async (event, context) => {
             _openid: openid,
             role: 'sales',
             disabled: false,   // 账号停用开关，由 admin 在「用户与权限管理」里置 true
+            approved: false,   // 新业务员默认未批准，需管理员审批
             ...safeUserInfo,
             createdAt: db.serverDate(),
             updatedAt: db.serverDate()
@@ -71,6 +72,7 @@ exports.main = async (event, context) => {
         _openid: openid,
         role: 'sales',
         disabled: false,
+        approved: false,   // 新业务员默认未批准，需管理员审批
         name: '',
         phone: '',
         department: '',

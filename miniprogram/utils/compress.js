@@ -25,7 +25,7 @@ async function smartCompress(src, options = {}) {
   const imgInfo = await getImageInfo(src)
   const originalSize = imgInfo.size / 1024 // KB
 
-  console.log(`[压缩] 原图大小: ${originalSize.toFixed(1)}KB, 尺寸: ${imgInfo.width}x${imgInfo.height}`)
+  console.log(`[压缩] 原图大小: ${originalSize.toFixed(1)}KB, 尺寸: ${imgInfo.width}x${imgInfo.height}, 目标≤${maxSize}KB（参考区间 ${minSize}-${maxSize}, target=${targetSize}）`)
 
   // 如果原图已经很小，直接返回
   if (originalSize <= maxSize) {
@@ -39,8 +39,9 @@ async function smartCompress(src, options = {}) {
   let compressedPath = src
   let compressedSize = originalSize
 
-  // 最多尝试 5 次
-  for (let attempt = 0; attempt < 5; attempt++) {
+  // 最多尝试 4 次：只要 ≤ maxSize 就接受，不再为凑满 minSize 来回抬质量
+  // （旧逻辑在 550KB↔810KB 之间震荡跑满 5 次，费时且产生多余临时文件）
+  for (let attempt = 0; attempt < 4; attempt++) {
     console.log(`[压缩] 第 ${attempt + 1} 次尝试: quality=${quality}, width=${width}`)
 
     try {
@@ -50,27 +51,21 @@ async function smartCompress(src, options = {}) {
 
       console.log(`[压缩] 压缩后大小: ${compressedSize.toFixed(1)}KB`)
 
-      // 检查是否在目标范围内
-      if (compressedSize >= minSize && compressedSize <= maxSize) {
-        console.log(`[压缩] 达到目标范围，完成`)
+      // ≤ maxSize 即合格（清晰度优先靠起始 quality，不必再抬回去）
+      if (compressedSize <= maxSize) {
+        console.log(`[压缩] 已满足上限，完成`)
         return { tempFilePath: compressedPath, size: compressedSize }
       }
 
-      // 如果还是太大，降低质量或宽度
-      if (compressedSize > maxSize) {
-        if (quality > minQuality) {
-          quality = Math.max(minQuality, quality - 15)
-        } else if (width > 1280) {
-          width = 1280
-        } else if (width > 800) {
-          width = 800
-        } else {
-          // 已经很小了，停止压缩
-          break
-        }
+      // 仍然过大：优先降质量，再降宽度
+      if (quality > minQuality) {
+        quality = Math.max(minQuality, quality - 15)
+      } else if (width > 1280) {
+        width = 1280
+      } else if (width > 800) {
+        width = 800
       } else {
-        // 太小了，提高质量
-        quality = Math.min(95, quality + 10)
+        break
       }
     } catch (err) {
       console.error(`[压缩] 第 ${attempt + 1} 次失败:`, err)

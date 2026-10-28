@@ -18,6 +18,55 @@
   line-height: 1.5;
 }
 
+/* 无门店/沿街巡检快捷卡片 */
+.no-store-card {
+  background: #ffffff;
+  border-radius: 16rpx;
+  padding: 24rpx;
+  margin-bottom: 20rpx;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border: 2rpx dashed #4338ca;
+  box-shadow: 0 2rpx 12rpx rgba(0, 0, 0, 0.04);
+}
+
+.no-store-card:active {
+  background: #f0f4ff;
+}
+
+.no-store-left {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+}
+
+.no-store-icon {
+  font-size: 44rpx;
+}
+
+.no-store-info {
+  display: flex;
+  flex-direction: column;
+  gap: 6rpx;
+}
+
+.no-store-title {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #1a1a2e;
+}
+
+.no-store-sub {
+  font-size: 22rpx;
+  color: #666;
+}
+
+.no-store-arrow {
+  font-size: 36rpx;
+  color: #999;
+}
+
 .list-container {
   display: flex;
   flex-direction: column;
@@ -74,6 +123,17 @@
   padding: 4rpx 14rpx;
   border-radius: 20rpx;
   flex-shrink: 0;
+}
+
+.card-location-badge--pending {
+  color: #ff9800;
+  background: #fff3e0;
+}
+
+.card-distance--pending {
+  color: #795548;
+  background: #efebe9;
+  font-size: 20rpx;
 }
 
 .card-address {
@@ -269,4 +329,11 @@
   color: #fff;
   border-radius: 12rpx;
   font-size: 30rpx;
+}
+
+.list-footer {
+  text-align: center;
+  color: #999;
+  font-size: 24rpx;
+  padding: 24rpx 0 48rpx;
 }

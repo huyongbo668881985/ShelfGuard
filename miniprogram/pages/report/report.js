@@ -9,7 +9,9 @@ Page({
     detail: null,
     loading: true,
     refreshTimer: null,
-    analyzeTime: '21:00'   // 集中分析时间，用于"排队中"提示，report 页加载时拉取
+    analyzeTime: '21:00',
+    currentPhotoIndex: 0,
+    _shouldResumePolling: false
   },
 
   onLoad(options) {
@@ -20,10 +22,40 @@ Page({
   },
 
   onUnload() {
-    // 清除轮询定时器
     if (this.data.refreshTimer) {
       clearInterval(this.data.refreshTimer)
+      this.setData({ refreshTimer: null })
     }
+  },
+
+  onHide() {
+    if (this.data.refreshTimer) {
+      clearInterval(this.data.refreshTimer)
+      this.setData({ refreshTimer: null, _shouldResumePolling: true })
+    }
+  },
+
+  onShow() {
+    if (!this.data._shouldResumePolling) return
+    const detail = this.data.detail
+    const id = this.data.inspectionId
+    if (!detail || !id) return
+    const realtimeAnalyzing = detail.status === 'analyzing' || detail.status === 'uploaded'
+    if (!detail.aiReport && realtimeAnalyzing) {
+      this.setData({ _shouldResumePolling: false })
+      this.startPolling(id)
+    } else {
+      this.setData({ _shouldResumePolling: false })
+    }
+  },
+
+  onPullDownRefresh() {
+    const id = this.data.inspectionId
+    if (!id) {
+      wx.stopPullDownRefresh()
+      return
+    }
+    this.loadDetail(id).finally(() => wx.stopPullDownRefresh())
   },
 
   // 底部操作栏：这两个页面都在 tabBar 里，必须用 switchTab 而不是 navigateTo
@@ -65,7 +97,7 @@ Page({
       // 收紧云存储权限后，前端直连 wx.cloud.getTempFileURL 只能读本人文件，
       // 管理者查看他人巡检记录的照片会被存储安全规则拦截，所以这里不再自己取。
 
-      this.setData({ detail, loading: false })
+      this.setData({ detail, loading: false, currentPhotoIndex: 0 })
 
       // 最佳努力获取集中分析时间，用于"排队中"提示（失败不影响主流程）
       this.refreshAnalyzeTime()
@@ -159,9 +191,20 @@ Page({
     }
   },
 
+  onPhotoSwiperChange(e) {
+    const idx = (e.detail && e.detail.current) || 0
+    this.setData({ currentPhotoIndex: idx })
+  },
+
+  currentPhotoUrl() {
+    const urls = (this.data.detail && this.data.detail.photoURLs) || []
+    const idx = this.data.currentPhotoIndex || 0
+    return urls[idx] || urls[0] || ''
+  },
+
   // 分享单张照片到微信（原生菜单：发送给朋友/收藏/保存）
   async sharePhoto(e) {
-    const url = e.currentTarget.dataset.url || (this.data.detail && this.data.detail.photoURLs && this.data.detail.photoURLs[0])
+    const url = e.currentTarget.dataset.url || this.currentPhotoUrl()
     if (!url) {
       wx.showToast({ title: '未找到照片', icon: 'none' })
       return
@@ -196,7 +239,7 @@ Page({
 
   // 保存照片到系统相册
   async savePhoto(e) {
-    const url = e.currentTarget.dataset.url || (this.data.detail && this.data.detail.photoURLs && this.data.detail.photoURLs[0])
+    const url = e.currentTarget.dataset.url || this.currentPhotoUrl()
     if (!url) return
 
     wx.showLoading({ title: '正在保存...' })
@@ -228,7 +271,52 @@ Page({
     }
   },
 
-  // 工具：下载网络图片为本地临时文件
+  // 多图：逐张存入相册
+  async saveAllPhotos() {
+    const urls = (this.data.detail && this.data.detail.photoURLs) || []
+    if (urls.length === 0) {
+      wx.showToast({ title: '没有可保存的照片', icon: 'none' })
+      return
+    }
+    wx.showLoading({ title: `保存中 0/${urls.length}`, mask: true })
+    let ok = 0
+    let denied = false
+    for (let i = 0; i < urls.length; i++) {
+      wx.showLoading({ title: `保存中 ${i + 1}/${urls.length}`, mask: true })
+      try {
+        const localPath = await this.downloadImageToLocal(urls[i])
+        await new Promise((resolve, reject) => {
+          wx.saveImageToPhotosAlbum({
+            filePath: localPath,
+            success: resolve,
+            fail: reject
+          })
+        })
+        ok++
+      } catch (err) {
+        if (err && err.errMsg && String(err.errMsg).includes('auth deny')) {
+          denied = true
+          break
+        }
+      }
+    }
+    wx.hideLoading()
+    if (denied) {
+      wx.showModal({
+        title: '需要相册权限',
+        content: '请在设置中开启相册权限，用于保存巡检照片',
+        confirmText: '去设置',
+        success: (r) => { if (r.confirm) wx.openSetting() }
+      })
+      return
+    }
+    wx.showToast({
+      title: ok === urls.length ? `已全部存入（${ok}张）` : `已保存 ${ok}/${urls.length} 张`,
+      icon: ok === urls.length ? 'success' : 'none'
+    })
+  },
+
+    // 工具：下载网络图片为本地临时文件
   downloadImageToLocal(url) {
     return new Promise((resolve, reject) => {
       if (url.startsWith('wxfile://') || url.startsWith('http://tmp') || url.startsWith('/tmp/')) {
@@ -258,6 +346,14 @@ Page({
   },
 
   // 预览图片
+  onSelectPhoto(e) {
+    const idx = e.currentTarget.dataset.index
+    if (idx !== undefined && idx !== null) {
+      this.setData({ currentPhotoIndex: Number(idx) || 0 })
+    }
+    this.previewImage(e)
+  },
+
   previewImage(e) {
     const url = e.currentTarget.dataset.url
     wx.previewImage({

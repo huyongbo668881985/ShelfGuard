@@ -14,6 +14,7 @@ const { smartCompress } = require('../../utils/compress')
 // 展示用格式化统一使用 utils/format.formatFileSize（入参为字节），
 // 与下方 photo.compressedSize（字节）引用同一单位来源，避免 KB/字节混用造成误解。
 const { formatFileSize } = require('../../utils/format')
+const offlineQueue = require('../../utils/offlineQueue')
 
 Page({
   data: {
@@ -42,7 +43,11 @@ Page({
     analyzeMode: 'batch',
     analyzeTime: '21:00',
     // 错误信息
-    errorMsg: ''
+    errorMsg: '',
+    // 离线待上传（客户端未提交成功，与云端 pending 分析队列分开）
+    offlineQueueCount: 0,
+    savedToOffline: false,
+    flushingOffline: false
   },
 
   onLoad(options) {
@@ -81,6 +86,67 @@ Page({
     // 不阻塞页面：模式只在整个上传流程的最后一步才用得上，
     // 等用户压缩+上传完，这个请求早就回来了
     this.refreshAnalyzeMode()
+    this.refreshOfflineCount()
+  },
+
+  onShow() {
+    this.refreshOfflineCount()
+    // 有网时自动尝试刷离线队列（不弹窗打断当前页）
+    this.autoFlushOffline()
+  },
+
+  refreshOfflineCount() {
+    try {
+      this.setData({ offlineQueueCount: offlineQueue.count() })
+    } catch (_) {
+      this.setData({ offlineQueueCount: 0 })
+    }
+  },
+
+  async autoFlushOffline() {
+    if (this.data.flushingOffline) return
+    if (offlineQueue.count() === 0) return
+    const online = await offlineQueue.isOnline()
+    if (!online) return
+    this.setData({ flushingOffline: true })
+    try {
+      const result = await offlineQueue.flushAll({ openid: app.globalData.openid || '' })
+      if (result.succeeded > 0) {
+        wx.showToast({ title: `已补传 ${result.succeeded} 条`, icon: 'success' })
+      }
+    } catch (err) {
+      console.warn('自动补传失败:', err)
+    } finally {
+      this.setData({ flushingOffline: false })
+      this.refreshOfflineCount()
+    }
+  },
+
+  async onFlushOffline() {
+    if (this.data.flushingOffline) return
+    if (offlineQueue.count() === 0) {
+      wx.showToast({ title: '没有待上传', icon: 'none' })
+      return
+    }
+    this.setData({ flushingOffline: true })
+    wx.showLoading({ title: '补传中...', mask: true })
+    try {
+      const result = await offlineQueue.flushAll({ openid: app.globalData.openid || '' })
+      wx.hideLoading()
+      if (result.succeeded > 0 && result.failed === 0) {
+        wx.showToast({ title: `已全部补传(${result.succeeded})`, icon: 'success' })
+      } else if (result.succeeded > 0) {
+        wx.showToast({ title: `成功${result.succeeded}，失败${result.failed}`, icon: 'none' })
+      } else {
+        wx.showToast({ title: (result.errors && result.errors[0]) || '补传失败', icon: 'none' })
+      }
+    } catch (err) {
+      wx.hideLoading()
+      wx.showToast({ title: err.message || '补传失败', icon: 'none' })
+    } finally {
+      this.setData({ flushingOffline: false })
+      this.refreshOfflineCount()
+    }
   },
 
   // 拉取最新的分析模式配置（失败就沿用缓存/默认值，不打断流程）
@@ -122,9 +188,22 @@ Page({
       return
     }
 
-    // 账号停用前置拦截（真正硬边界在 submitInspection 云函数里，这里是 UX 提示）
-    const me = app.globalData.userInfo
-    if (me && me.disabled) {
+    // 未完成登录时先 login，再校验停用/审批（避免 globalData.userInfo 仍为 null 绕过前端检查）
+    let me = app.globalData.userInfo
+    if (!me && typeof app.login === 'function') {
+      try {
+        await app.login()
+        me = app.globalData.userInfo
+      } catch (loginErr) {
+        wx.showToast({ title: '登录失败，请重试', icon: 'none' })
+        return
+      }
+    }
+    if (!me) {
+      wx.showToast({ title: '未登录，请重新进入小程序', icon: 'none' })
+      return
+    }
+    if (me.disabled) {
       wx.showModal({
         title: '账号已停用',
         content: '你的账号已被管理员停用，无法提交巡检记录。如有疑问请联系管理员。',
@@ -132,11 +211,30 @@ Page({
       })
       return
     }
+    const role = me.role || app.globalData.userRole || 'sales'
+    const approvedOk = (
+      me.approved === true ||
+      ((me.approved === undefined || me.approved === null) && (role === 'admin' || role === 'manager'))
+    )
+    if (!approvedOk) {
+      wx.showModal({
+        title: '等待管理员审批',
+        content: '你的账号尚未通过管理员审批，暂时无法提交巡检。请联系管理员在「用户与权限管理」中批准。',
+        showCancel: false
+      })
+      this.setData({
+        status: 'error',
+        errorMsg: '账号待管理员审批，无法提交。此错误不会进入离线队列。',
+        savedToOffline: false
+      })
+      return
+    }
 
     this.setData({
       status: 'compressing',
       compressProgress: 0,
-      errorMsg: ''
+      errorMsg: '',
+      savedToOffline: false
     })
 
     try {
@@ -167,10 +265,97 @@ Page({
 
     } catch (err) {
       console.error('上传流程失败:', err)
+      // 提交失败：尽力删掉已上传的云文件，避免孤儿
+      const uploadedIds = (this.data.fileIDs || []).concat(
+        (this.data.photos || []).map(p => p.fileID).filter(Boolean)
+      )
+      const uniqueIds = [...new Set(uploadedIds.filter(Boolean))]
+      if (uniqueIds.length) {
+        await offlineQueue.safeDeleteCloudFiles(uniqueIds)
+        // 清空本地 fileID，避免重试时误以为已上传
+        const photos = (this.data.photos || []).map(p => ({ ...p, fileID: '', status: p.status === 'uploaded' ? 'compressed' : p.status }))
+        this.setData({ photos, fileIDs: [] })
+      }
+
+      const online = await offlineQueue.isOnline()
+      const msg = err.message || '上传失败'
+      const code = err.code || ''
+      // 未审批：友好提示，禁止入离线队列（否则补传仍会被拒）
+      if (code === 'NOT_APPROVED' || /等待管理员审批|未通过管理员审批|待管理员审批/.test(msg)) {
+        this.setData({
+          status: 'error',
+          errorMsg: '账号待管理员审批，无法提交。请联系管理员批准后再试（不会进入离线队列）。',
+          savedToOffline: false
+        })
+        wx.showModal({
+          title: '等待管理员审批',
+          content: '你的账号尚未通过管理员审批，暂时无法提交巡检。',
+          showCancel: false
+        })
+        return
+      }
+      // 无网或网络类失败：自动入离线队列（且尚未入过队）
+      const shouldQueue = !this.data.savedToOffline && (
+        !online || /网络|fail|timeout|超时|ENOENT|uploadFile/i.test(String(msg + (err.errMsg || '')))
+      )
+      if (shouldQueue) {
+        try {
+          await this.saveToOfflineQueue()
+          this.setData({
+            status: 'error',
+            errorMsg: (online ? msg + '。' : '当前无网络。') + '已存入待上传队列，联网后可一键补传。',
+            savedToOffline: true
+          })
+          this.refreshOfflineCount()
+          return
+        } catch (qErr) {
+          console.warn('入离线队列失败:', qErr)
+        }
+      }
+
       this.setData({
         status: 'error',
-        errorMsg: err.message || '上传失败'
+        errorMsg: msg
       })
+    }
+  },
+
+  async saveToOfflineQueue() {
+    if (this.data.savedToOffline) return
+    const photos = this.data.photos || []
+    const photoPaths = photos.map(p => p.compressedPath || p.originalPath).filter(Boolean)
+    await offlineQueue.enqueue({
+      photoPaths,
+      meta: {
+        taskName: this.data.taskName,
+        storeName: this.data.storeName,
+        userName: this.data.userName,
+        customerId: this.data.customerId || '',
+        lat: this.data.lat,
+        lng: this.data.lng,
+        address: this.data.address,
+        analyzeMode: this.data.analyzeMode
+      }
+    })
+    this.setData({ savedToOffline: true })
+  },
+
+  async onSaveOffline() {
+    if (this.data.savedToOffline) {
+      wx.showToast({ title: '已在待上传队列', icon: 'none' })
+      return
+    }
+    try {
+      await this.saveToOfflineQueue()
+      this.refreshOfflineCount()
+      wx.showToast({ title: '已加入待上传', icon: 'success' })
+      this.setData({
+        status: 'error',
+        errorMsg: '已存入待上传队列，有网后点「补传待上传」即可。',
+        savedToOffline: true
+      })
+    } catch (err) {
+      wx.showToast({ title: err.message || '保存失败', icon: 'none' })
     }
   },
 
@@ -296,7 +481,9 @@ Page({
     })
 
     if (!res.result || !res.result.success) {
-      throw new Error((res.result && res.result.error) || '提交巡检记录失败')
+      const err = new Error((res.result && res.result.error) || '提交巡检记录失败')
+      err.code = (res.result && res.result.code) || ''
+      throw err
     }
 
     return res.result.inspectionId
@@ -358,12 +545,4 @@ Page({
   goBack() {
     wx.navigateBack()
   },
-
-  // 格式化文件大小
-  formatSize(bytes) {
-    if (!bytes) return ''
-    if (bytes < 1024) return bytes + 'B'
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + 'KB'
-    return (bytes / (1024 * 1024)).toFixed(1) + 'MB'
-  }
 })

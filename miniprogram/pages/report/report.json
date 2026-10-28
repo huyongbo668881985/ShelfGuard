@@ -1,3 +1,7 @@
 {
-  "navigationBarTitleText": "巡检报告"
+  "navigationBarTitleText": "巡检报告",
+  "usingComponents": {
+    "privacy-auth": "/components/privacy-auth/index"
+  },
+  "enablePullDownRefresh": true
 }

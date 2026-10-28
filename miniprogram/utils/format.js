@@ -30,6 +30,7 @@ function formatScoreLevel(score) {
  */
 function formatStatus(status) {
   const map = {
+    'pending': { text: '排队中', color: '#ff9800' },
     'uploaded': { text: '待分析', color: '#ff9800' },
     'analyzing': { text: '分析中', color: '#2196f3' },
     'analyzed': { text: '已完成', color: '#4caf50' },

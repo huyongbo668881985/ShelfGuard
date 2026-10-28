@@ -29,7 +29,9 @@ const DEFAULT_SETTINGS = {
   analyzeMode: 'batch',
   analyzeTime: '21:00',
   windowMinutes: 180,
-  batchSize: 2
+  batchSize: 2,
+  // traffic = 多图拼成一张再传（省流量）；quality = 多图各自全分辨率直传（识别更准）
+  imageMode: 'traffic'
 }
 
 exports.main = async (event, context) => {
@@ -60,6 +62,8 @@ exports.main = async (event, context) => {
         return await handleRetryFailed(openid)
       case 'activateAdmin':
         return await handleActivateAdmin(openid, event.code)
+      case 'cleanupOrphans':
+        return await handleCleanupOrphans(openid, event)
       default:
         return { success: false, error: `未知操作: ${action}` }
     }
@@ -96,9 +100,12 @@ async function loadSettings() {
   }
 }
 
-async function countByStatus(status) {
+async function countByStatus(status, openidFilter) {
   try {
-    const res = await db.collection('inspections').where({ status }).count()
+    const where = openidFilter
+      ? { status, _openid: openidFilter }
+      : { status }
+    const res = await db.collection('inspections').where(where).count()
     return res.total
   } catch (err) {
     return 0
@@ -134,10 +141,13 @@ async function handleGet(openid) {
   const adminRes = await db.collection('users').where({ role: _.in(MANAGER_ROLES) }).count()
   const hasAdmin = adminRes.total > 0
 
+  // 队列统计按角色：admin/manager 看团队级；sales 只看自己的（或不暴露团队数字）
+  const canSeeTeamQueue = MANAGER_ROLES.includes(role)
+  const openidFilter = canSeeTeamQueue ? null : openid
   const [pending, analyzing, failed] = await Promise.all([
-    countByStatus('pending'),
-    countByStatus('analyzing'),
-    countByStatus('analyze_failed')
+    countByStatus('pending', openidFilter),
+    countByStatus('analyzing', openidFilter),
+    countByStatus('analyze_failed', openidFilter)
   ])
 
   return {
@@ -150,14 +160,29 @@ async function handleGet(openid) {
       analyzeTime: settings.analyzeTime,
       windowMinutes: settings.windowMinutes,
       batchSize: settings.batchSize,
+      imageMode: settings.imageMode === 'quality' ? 'quality' : 'traffic',
       // API Key 只回掩码，明文不出服务端
       hasApiKey: !!settings.dashscopeApiKey,
       apiKeyMasked: maskKey(settings.dashscopeApiKey),
       lastRunAt: settings.lastRunAt || null,
       lastRunTriggeredBy: settings.lastRunTriggeredBy || '',
-      lastRunSummary: settings.lastRunSummary || null
+      lastRunSummary: settings.lastRunSummary || null,
+
+      // 进销存 (jxc-app) 同步配置
+      jxcBaseUrl: settings.jxcBaseUrl || '',
+      hasJxcApiKey: !!settings.jxcApiKey,
+      jxcApiKeyMasked: maskKey(settings.jxcApiKey),
+      jxcLastSyncAt: settings.jxcLastSyncAt || null,
+      jxcLastSyncTriggeredBy: settings.jxcLastSyncTriggeredBy || '',
+      jxcLastSyncSummary: settings.jxcLastSyncSummary || null
     },
-    queue: { pending, analyzing, failed }
+    // scope: team | self —— 前端可用来决定文案；sales 不返回团队级数字
+    queue: {
+      pending,
+      analyzing,
+      failed,
+      scope: canSeeTeamQueue ? 'team' : 'self'
+    }
   }
 }
 
@@ -211,6 +236,28 @@ async function handleSave(openid, input) {
       return { success: false, error: '请输入完整的 API Key，不要提交带星号的掩码' }
     }
     data.dashscopeApiKey = key
+  }
+
+  if (input.imageMode !== undefined) {
+    if (!['traffic', 'quality'].includes(input.imageMode)) {
+      return { success: false, error: '识别模式只能是 traffic（流量优先）或 quality（精度优先）' }
+    }
+    data.imageMode = input.imageMode
+  }
+
+  // 进销存 (jxc-app) 配置
+  if (input.jxcBaseUrl !== undefined) {
+    data.jxcBaseUrl = String(input.jxcBaseUrl || '').trim()
+  }
+
+  if (input.clearJxcApiKey === true) {
+    data.jxcApiKey = ''
+  } else if (input.jxcApiKey) {
+    const jKey = String(input.jxcApiKey).trim()
+    if (jKey.includes('*')) {
+      return { success: false, error: '请输入完整的进销存 API Key，不要提交带星号的掩码' }
+    }
+    data.jxcApiKey = jKey
   }
 
   if (Object.keys(data).length === 0) {
@@ -295,6 +342,70 @@ async function handleRetryFailed(openid) {
 }
 
 // ============================================================
+// 清理孤儿云存储文件（仅 admin）
+// 扫描 inspections/<openid>/ 下近期文件，删掉没有任何 inspections 文档引用的 fileID。
+// 最小可用：按传入的 fileIDs 删除，或 dryRun 列出疑似孤儿（全量扫云存储成本高，默认按候选列表）。
+// 客户端提交失败时应先自行 deleteFile；本接口给管理员补漏。
+// ============================================================
+async function handleCleanupOrphans(openid, event) {
+  if (!(await isAdmin(openid))) {
+    return { success: false, error: '只有管理员可以清理孤儿文件' }
+  }
+
+  const dryRun = !!(event && event.dryRun)
+  let candidates = Array.isArray(event && event.fileIDs) ? event.fileIDs.filter(Boolean) : []
+
+  // 若未传候选，尝试从最近失败/卡住路径外的说明：仅支持显式 fileIDs，避免误删
+  if (candidates.length === 0) {
+    return {
+      success: false,
+      error: '请传入 fileIDs 候选列表（客户端提交失败后记下的云文件 ID）。全量扫描云存储请用控制台或后续定时任务。'
+    }
+  }
+  if (candidates.length > 100) {
+    candidates = candidates.slice(0, 100)
+  }
+
+  // 查哪些还被 inspections.photoFileIDs 引用
+  const referenced = new Set()
+  for (let i = 0; i < candidates.length; i += 20) {
+    const chunk = candidates.slice(i, i + 20)
+    try {
+      const res = await db.collection('inspections').where({
+        photoFileIDs: _.in(chunk)
+      }).field({ photoFileIDs: true }).limit(100).get()
+      ;(res.data || []).forEach(doc => {
+        ;(doc.photoFileIDs || []).forEach(id => referenced.add(id))
+      })
+    } catch (err) {
+      console.error('查询引用失败:', err)
+    }
+  }
+
+  const orphans = candidates.filter(id => !referenced.has(id))
+  if (dryRun) {
+    return { success: true, dryRun: true, orphanCount: orphans.length, orphans, referencedCount: referenced.size }
+  }
+
+  let deleted = 0
+  let failed = 0
+  if (orphans.length > 0) {
+    try {
+      const delRes = await cloud.deleteFile({ fileList: orphans })
+      ;(delRes.fileList || []).forEach(f => {
+        if (f.status === 0) deleted++
+        else failed++
+      })
+    } catch (err) {
+      console.error('deleteFile 失败:', err)
+      return { success: false, error: err.message || '删除失败', orphans }
+    }
+  }
+
+  return { success: true, deleted, failed, orphanCount: orphans.length, orphans }
+}
+
+// ============================================================
 // 首管理员激活（一次性，凭环境变量激活码）
 // ============================================================
 async function handleActivateAdmin(openid, code) {
@@ -325,6 +436,7 @@ async function handleActivateAdmin(openid, code) {
     await db.collection('users').doc(caller._id).update({
       data: {
         role: 'admin',
+        approved: true,   // 激活管理员即视为已批准
         promotedAt: db.serverDate(),
         promotedBy: 'self-setup',
         updatedAt: db.serverDate()
@@ -336,6 +448,7 @@ async function handleActivateAdmin(openid, code) {
       data: {
         _openid: openid,
         role: 'admin',
+        approved: true,
         promotedAt: db.serverDate(),
         promotedBy: 'self-setup',
         disabled: false,

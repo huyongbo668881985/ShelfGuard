@@ -454,3 +454,20 @@
 
 .fail-text { font-size: 30rpx; color: #333; margin-bottom: 12rpx; }
 .fail-error { font-size: 24rpx; color: #999; margin-bottom: 30rpx; max-width: 80%; }
+
+/* 日报聚合提示：复用 mock-badge 布局，换色区分 */
+.daily-badge {
+  background: #e3f2fd;
+  color: #1565c0;
+  border: 1px solid #90caf9;
+}
+
+.photo-item-active {
+  outline: 4rpx solid #07c160;
+  outline-offset: 2rpx;
+}
+.photo-index-hint {
+  font-size: 22rpx;
+  color: #888;
+  margin-left: 12rpx;
+}

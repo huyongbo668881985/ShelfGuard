@@ -1,7 +1,6 @@
 // pages/customers/customers.js
-// 客户（门店）管理页面：每个业务员维护自己的客户资料，供拍照时就近选择。
-// 数据隔离在云函数层强制做（customers 云函数按 _openid 过滤），这个页面
-// 不用关心隔离逻辑，正常调用就是安全的。
+// 客户（门店）管理页面：供拍照时就近选择；列表范围由云函数按角色决定
+// （admin/manager=全部客户，sales=我的客户）。页面只展示文案，不做权限判断。
 //
 // 这个页面身兼两职：
 // - 正常模式（不带参数）：管理客户资料，增删改查。
@@ -31,6 +30,14 @@ Page({
   data: {
     loading: true,
     list: [],
+    page: 1,
+    limit: 50,
+    total: 0,
+    hasMore: false,
+    loadingMore: false,
+    // all | self —— 与云函数 list 返回的 scope 对齐；文案用
+    listScope: 'self',
+    listTitle: '我的客户',
 
     // 选择模式相关
     selectMode: false,
@@ -58,50 +65,102 @@ Page({
         currentLng: options.lng ? Number(options.lng) : null
       })
       wx.setNavigationBarTitle({ title: '选择客户' })
+    } else {
+      this.applyScopeTitle(this.resolveLocalScope())
     }
     this.loadCustomers()
   },
 
-  onPullDownRefresh() {
-    this.loadCustomers().finally(() => wx.stopPullDownRefresh())
+  resolveLocalScope() {
+    const role = (app.globalData.userInfo && app.globalData.userInfo.role)
+      || app.globalData.userRole
+      || 'sales'
+    return (role === 'admin' || role === 'manager') ? 'all' : 'self'
   },
 
-  async loadCustomers() {
-    this.setData({ loading: true })
+  applyScopeTitle(scope) {
+    const listScope = scope === 'all' ? 'all' : 'self'
+    const listTitle = listScope === 'all' ? '全部客户' : '我的客户'
+    this.setData({ listScope, listTitle })
+    if (!this.data.selectMode) {
+      wx.setNavigationBarTitle({ title: listTitle })
+    }
+  },
+
+  onPullDownRefresh() {
+    this.loadCustomers({ reset: true }).finally(() => wx.stopPullDownRefresh())
+  },
+
+  onReachBottom() {
+    if (this.data.hasMore && !this.data.loadingMore && !this.data.loading) {
+      this.loadCustomers({ append: true })
+    }
+  },
+
+  decorateList(list) {
+    const { selectMode, currentLat, currentLng } = this.data
+    if (!(selectMode && currentLat != null && currentLng != null)) return list
+    const decorated = list.map(item => {
+      if (item.location) {
+        const km = distanceInKm(currentLat, currentLng, item.location.latitude, item.location.longitude)
+        return {
+          ...item,
+          distanceKm: km,
+          distanceText: km < 1 ? `${Math.round(km * 1000)}米` : `${km.toFixed(1)}公里`
+        }
+      }
+      return { ...item, distanceKm: 999999, distanceText: '' }
+    })
+    decorated.sort((a, b) => a.distanceKm - b.distanceKm)
+    return decorated
+  },
+
+  async loadCustomers({ reset = true, append = false } = {}) {
+    if (append) {
+      if (!this.data.hasMore || this.data.loadingMore) return
+      this.setData({ loadingMore: true })
+    } else {
+      this.setData({ loading: true, page: 1 })
+    }
+
+    const page = append ? (this.data.page + 1) : 1
+    const limit = this.data.limit
+
     try {
       const res = await wx.cloud.callFunction({
         name: 'customers',
-        data: { action: 'list' }
+        data: { action: 'list', page, limit }
       })
       if (res.result && res.result.success) {
-        let list = res.result.list || []
-
-        const { selectMode, currentLat, currentLng } = this.data
-        if (selectMode && currentLat != null && currentLng != null) {
-          list = list.map(item => {
-            if (item.location) {
-              const km = distanceInKm(currentLat, currentLng, item.location.latitude, item.location.longitude)
-              return {
-                ...item,
-                distanceKm: km,
-                distanceText: km < 1 ? `${Math.round(km * 1000)}米` : `${km.toFixed(1)}公里`
-              }
-            }
-            return { ...item, distanceKm: 999999, distanceText: '' }
-          })
-          // 没填过位置的客户排到最后，不参与"就近"排序
-          list.sort((a, b) => a.distanceKm - b.distanceKm)
+        let list = this.decorateList(res.result.list || [])
+        if (append) {
+          // 合并后再按距离重排整表，避免第 2 页近店排在第 1 页远店后面
+          // TODO: 云端按距离分页（geo）后可去掉前端全量重排
+          list = this.decorateList((this.data.list || []).concat(res.result.list || []))
         }
-
-        this.setData({ list })
+        const scope = res.result.scope || this.resolveLocalScope()
+        const listTitle = scope === 'all' ? '全部客户' : '我的客户'
+        this.setData({
+          list,
+          page,
+          total: res.result.total || list.length,
+          hasMore: !!res.result.hasMore,
+          listScope: scope === 'all' ? 'all' : 'self',
+          listTitle,
+          loading: false,
+          loadingMore: false
+        })
+        if (!this.data.selectMode) {
+          wx.setNavigationBarTitle({ title: listTitle })
+        }
       } else {
-        wx.showToast({ title: res.result.error || '加载失败', icon: 'none' })
+        wx.showToast({ title: (res.result && res.result.error) || '加载失败', icon: 'none' })
+        this.setData({ loading: false, loadingMore: false })
       }
     } catch (err) {
       console.error('加载客户列表失败:', err)
       wx.showToast({ title: '加载失败，请重试', icon: 'none' })
-    } finally {
-      this.setData({ loading: false })
+      this.setData({ loading: false, loadingMore: false })
     }
   },
 
@@ -110,6 +169,18 @@ Page({
     if (!this.data.selectMode) return
     const item = e.currentTarget.dataset.item
     app.globalData.selectedCustomer = item
+    wx.navigateBack()
+  },
+
+  // 选择模式下选择"不关联门店"
+  onSelectNoStore() {
+    if (!this.data.selectMode) return
+    app.globalData.selectedCustomer = {
+      isNoStore: true,
+      storeName: '',
+      address: '',
+      _id: ''
+    }
     wx.navigateBack()
   },
 

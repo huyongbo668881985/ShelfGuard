@@ -30,6 +30,9 @@
         <text class="tag {{item.disabled ? 'status-disabled' : 'status-active'}}">
           {{item.disabled ? '已停用' : '正常'}}
         </text>
+        <text class="tag {{item.approved ? 'status-active' : 'status-disabled'}}">
+          {{item.approved ? '已批准' : '待审批'}}
+        </text>
       </view>
 
       <view class="user-actions">
@@ -41,6 +44,14 @@
           bindtap="changeRole"
         >改角色</button>
         <button
+          class="btn-outline act-btn"
+          size="mini"
+          data-id="{{item._id}}"
+          data-approved="{{item.approved}}"
+          bindtap="toggleApproved"
+          wx:if="{{!item.approved}}"
+        >批准</button>
+        <button
           class="btn-outline act-btn {{item.disabled ? 'btn-enable' : 'btn-disable'}}"
           size="mini"
           data-id="{{item._id}}"
@@ -48,6 +59,19 @@
           bindtap="toggleDisabled"
         >{{item.disabled ? '启用' : '停用'}}</button>
       </view>
+    </view>
+
+    <view class="load-more-wrap" wx:if="{{users.length > 0}}">
+      <text class="load-more-hint">共 {{total}} 人</text>
+      <button
+        class="btn-outline load-more-btn"
+        size="mini"
+        wx:if="{{hasMore}}"
+        loading="{{loadingMore}}"
+        disabled="{{loadingMore}}"
+        bindtap="loadMoreUsers"
+      >加载更多</button>
+      <text class="load-more-hint" wx:elif="{{!hasMore}}">已全部加载</text>
     </view>
   </block>
 </view>

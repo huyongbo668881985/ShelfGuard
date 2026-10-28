@@ -1,0 +1,9 @@
+{
+  "name": "syncJxcCustomers",
+  "version": "1.0.0",
+  "description": "从进销存 (jxc-app) 定时增量同步客户到 ShelfGuard",
+  "main": "index.js",
+  "dependencies": {
+    "wx-server-sdk": "~2.6.3"
+  }
+}

@@ -12,8 +12,42 @@ cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV })
 
 const db = cloud.database()
 const ADMIN_ROLES = ['admin']
+const DEFAULT_PAGE_SIZE = 50
+const MAX_PAGE_SIZE = 100
 
 const EDITABLE_FIELDS = ['brandName', 'productLine', 'aliases', 'photos', 'isActive']
+
+function isCloudFileId(v) {
+  return typeof v === 'string' && v.indexOf('cloud://') === 0
+}
+
+function sanitizePhotos(photos) {
+  const src = photos && typeof photos === 'object' ? photos : {}
+  const out = {}
+  ;['front', 'back', 'side'].forEach(slot => {
+    if (src[slot] === '' || src[slot] === null || src[slot] === undefined) {
+      // 允许显式清空
+      if (src[slot] === '') out[slot] = ''
+      return
+    }
+    if (!isCloudFileId(src[slot])) {
+      throw new Error(`产品照片 ${slot} 必须是 cloud:// 文件 ID`)
+    }
+    out[slot] = src[slot]
+  })
+  return out
+}
+
+async function deleteCloudFiles(ids) {
+  const list = (ids || []).filter(Boolean)
+  if (!list.length) return
+  try {
+    await cloud.deleteFile({ fileList: list })
+  } catch (err) {
+    console.warn('删除旧产品图失败:', err.message || err)
+  }
+}
+
 
 function pickEditableFields(product) {
   const picked = {}
@@ -25,10 +59,48 @@ function pickEditableFields(product) {
   return picked
 }
 
+function parsePaging(event) {
+  let limit = parseInt(event && event.limit, 10)
+  if (isNaN(limit) || limit <= 0) limit = DEFAULT_PAGE_SIZE
+  if (limit > MAX_PAGE_SIZE) limit = MAX_PAGE_SIZE
+
+  let page = parseInt(event && event.page, 10)
+  if (isNaN(page) || page < 1) page = 1
+
+  let skip = parseInt(event && event.skip, 10)
+  if (isNaN(skip) || skip < 0) skip = (page - 1) * limit
+
+  return { limit, page, skip }
+}
+
 async function isAdmin(openid) {
   if (!openid) return false
   const res = await db.collection('users').where({ _openid: openid }).get()
   return !!(res.data[0] && ADMIN_ROLES.includes(res.data[0].role) && !res.data[0].disabled)
+}
+
+async function buildPhotoUrlMap(list) {
+  const photoIDs = []
+  for (const p of list) {
+    const photos = p.photos || {}
+    ;['front', 'back', 'side'].forEach(slot => {
+      if (photos[slot]) photoIDs.push(photos[slot])
+    })
+  }
+
+  const urlMap = {}
+  for (let i = 0; i < photoIDs.length; i += 50) {
+    const chunk = photoIDs.slice(i, i + 50)
+    try {
+      const fileRes = await cloud.getTempFileURL({ fileList: chunk })
+      fileRes.fileList.forEach(f => {
+        if (f.tempFileURL) urlMap[f.fileID] = f.tempFileURL
+      })
+    } catch (err) {
+      console.error('获取产品参考照临时链接失败:', err)
+    }
+  }
+  return urlMap
 }
 
 exports.main = async (event, context) => {
@@ -52,34 +124,19 @@ exports.main = async (event, context) => {
       case 'list': {
         const includeInactive = !!(event && event.includeInactive)
         const query = includeInactive ? {} : { isActive: true }
+        const { limit, page, skip } = parsePaging(event)
+
+        const countRes = await db.collection('products').where(query).count()
+        const total = countRes.total || 0
+
         const res = await db.collection('products')
           .where(query)
           .orderBy('createdAt', 'desc')
+          .skip(skip)
+          .limit(limit)
           .get()
 
-        // 参考照临时链接服务端统一取：收紧云存储权限后，前端直接拿 fileID 当
-        // 图片 src 只能读到本人上传的文件，其他业务员看团队共享产品库会裂图。
-        const photoIDs = []
-        for (const p of res.data) {
-          const photos = p.photos || {}
-          ;['front', 'back', 'side'].forEach(slot => {
-            if (photos[slot]) photoIDs.push(photos[slot])
-          })
-        }
-
-        const urlMap = {}
-        // getTempFileURL 单次最多 50 个，产品一多按批取
-        for (let i = 0; i < photoIDs.length; i += 50) {
-          const chunk = photoIDs.slice(i, i + 50)
-          try {
-            const fileRes = await cloud.getTempFileURL({ fileList: chunk })
-            fileRes.fileList.forEach(f => {
-              if (f.tempFileURL) urlMap[f.fileID] = f.tempFileURL
-            })
-          } catch (err) {
-            console.error('获取产品参考照临时链接失败:', err)
-          }
-        }
+        const urlMap = await buildPhotoUrlMap(res.data)
 
         const list = res.data.map(p => {
           const photos = p.photos || {}
@@ -90,7 +147,15 @@ exports.main = async (event, context) => {
           return { ...p, photoURLs }
         })
 
-        return { success: true, list }
+        return {
+          success: true,
+          list,
+          total,
+          page,
+          limit,
+          skip,
+          hasMore: skip + list.length < total
+        }
       }
 
       // 新增产品
@@ -101,13 +166,19 @@ exports.main = async (event, context) => {
         if (!product || !product.brandName) {
           return { success: false, error: '缺少品牌名称' }
         }
+        let photos = {}
+        try {
+          photos = sanitizePhotos(product.photos || {})
+        } catch (photoErr) {
+          return { success: false, error: photoErr.message }
+        }
         const addRes = await db.collection('products').add({
           data: {
             _openid: openid,
             brandName: product.brandName,
             productLine: product.productLine || '',
             aliases: Array.isArray(product.aliases) ? product.aliases : [],
-            photos: product.photos || {}, // { front, back, side } 均为 fileID
+            photos,
             isActive: true,
             createdAt: db.serverDate(),
             updatedAt: db.serverDate()
@@ -128,7 +199,30 @@ exports.main = async (event, context) => {
           ...pickEditableFields(product),
           updatedAt: db.serverDate()
         }
-        await db.collection('products').doc(productId).update({ data: updateData })
+        let oldPhotos = {}
+        try {
+          const prev = await db.collection('products').doc(productId).get()
+          oldPhotos = (prev.data && prev.data.photos) || {}
+        } catch (_) {}
+        if (updateData.photos !== undefined) {
+          try {
+            updateData.photos = sanitizePhotos(updateData.photos)
+          } catch (photoErr) {
+            return { success: false, error: photoErr.message }
+          }
+          const toDelete = []
+          ;['front', 'back', 'side'].forEach(slot => {
+            const next = updateData.photos[slot]
+            const prev = oldPhotos[slot]
+            if (prev && isCloudFileId(prev) && next !== prev) {
+              toDelete.push(prev)
+            }
+          })
+          await db.collection('products').doc(productId).update({ data: updateData })
+          await deleteCloudFiles(toDelete)
+        } else {
+          await db.collection('products').doc(productId).update({ data: updateData })
+        }
         return { success: true }
       }
 

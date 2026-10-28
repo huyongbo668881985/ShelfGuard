@@ -121,19 +121,23 @@ exports.main = async (event, context) => {
 
   try {
     if (action === 'stats') {
-      // 统计口径：排除历史遗留的模拟报告（isMock: true），
-      // 防止未配置 API Key 时期写入的假数据污染总巡检数/本周/平均分。
-      const statsConditions = _.and(queryConditions, { 'aiReport.metadata.isMock': _.neq(true) })
+      // 顶部看板固定口径：不受列表的今日/评分/关键词筛选影响，避免选「今日」后总=本周
+      const boardWhere = {}
+      const boardConditions = buildBaseConditions({
+        isManager,
+        openid,
+        targetUserName: safeTargetUserName,
+        where: boardWhere
+      })
+      // 统计口径：排除历史遗留的模拟报告（isMock: true）
+      const statsConditions = _.and(boardConditions, { 'aiReport.metadata.isMock': _.neq(true) })
       const totalRes = await db.collection('inspections').where(statsConditions).count()
 
       const weekAgo = new Date()
       weekAgo.setDate(weekAgo.getDate() - 7)
-      // 注意：queryConditions 在有关键词时是 _.and(...) 命令对象，不能用 { ...queryConditions }
-      // 展开（命令对象的内部字段不可枚举，展开会变空对象），必须用 _.and() 包裹拼接。
       const weekConditions = _.and(statsConditions, { createdAt: _.gte(weekAgo) })
       const weekRes = await db.collection('inspections').where(weekConditions).count()
 
-      // 平均分：使用云数据库原生聚合管道直接在引擎层计算平均分，取代循环分页串行查询，毫秒级响应
       const $ = db.command.aggregate
       let avgScore = 0
       try {
@@ -190,12 +194,13 @@ exports.main = async (event, context) => {
       }
     }
 
-    // action === 'list'
-    const countRes = await db.collection('inspections').where(queryConditions).count()
+    // action === 'list'：与 stats 同样排除 isMock，避免列表出现假分而看板不计
+    const listConditions = _.and(queryConditions, { 'aiReport.metadata.isMock': _.neq(true) })
+    const countRes = await db.collection('inspections').where(listConditions).count()
     const total = countRes.total
 
     const listRes = await db.collection('inspections')
-      .where(queryConditions)
+      .where(listConditions)
       .orderBy('createdAt', 'desc')
       .skip((safePage - 1) * safePageSize)
       .limit(safePageSize)
@@ -208,8 +213,8 @@ exports.main = async (event, context) => {
         photoCount: true,
         location: true,
         status: true,
-        aiReport: true,
-        createdAt: true
+        createdAt: true,
+        aiReport: true
       })
       .get()
 
@@ -232,6 +237,15 @@ exports.main = async (event, context) => {
     const list = listRes.data.map(item => {
       if (Array.isArray(item.photoFileIDs) && item.photoFileIDs.length > 0) {
         item.thumbnailURL = thumbnailURLMap[item.photoFileIDs[0]] || ''
+      }
+      if (item.aiReport && typeof item.aiReport === 'object') {
+        const ar = item.aiReport
+        item.aiReport = {
+          score: ar.score,
+          scoreLevel: ar.scoreLevel,
+          summary: ar.summary,
+          metadata: ar.metadata
+        }
       }
       return item
     })

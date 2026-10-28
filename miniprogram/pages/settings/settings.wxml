@@ -42,8 +42,9 @@
       <text class="entry-arrow">›</text>
     </view>
 
-    <!-- 队列概览 -->
+    <!-- 队列概览：admin/manager 看团队；sales 只看自己 -->
     <view class="card queue-card">
+      <view class="section-title">{{queueScopeLabel}}</view>
       <view class="queue-row">
         <view class="queue-item">
           <text class="queue-value queue-pending">{{queue.pending}}</text>
@@ -93,6 +94,27 @@
         </view>
         <text class="mode-desc">旧流程。提交后原地等待 AI 出结果，约 15-40 秒，随后直接跳转报告页。</text>
       </view>
+    </view>
+
+
+    <!-- 识别精度 vs 流量 -->
+    <view class="card">
+      <view class="section-title">拍照上传策略</view>
+      <view class="mode-option {{imageMode === 'traffic' ? 'active' : ''}}" data-mode="traffic" bindtap="onSelectImageMode">
+        <view class="mode-head">
+          <text class="mode-name">流量优先</text>
+          <text class="mode-check" wx:if="{{imageMode === 'traffic'}}">✓</text>
+        </view>
+        <text class="mode-desc">多张照片拼成一张网格图再上传，省流量、省 AI 调用成本。默认推荐。</text>
+      </view>
+      <view class="mode-option {{imageMode === 'quality' ? 'active' : ''}}" data-mode="quality" bindtap="onSelectImageMode">
+        <view class="mode-head">
+          <text class="mode-name">识别精度优先</text>
+          <text class="mode-check" wx:if="{{imageMode === 'quality'}}">✓</text>
+        </view>
+        <text class="mode-desc">跳过拼图，多张原图各自全分辨率直传云函数合并分析，价签/品牌更清晰，流量与费用更高。</text>
+      </view>
+      <text class="form-tip" style="padding: 0 8rpx;">业务员可本机切换；管理员点「保存」后会写入团队默认。</text>
     </view>
 
     <!-- 集中分析时间 -->
@@ -166,6 +188,56 @@
       <view class="form-hint">
         <text>推荐把 Key 配置在云函数环境变量里（更安全，不经过前端）：云开发控制台 → 云函数 → analyzeImage → 版本与配置 → 环境变量 → 新增 DASHSCOPE_API_KEY。</text>
         <text class="hint-line">Key 从阿里云百炼控制台 bailian.console.aliyun.com 申请。两处都配了以环境变量优先。</text>
+      </view>
+    </view>
+
+    <!-- 进销存 (jxc-app) 客户同步配置 -->
+    <view class="card">
+      <view class="section-title">进销存客户同步</view>
+
+      <view class="form-row">
+        <text class="form-label">服务地址</text>
+        <view class="form-input-wrap form-input-wrap--wide">
+          <input
+            class="form-input form-input--wide"
+            placeholder="例如 http://192.168.1.100:3000"
+            value="{{jxcBaseUrl}}"
+            bindinput="onJxcBaseUrlInput"
+            disabled="{{!canEdit}}"
+          />
+        </view>
+      </view>
+
+      <view class="key-status" wx:if="{{hasJxcApiKey}}">
+        <text class="key-status-ok">进销存 Key：{{jxcApiKeyMasked}}</text>
+        <text class="key-clear" bindtap="onClearJxcApiKey" wx:if="{{canEdit}}">清除</text>
+      </view>
+      <view class="key-status" wx:else>
+        <text class="key-status-none">尚未配置进销存 API Key</text>
+      </view>
+
+      <input
+        class="key-input"
+        placeholder="{{hasJxcApiKey ? '留空表示不修改' : '输入对应租户生成的 API Key'}}"
+        placeholder-class="key-input-ph"
+        value="{{jxcApiKeyInput}}"
+        bindinput="onJxcApiKeyInput"
+        disabled="{{!canEdit}}"
+      />
+
+      <view class="last-run" wx:if="{{jxcLastSyncText}}">
+        <text class="last-run-title">上次同步：{{jxcLastSyncText}}</text>
+        <text class="last-run-detail" wx:if="{{jxcLastSyncSummaryText}}">{{jxcLastSyncSummaryText}}</text>
+      </view>
+
+      <view class="queue-actions">
+        <button class="btn-primary" bindtap="onManualSyncJxc" disabled="{{!canEdit || syncingJxc}}">
+          {{syncingJxc ? '正在同步...' : '立即从进销存同步客户'}}
+        </button>
+      </view>
+
+      <view class="form-hint">
+        <text>云端已配置定时增量同步（每30分钟自动触发）。在此点击可手动触发立即同步。同步时将自动通过业务员手机号或姓名归属到对应业务员，坐标留空并在业务员首次到店巡检时自动绑定。</text>
       </view>
     </view>
 

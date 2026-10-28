@@ -6,7 +6,7 @@
 > 已采纳的决策：
 > - **manager 不可改系统设置**（仅 `admin` 可改）——与文档建议一致。
 > - **首管理员激活采用激活码方案**（云函数环境变量 `ADMIN_SETUP_CODE`），已删除"无管理员则任何人可写"的自举漏洞。
-> - **账号准入（白名单）暂不做**——当前按"谁装了 App 谁就能用"处理，待确认小程序是否对外发布后再定。
+> - **账号准入（approved 审批）已开启**：新 sales 默认 `approved: false`，须管理员在「用户与权限管理」批准后才能提交/分析；`admin`/`manager` 无 `approved` 字段时仍视为可用；激活首管理员时写入 `approved: true`。
 > - **Phase 1 管理后台已完成**：`pages/admin/admin` 页 + `users` 云函数；巡检提交已收口进 `submitInspection` 云函数。
 
 > 所有结论均基于真实代码（`login` / `settings` / `getHistory` / `analyzeImage` / `getReport` 云函数、`upload.js` 客户端）。
@@ -118,13 +118,16 @@
 
 ---
 
-## 7. 账号准入（可选，Phase 2）
+## 7. 账号准入（approved 审批，已落地）
 
-- 若小程序**只在内部分发**（企业微信/指定二维码给员工），当前"谁装了 App 谁就能用"可接受，无需准入。
-- 若小程序**对外发布**或要防止前员工继续用，需要准入：
-  - **白名单**：`users` 增加 `approved` 字段，未审批的 openid 只能看引导页、不能提交；admin 在后台审批。
-  - **邀请制**：admin 生成邀请（绑手机号或 openid），被邀请者首次打开才建账号。
-- 本方案默认 Phase 0/1 不做准入，等你确认分发范围再定（见第 12 节待拍板点 3）。
+- **策略**：保留审批白名单，**不**再按「谁装了 App 谁就能用」。
+- **规则**：
+  - 新用户（`login` / 兜底建档）默认 `role: 'sales'`、`approved: false`。
+  - `sales` 须 `approved === true` 才可 `submitInspection` / 客户端触发 `analyzeImage`；未批准时上传页友好提示，**不会**因该错误入离线队列。
+  - `admin` / `manager`：`approved` 缺省（undefined/null）时仍可用；激活首管理员（`activateAdmin`）显式写 `approved: true`。
+  - 管理员在用户管理页可「批准」或「启用」（启用时一并批准）。
+- **历史 sales**：库中无 `approved` 字段的旧 sales 部署后会被拦，需管理员点一次批准。
+- 邀请制仍属后续可选增强，当前以管理员手动批准为准。
 
 ---
 
@@ -173,7 +176,8 @@
 |------|------|----------|--------|
 | **Phase 0（必做）** | 堵自举漏洞 + 受控首管理员 + 账号停用 | ✅ 已落地：`settings.canManage` 去自举 + `activateAdmin`；`users` 加 `disabled`；`getHistory`/`analyzeImage`/`getReport`/`submitInspection` 查 `disabled`；环境变量 `ADMIN_SETUP_CODE` | 小（约 0.5–1 天） |
 | **Phase 1（推荐）** | 小程序内管理后台 | ✅ 已落地：新增 `pages/admin/admin` + `users` 云函数（`listUsers`/`setRole`/`setDisabled`）；`submitInspection` 收口直写 | 中（约 1–2 天） |
-| **Phase 2（按需）** | 准入/Web 后台/多租户/企微 | 白名单或邀请制；独立 Web 管理端；多品牌租户；企业微信集成 | 大（按需评估） |
+| **Phase 1.5（已落地）** | 账号准入 approved | `users.approved`；login/submit/analyze 拦截；管理页批准 | 小 |
+| **Phase 2（按需）** | Web 后台/多租户/企微 | 邀请制增强；独立 Web 管理端；多品牌租户；企业微信集成 | 大（按需评估） |
 
 ---
 
@@ -181,5 +185,5 @@
 
 1. **manager 是否拥有改系统设置的权限？** 现状是拥有；本方案建议"manager 只看全员 + 管理视图，admin 才改设置/管人"。
 2. **首管理员激活方式**：激活码（推荐）还是 openid 环境变量（更严格）？
-3. **是否需要账号准入（白名单）？** 还是目前"谁装了 App 谁就能用"就够？取决于小程序是否对外发布。
+3. ~~是否需要账号准入（白名单）？~~ **已拍板并落地**：开启 `approved` 审批；新 sales 默认未批准。
 4. **Phase 1 管理后台现在就做，还是先只交付 Phase 0？**

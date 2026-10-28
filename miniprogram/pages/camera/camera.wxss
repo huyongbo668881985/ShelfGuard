@@ -51,12 +51,13 @@
 }
 
 .preview-bottom {
-  background: rgba(0, 0, 0, 0.4);
-  padding: 30rpx;
+  background: transparent;
+  padding: 16rpx 20rpx;
   border-radius: 16rpx;
   display: flex;
   flex-direction: column;
-  gap: 12rpx;
+  gap: 10rpx;
+  text-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.85);
 }
 
 .preview-task {
@@ -218,6 +219,56 @@
   background: #000;
 }
 
+.preview-swiper {
+  flex: 1;
+  width: 100%;
+  height: 0;
+  min-height: 520rpx;
+  background: #000;
+}
+
+.preview-count-badge {
+  position: absolute;
+  top: 24rpx;
+  right: 24rpx;
+  z-index: 5;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 24rpx;
+  padding: 8rpx 18rpx;
+  border-radius: 24rpx;
+}
+
+.preview-thumbs {
+  display: flex;
+  flex-direction: row;
+  white-space: nowrap;
+  padding: 12rpx 20rpx;
+  background: rgba(0, 0, 0, 0.85);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.preview-thumb {
+  display: inline-block;
+  width: 96rpx;
+  height: 96rpx;
+  margin-right: 12rpx;
+  border-radius: 12rpx;
+  overflow: hidden;
+  border: 3rpx solid transparent;
+  flex-shrink: 0;
+}
+
+.preview-thumb.active {
+  border-color: #4caf50;
+}
+
+.preview-thumb-img {
+  width: 100%;
+  height: 100%;
+}
+
 .composing-mask {
   position: absolute;
   top: 0;
@@ -369,7 +420,27 @@
   border-radius: 20rpx;
 }
 
-/* 门店选择按钮（替代原手输框，强制从客户库选） */
+/* 门店选择按钮（支持清除与选择） */
+.select-store-wrap {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+}
+
+.select-store-wrap .select-store {
+  flex: 1;
+}
+
+.store-clear-btn {
+  font-size: 24rpx;
+  color: var(--color-text-secondary);
+  background: #f1f3f5;
+  border: 1rpx solid var(--color-border);
+  padding: 8rpx 18rpx;
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+}
+
 .select-store {
   display: flex;
   justify-content: space-between;
@@ -412,4 +483,15 @@
 .setting-arrow {
   font-size: 36rpx;
   color: #999;
+}
+
+.approval-banner {
+  position: relative;
+  z-index: 20;
+  background: #fff3cd;
+  color: #856404;
+  padding: 16rpx 24rpx;
+  font-size: 26rpx;
+  text-align: center;
+  border-bottom: 1rpx solid #ffeeba;
 }

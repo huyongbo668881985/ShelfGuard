@@ -1,6 +1,8 @@
 // app.js
 // 应用入口 - 全局状态管理、云开发初始化、用户登录
 
+const offlineQueue = require('./utils/offlineQueue')
+
 // 统一错误处理工具
 const toast = (title, icon = 'none', duration = 2000) => {
   wx.showToast({ title, icon, duration })
@@ -47,6 +49,15 @@ App({
       })
     }
 
+    // 网络恢复时自动冲刷离线待上传
+    if (typeof wx.onNetworkStatusChange === 'function') {
+      wx.onNetworkStatusChange((res) => {
+        if (res.isConnected) {
+          this.flushOfflineQueueQuiet()
+        }
+      })
+    }
+
     // 用户登录
     this.login()
   },
@@ -62,6 +73,7 @@ App({
     // 当前用户的角色与停用状态（登录后由 login 云函数返回；权限边界以服务端为准）
     userRole: 'sales',
     userDisabled: false,
+    userApproved: false,
     
     // 当前巡检任务
     currentTask: {
@@ -88,7 +100,9 @@ App({
     // analyzeMode: 'batch' 每日集中分析（默认） | 'instant' 提交即分析
     systemConfig: {
       analyzeMode: 'batch',
-      analyzeTime: '21:00'
+      analyzeTime: '21:00',
+      // traffic=拼图省流量；quality=多图直传提高识别精度
+      imageMode: 'traffic'
     },
 
     // 全局配置
@@ -116,6 +130,12 @@ App({
         // 角色与停用状态供前端判断入口（真正的鉴权在服务端）
         this.globalData.userRole = result.userInfo.role || 'sales'
         this.globalData.userDisabled = !!result.userInfo.disabled
+        // 准入批准：与云端 isUserApproved 规则对齐（无字段时 admin/manager 视为已批准）
+        const _role = result.userInfo.role || 'sales'
+        const _ap = result.userInfo.approved
+        this.globalData.userApproved = _ap === true || (
+          (_ap === undefined || _ap === null) && (_role === 'admin' || _role === 'manager')
+        )
         // 同步业务员信息到当前任务
         if (result.userInfo.name) {
           this.globalData.currentTask.userName = result.userInfo.name
@@ -123,7 +143,10 @@ App({
       }
 
       console.log('[登录] 成功:', result.openid)
-      
+
+      // 登录成功后静默刷离线待上传队列
+      this.flushOfflineQueueQuiet()
+
       // 触发登录成功事件
       this.loginCallback && this.loginCallback(result)
 
@@ -173,6 +196,25 @@ App({
   // 获取当前任务
   getCurrentTask() {
     return { ...this.globalData.currentTask }
+  },
+
+
+  // 静默冲刷客户端离线待上传队列（与云端 pending 分析队列无关）
+  async flushOfflineQueueQuiet() {
+    try {
+      if (offlineQueue.count() === 0) return
+      const online = await offlineQueue.isOnline()
+      if (!online) return
+      const result = await offlineQueue.flushAll({ openid: this.globalData.openid || '' })
+      if (result && result.succeeded > 0) {
+        console.log('[离线队列] 静默补传成功', result.succeeded, '条')
+      }
+      if (result && result.failed > 0) {
+        console.warn('[离线队列] 静默补传失败', result.failed, '条')
+      }
+    } catch (err) {
+      console.warn('[离线队列] 静默补传异常', err)
+    }
   },
 
   // 统一工具方法

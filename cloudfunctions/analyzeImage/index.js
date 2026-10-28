@@ -80,6 +80,87 @@ const MAX_TOKENS = 2500
 const AI_HARD_TIMEOUT_MS = 40 * 1000
 const AI_HTTP_TIMEOUT_MS = 38 * 1000
 
+
+// ============================================================
+// 准入批准 + 按日配额
+// ============================================================
+const DEFAULT_ANALYZE_DAILY_LIMIT = 50
+const _ = db.command
+
+// approved===true 放行；无字段时仅 admin/manager 视为已批准；否则拒绝
+function isUserApproved(user) {
+  if (!user) return false
+  if (user.approved === true) return true
+  if (user.approved === undefined || user.approved === null) {
+    return user.role === 'admin' || user.role === 'manager'
+  }
+  return false
+}
+
+function beijingDateStr() {
+  const beijing = new Date(Date.now() + 8 * 60 * 60 * 1000)
+  const y = beijing.getUTCFullYear()
+  const m = String(beijing.getUTCMonth() + 1).padStart(2, '0')
+  const d = String(beijing.getUTCDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
+async function getAnalyzeDailyLimit() {
+  try {
+    const res = await db.collection('settings').doc('global').get()
+    const n = res.data && res.data.analyzeDailyLimit
+    if (typeof n === 'number' && n > 0 && n < 10000) return Math.floor(n)
+  } catch (e) { /* settings 可能不存在 */ }
+  return DEFAULT_ANALYZE_DAILY_LIMIT
+}
+
+/** 按 openid + 北京自然日计数；确定性 _id 防并发双文档；超限返回 ok:false */
+async function checkAndIncAnalyzeQuota(openid) {
+  const limit = await getAnalyzeDailyLimit()
+  const date = beijingDateStr()
+  // 微信云库 doc id 允许字母数字下划线；openid 本身为安全字符
+  const docId = `${openid}_${date}`
+  const col = db.collection('analyzeQuota')
+  try {
+    let count = 0
+    try {
+      const existing = await col.doc(docId).get()
+      count = (existing.data && existing.data.count) || 0
+    } catch (e) {
+      // 文档不存在：首次写入
+      count = 0
+    }
+    if (count >= limit) {
+      return { ok: false, count, limit, date }
+    }
+    try {
+      await col.doc(docId).update({
+        data: { count: _.inc(1), updatedAt: db.serverDate() }
+      })
+      return { ok: true, count: count + 1, limit, date }
+    } catch (updErr) {
+      // 不存在则 set；若并发双 set，后写覆盖但 count 从 1 起，可接受；再失败则 softFail
+      try {
+        await col.doc(docId).set({
+          data: {
+            _openid: openid,
+            date,
+            count: 1,
+            updatedAt: db.serverDate()
+          }
+        })
+        return { ok: true, count: 1, limit, date }
+      } catch (setErr) {
+        console.warn('[analyzeQuota] 配额写入失败，本次放行:', setErr.message)
+        return { ok: true, count: -1, limit, date, softFail: true }
+      }
+    }
+  } catch (err) {
+    console.warn('[analyzeQuota] 配额计数失败，本次放行:', err.message)
+    return { ok: true, count: -1, limit, date, softFail: true }
+  }
+}
+
 // ============================================================
 // 云函数入口
 // ============================================================
@@ -121,6 +202,9 @@ exports.main = async (event, context) => {
     if (callerUser && callerUser.disabled) {
       return { success: false, error: '账号已停用，无法进行分析' }
     }
+    if (!isUserApproved(callerUser)) {
+      return { success: false, error: '等待管理员审批', code: 'NOT_APPROVED' }
+    }
   }
 
   let inspectionDoc
@@ -158,6 +242,19 @@ exports.main = async (event, context) => {
   if (invalidIds.length > 0) {
     console.warn(`拒绝分析请求: fileID 不属于该巡检记录 inspection=${inspectionId}`, invalidIds)
     return { success: false, error: '提交的图片不属于该巡检记录' }
+  }
+
+  // 配额：归属/照片校验通过后再扣，避免无效请求烧额度
+  if (!isInternalCall) {
+    const quota = await checkAndIncAnalyzeQuota(callerOpenid)
+    if (!quota.ok) {
+      return {
+        success: false,
+        error: `今日 AI 分析次数已达上限（${quota.limit} 次/人/日），请明日再试或联系管理员`,
+        code: 'QUOTA_EXCEEDED',
+        quota
+      }
+    }
   }
 
   try {
@@ -678,9 +775,12 @@ function generateMockReport() {
 // ============================================================
 async function handleDailySummary(event, wxContext) {
   const callerOpenid = wxContext.OPENID || ''
-  const isInternalCall = !callerOpenid
+  // 云函数互调 / 定时触发时 OPENID 为空；SOURCE 含 wx_trigger / timer 亦视为内部
+  const source = String(wxContext.SOURCE || '')
+  const isTimerSource = /trigger|timer|cron/i.test(source)
+  const isInternalCall = !callerOpenid || isTimerSource
 
-  // 停用账号拦截与角色判断（非内部调用时强制校验）
+  // dailySummary 仅允许：内部/定时，或 admin/manager。普通 sales 直接拒绝（防烧额度）。
   let isManager = false
   if (!isInternalCall) {
     const callerRes = await db.collection('users').where({ _openid: callerOpenid }).get()
@@ -689,6 +789,12 @@ async function handleDailySummary(event, wxContext) {
       return { success: false, error: '账号已停用，无法进行分析' }
     }
     isManager = !!(callerUser && (callerUser.role === 'admin' || callerUser.role === 'manager'))
+    if (!isManager) {
+      return { success: false, error: '仅管理员或管理者可触发日报汇总', code: 'DAILY_SUMMARY_FORBIDDEN' }
+    }
+    if (!isUserApproved(callerUser)) {
+      return { success: false, error: '等待管理员审批', code: 'NOT_APPROVED' }
+    }
   }
 
   // 1. 查找当天（或传入的 inspectionIds）巡检记录，严格校验归属防越权
@@ -760,6 +866,19 @@ async function handleDailySummary(event, wxContext) {
     }
   }
 
+  // 配额：照片与 Key 校验通过后再扣（管理员手动触发日报也计入其个人日配额）
+  if (!isInternalCall) {
+    const quota = await checkAndIncAnalyzeQuota(callerOpenid)
+    if (!quota.ok) {
+      return {
+        success: false,
+        error: `今日 AI 分析次数已达上限（${quota.limit} 次/人/日），请明日再试或联系管理员`,
+        code: 'QUOTA_EXCEEDED',
+        quota
+      }
+    }
+  }
+
   // 4. 取临时图片链接与品牌参考资料，调用 AI 生成全天汇总结论
   try {
     const fileRes = await cloud.getTempFileURL({ fileList: targetFileIDs })
@@ -783,30 +902,78 @@ async function handleDailySummary(event, wxContext) {
     const ownerOpenids = Array.from(new Set(inspections.map(i => i._openid).filter(Boolean)))
     const userNames = Array.from(new Set(inspections.map(i => i.userName).filter(Boolean)))
 
+    const ownerKey = ownerOpenids.length === 1 ? ownerOpenids[0] : (callerOpenid || 'multi')
+    const safeOwner = String(ownerKey).replace(/[^a-zA-Z0-9_-]/g, '_') || 'unknown'
+    const reportDocId = `dr_${safeOwner}_${todayStr}`
+    const newStoreNames = Array.from(new Set(inspections.map(i => i.storeName || '未命名门店')))
+    const newInspectionIds = inspectionIds.slice()
+
+    // 同日同 openid upsert：多轮 >8 家时合并门店/巡检列表，避免 limit(1) 只剩残缺后半
+    let mergedInspectionIds = newInspectionIds
+    let mergedStoreNames = newStoreNames
+    let mergedOwnerOpenids = ownerOpenids
+    let mergedUserName = userNames.join('、')
+    let mergedReport = summaryReport
+    try {
+      const prev = await db.collection('dailyReports').doc(reportDocId).get()
+      if (prev.data) {
+        const p = prev.data
+        mergedInspectionIds = Array.from(new Set([...(p.inspectionIds || []), ...newInspectionIds]))
+        mergedStoreNames = Array.from(new Set([...(p.storeNames || []), ...newStoreNames]))
+        mergedOwnerOpenids = Array.from(new Set([...(p.ownerOpenids || []), ...ownerOpenids]))
+        const prevNames = (p.userName || '').split('、').filter(Boolean)
+        mergedUserName = Array.from(new Set([...prevNames, ...userNames])).join('、')
+        const prevRankings = (p.report && Array.isArray(p.report.storeRankings)) ? p.report.storeRankings : []
+        const newRankings = Array.isArray(summaryReport.storeRankings) ? summaryReport.storeRankings : []
+        const rankMap = new Map()
+        prevRankings.forEach(r => { if (r && r.storeName) rankMap.set(r.storeName, r) })
+        newRankings.forEach(r => { if (r && r.storeName) rankMap.set(r.storeName, r) })
+        const prevIssues = (p.report && Array.isArray(p.report.commonIssues)) ? p.report.commonIssues : []
+        const newIssues = Array.isArray(summaryReport.commonIssues) ? summaryReport.commonIssues : []
+        mergedReport = Object.assign({}, p.report || {}, summaryReport, {
+          storeRankings: Array.from(rankMap.values()),
+          commonIssues: [...prevIssues, ...newIssues].slice(0, 20),
+          storeStats: Object.assign({}, (p.report && p.report.storeStats) || {}, summaryReport.storeStats || {}, {
+            totalStores: mergedStoreNames.length
+          }),
+          summaryConclusion: (summaryReport.summaryConclusion || '') +
+            ((p.report && p.report.summaryConclusion && mergedInspectionIds.length > newInspectionIds.length)
+              ? `（含本日前序 ${mergedInspectionIds.length - newInspectionIds.length} 条巡检已合并）`
+              : '')
+        })
+      }
+    } catch (prevErr) {
+      // 文档不存在，走新建
+    }
+
     const docPayload = {
       date: todayStr,
       _openid: ownerOpenids.length === 1 ? ownerOpenids[0] : (callerOpenid || ''),
-      ownerOpenids,
-      userName: userNames.join('、'),
+      ownerOpenids: mergedOwnerOpenids,
+      userName: mergedUserName,
       generatedAt: db.serverDate(),
-      inspectionCount: inspections.length,
-      inspectionIds,
-      storeNames: Array.from(new Set(inspections.map(i => i.storeName || '未命名门店'))),
-      report: summaryReport
+      inspectionCount: mergedInspectionIds.length,
+      inspectionIds: mergedInspectionIds,
+      storeNames: mergedStoreNames,
+      report: mergedReport
     }
 
-    let savedId = ''
+    let savedId = reportDocId
     try {
-      const addRes = await db.collection('dailyReports').add({ data: docPayload })
-      savedId = addRes._id
+      await db.collection('dailyReports').doc(reportDocId).set({ data: docPayload })
     } catch (dbErr) {
-      // 集合不存在时写入 settings 的 global 文档兜底，确保前端随时能读到
       try {
-        await db.collection('settings').doc('global').update({
-          data: { latestDailyReport: docPayload }
-        })
-      } catch (updateErr) {
-        console.warn('存储每日汇总失败:', updateErr)
+        const addRes = await db.collection('dailyReports').add({ data: docPayload })
+        savedId = addRes._id
+      } catch (addErr) {
+        try {
+          await db.collection('settings').doc('global').update({
+            data: { latestDailyReport: docPayload }
+          })
+        } catch (updateErr) {
+          console.warn('存储每日汇总失败:', updateErr)
+        }
+        savedId = ''
       }
     }
 
@@ -917,7 +1084,10 @@ function parseDailySummaryResponse(responseText, inspections) {
     }
     return result
   } catch (err) {
-    return generateFallbackDailySummary(inspections, 'AI 输出解析失败')
+    const e = new Error('AI 日报输出解析失败（非合法 JSON），可重试，未写入假分')
+    e.parseError = true
+    e.cause = err
+    throw e
   }
 }
 

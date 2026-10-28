@@ -65,19 +65,22 @@
       <view class="photo-section-header">
         <view class="section-title">陈列照片 ({{detail.photoCount || 1}}张)</view>
         <view class="photo-quick-actions" wx:if="{{detail.photoURLs && detail.photoURLs.length > 0}}">
-          <text class="quick-action-btn" bindtap="sharePhoto">📤 发微信</text>
-          <text class="quick-action-btn" bindtap="savePhoto">💾 存相册</text>
+          <text class="quick-action-btn" data-url="{{detail.photoURLs[currentPhotoIndex] || detail.photoURLs[0]}}" bindtap="sharePhoto">📤 发当前</text>
+          <text class="quick-action-btn" data-url="{{detail.photoURLs[currentPhotoIndex] || detail.photoURLs[0]}}" bindtap="savePhoto">💾 存当前</text>
+          <text class="quick-action-btn" wx:if="{{detail.photoURLs.length > 1}}" bindtap="saveAllPhotos">📚 全部存</text>
+          <text class="photo-index-hint" wx:if="{{detail.photoURLs.length > 1}}">第 {{currentPhotoIndex + 1}}/{{detail.photoURLs.length}} 张</text>
         </view>
       </view>
       <view class="photo-grid">
         <image
           wx:for="{{detail.photoURLs}}"
           wx:key="index"
-          class="photo-item"
+          class="photo-item {{currentPhotoIndex === index ? 'photo-item-active' : ''}}"
           src="{{item}}"
           mode="aspectFill"
           data-url="{{item}}"
-          bindtap="previewImage"
+          data-index="{{index}}"
+          bindtap="onSelectPhoto"
         />
       </view>
     </view>
@@ -234,6 +237,12 @@
         </view>
       </view>
 
+
+      <!-- 日报聚合说明：本页详情来自当日汇总投影，非单店深度分析 -->
+      <view class="mock-badge daily-badge" wx:if="{{detail.aiReport.metadata.isDailySummary}}">
+        <text>📋 本报告来自日报聚合（{{detail.aiReport.metadata.dailyDate || '当日'}}），非单店深度分析</text>
+      </view>
+
       <!-- 模拟报告标记 -->
       <view class="mock-badge" wx:if="{{detail.aiReport.metadata.isMock}}">
         <text>⚠️ 此为模拟报告，请配置 AI API Key 获取真实分析</text>
@@ -270,3 +279,5 @@
     </view>
   </block>
 </view>
+
+<privacy-auth id="privacyAuth"></privacy-auth>

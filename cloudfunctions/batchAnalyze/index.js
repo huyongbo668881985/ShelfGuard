@@ -71,6 +71,10 @@ const STUCK_THRESHOLD_MS = 3 * 60 * 1000
 // 同一条记录最多重试几次，超过就标记失败，避免一张坏图无限占用额度
 const MAX_ATTEMPTS = 3
 
+// 日报模式：每店取首图、最多喂这么多家店进 dailySummary（与 analyzeImage 内 slice(0,8) 对齐）
+// 认领数必须 ≤ 此值，避免 claim 15 却只分析 8、其余卡在 analyzing
+const MAX_DAILY_SUMMARY_STORES = 8
+
 // ============================================================
 // 入口
 // ============================================================
@@ -144,6 +148,7 @@ async function drainQueue({ settings, startedAt, ignoreDeadlineForFirst = false 
   // 核心特性：集中分析模式下，按业务员（_openid）聚合其待分析的全部巡检照片，生成《今日巡检综合分析日报》
   // 先找到第一位有 pending 记录的业务员，将其名下待分析记录加锁（pending -> analyzing）后统一汇总分析。
   // 单轮只处理一位业务员的汇总，确保单次执行稳稳控制在 60 秒硬上限内。
+  let claimedIdsForRollback = []
   try {
     const firstPendingRes = await db.collection('inspections')
       .where({ status: 'pending' })
@@ -157,13 +162,14 @@ async function drainQueue({ settings, startedAt, ignoreDeadlineForFirst = false 
       const userPendingRes = await db.collection('inspections')
         .where(targetOpenid ? { status: 'pending', _openid: targetOpenid } : { status: 'pending' })
         .orderBy('createdAt', 'asc')
-        .limit(15)
+        .limit(MAX_DAILY_SUMMARY_STORES)
         .field({ _id: true, storeName: true, analyzeAttempts: true, photoFileIDs: true })
         .get()
 
+      // 认领数与 dailySummary 喂图上限对齐（每店首图、最多 8）
       const candidates = (userPendingRes.data || []).filter(
         r => Array.isArray(r.photoFileIDs) && r.photoFileIDs.length > 0
-      )
+      ).slice(0, MAX_DAILY_SUMMARY_STORES)
 
       if (candidates.length > 0) {
         const candidateIds = candidates.map(c => c._id)
@@ -183,6 +189,7 @@ async function drainQueue({ settings, startedAt, ignoreDeadlineForFirst = false 
 
         const claimedCount = (claimBatchRes.stats && claimBatchRes.stats.updated) || 0
         if (claimedCount > 0) {
+          claimedIdsForRollback = candidateIds
           console.log(`[batchAnalyze] 已锁定业务员(${targetOpenid})的 ${claimedCount} 条巡检记录，正在聚合生成今日汇总结论...`)
           results.processed += claimedCount
           const summaryRes = await cloud.callFunction({
@@ -199,6 +206,13 @@ async function drainQueue({ settings, startedAt, ignoreDeadlineForFirst = false 
             results.succeeded += claimedCount
           } else {
             results.failed += claimedCount
+            const errMsg = (summaryRes.result && summaryRes.result.error) || '日报汇总未返回成功'
+            for (const c of candidates) {
+              await markFailedIfNeeded(
+                { _id: c._id, analyzeAttempts: (c.analyzeAttempts || 0) + 1 },
+                errMsg
+              )
+            }
           }
           results.remaining = await countPending()
           return results
@@ -207,6 +221,30 @@ async function drainQueue({ settings, startedAt, ignoreDeadlineForFirst = false 
     }
   } catch (summaryErr) {
     console.error('[batchAnalyze] 聚合今日汇总结论异常:', summaryErr)
+    const errMsg = summaryErr.message || '调用 dailySummary 失败'
+    if (claimedIdsForRollback.length > 0) {
+      results.failed += claimedIdsForRollback.length
+      for (const id of claimedIdsForRollback) {
+        try {
+          const cur = await db.collection('inspections').doc(id).get()
+          if (cur.data && cur.data.status === 'analyzing') {
+            const attempts = cur.data.analyzeAttempts || 0
+            await db.collection('inspections').doc(id).update({
+              data: {
+                status: attempts >= MAX_ATTEMPTS ? 'analyze_failed' : 'pending',
+                analyzeError: errMsg,
+                analyzedAt: db.serverDate()
+              }
+            })
+          }
+        } catch (rbErr) {
+          console.error('[batchAnalyze] 回滚 analyzing 失败:', id, rbErr)
+        }
+        results.details.push({ id, storeName: '', ok: false, error: errMsg })
+      }
+    } else if (results.processed > 0 && results.succeeded === 0 && results.failed === 0) {
+      results.failed += results.processed
+    }
     results.remaining = await countPending()
     return results
   }

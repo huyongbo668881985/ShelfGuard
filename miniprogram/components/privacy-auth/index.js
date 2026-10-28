@@ -44,8 +44,16 @@ Component({
     },
 
     onRefuse() {
+      const app = getApp()
+      const resolve = app.globalData._privacyResolve
       this.hide()
-      wx.showToast({ title: '已取消，将无法使用相机', icon: 'none' })
+      if (typeof resolve === 'function') {
+        // 必须 resolve disagree，否则被拦截的隐私 API Promise 会永久挂起
+        resolve({ event: 'disagree' })
+        app.globalData._privacyResolve = null
+        app.globalData._privacyEvent = null
+      }
+      wx.showToast({ title: '已取消，将无法使用需授权的功能', icon: 'none' })
     }
   }
 })

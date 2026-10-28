@@ -1,5 +1,13 @@
 <!--pages/upload/upload.wxml-->
 <view class="upload-page">
+  <!-- 离线待上传（客户端未提交成功） -->
+  <view class="offline-banner" wx:if="{{offlineQueueCount > 0}}">
+    <text class="offline-text">待上传 {{offlineQueueCount}} 条</text>
+    <button class="offline-btn" size="mini" bindtap="onFlushOffline" disabled="{{flushingOffline}}">
+      {{flushingOffline ? '补传中...' : '一键补传'}}
+    </button>
+  </view>
+
   <!-- 顶部信息栏 -->
   <view class="header-bar">
     <text class="header-title">确认上传</text>
@@ -115,6 +123,8 @@
   <view class="error-section" wx:if="{{status === 'error'}}">
     <text class="error-icon">!</text>
     <text class="error-text">{{errorMsg || '上传失败'}}</text>
+    <button class="btn-outline offline-save-btn" wx:if="{{!savedToOffline}}" bindtap="onSaveOffline">存入待上传队列</button>
+    <view class="error-hint" wx:else>已在待上传队列，有网后可一键补传</view>
   </view>
 
   <!-- 操作按钮：集中分析模式下提交后由上面的"已提交"区提供按钮，这里整体隐藏 -->

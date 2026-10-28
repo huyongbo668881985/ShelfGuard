@@ -115,7 +115,7 @@
       <view class="item-header">
         <text class="item-title">{{item.storeName || item.taskName || '未命名'}}</text>
         <view class="item-status status-{{item.status}}" wx:if="{{item.statusText}}">{{item.statusText}}</view>
-        <view class="item-score" wx:if="{{item.aiReport && item.aiReport.score}}" style="background: {{item.scoreColor}}">
+        <view class="item-score" wx:if="{{item.aiReport && item.aiReport.score !== undefined && item.aiReport.score !== null}}" style="background: {{item.scoreColor}}">
           <text>{{item.aiReport.score}}</text>
         </view>
       </view>
@@ -229,7 +229,7 @@
     <scroll-view class="daily-modal-scroll" scroll-y="true">
       <!-- 总评卡片 -->
       <view class="daily-score-block">
-        <view class="score-circle score-{{latestDailyReport.report.overallScore >= 80 ? 'high' : 'mid'}}">
+        <view class="score-circle score-{{latestDailyReport.report.overallScore >= 80 ? 'high' : (latestDailyReport.report.overallScore >= 60 ? 'mid' : 'low')}}">
           <text class="score-big">{{latestDailyReport.report.overallScore}}</text>
           <text class="score-lvl">{{latestDailyReport.report.overallLevel || '良好'}}</text>
         </view>

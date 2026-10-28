@@ -190,6 +190,16 @@
   border-radius: var(--radius-sm);
 }
 
+.form-input-wrap--wide {
+  flex: 1;
+  margin-left: var(--spacing-md);
+}
+
+.form-input--wide {
+  width: 100%;
+  text-align: left;
+}
+
 .form-unit {
   font-size: var(--font-sm);
   color: var(--color-text-hint);
