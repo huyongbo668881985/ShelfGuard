@@ -1,6 +1,7 @@
 // pages/camera/camera.js
 // 水印相机页面
 
+const api = require('../../utils/api')
 const app = getApp()
 const { getLocation: fetchLocation } = require('../../utils/location')
 const { validateInspection } = require('../../utils/validator')
@@ -180,9 +181,9 @@ Page({
       // 临时诊断：逆地理编码失败时把原因弹到手机上，方便定位问题（确认修复后可删）
       if (location.geoReason) {
         const reasonText = {
-          NO_KEY: '云函数未配置地图Key',
+          NO_KEY: '服务器未配置地图 Key',
           API_ERROR: '地图服务返回错误',
-          DEP_OR_API_ERROR: '云函数依赖异常',
+          DEP_OR_API_ERROR: '地图服务暂时不可用',
           CALL_FAIL: '逆地理编码调用失败',
           GEOCODE_FAIL: '逆地理编码失败'
         }
@@ -397,7 +398,7 @@ Page({
     } catch (_) {}
     this.setData({ imageMode: mode })
     // 后台刷新团队默认
-    wx.cloud.callFunction({ name: 'settings', data: { action: 'get' } }).then(res => {
+    api.callFunction({ name: 'settings', data: { action: 'get' } }).then(res => {
       if (res.result && res.result.success && res.result.settings) {
         const s = res.result.settings
         app.globalData.systemConfig = {

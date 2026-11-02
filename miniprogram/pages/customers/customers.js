@@ -8,6 +8,7 @@
 //   按距离当前坐标由近到远排序，点一下卡片就选中并返回相机页，
 //   不会进编辑态。这样不用另外做一个"选择器"页面，复用同一份列表。
 
+const api = require('../../utils/api')
 const { getLocation } = require('../../utils/location')
 const app = getApp()
 
@@ -151,7 +152,7 @@ Page({
     const limit = this.data.limit
 
     try {
-      const res = await wx.cloud.callFunction({
+      const res = await api.callFunction({
         name: 'customers',
         data: {
           action: 'list',
@@ -304,7 +305,7 @@ Page({
 
     this.setData({ saving: true })
     try {
-      const res = await wx.cloud.callFunction({
+      const res = await api.callFunction({
         name: 'customers',
         data: editingId
           ? { action: 'update', customerId: editingId, customer: customerPayload }
@@ -374,7 +375,7 @@ Page({
       success: async (res) => {
         if (!res.confirm) return
         try {
-          const result = await wx.cloud.callFunction({
+          const result = await api.callFunction({
             name: 'customers',
             data: { action: 'remove', customerId: item._id }
           })

@@ -3,4 +3,9 @@ Thumbs.db
 Desktop.ini
 .workbuddy/
 sourcemap.zip
+node_modules/
+server/node_modules/
+server/data/
+server/.env
+.env
 

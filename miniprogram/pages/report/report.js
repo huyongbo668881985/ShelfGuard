@@ -1,6 +1,7 @@
 // pages/report/report.js
 // 巡检报告详情页
 
+const api = require('../../utils/api')
 const { formatDate } = require('../../utils/date')
 
 Page({
@@ -78,7 +79,7 @@ Page({
     this.setData({ loading: true })
 
     try {
-      const res = await wx.cloud.callFunction({
+      const res = await api.callFunction({
         name: 'getReport',
         data: { inspectionId: id }
       })
@@ -137,7 +138,7 @@ Page({
       }
 
       try {
-        const res = await wx.cloud.callFunction({
+        const res = await api.callFunction({
           name: 'getReport',
           data: { inspectionId: id }
         })
@@ -176,7 +177,7 @@ Page({
         'detail.analyzeError': ''
       })
       // 触发 analyzeImage 云函数
-      wx.cloud.callFunction({
+      api.callFunction({
         name: 'analyzeImage',
         data: {
           inspectionId,
@@ -338,7 +339,7 @@ Page({
   // 拉取集中分析时间（用于报告页"排队中"提示）
   async refreshAnalyzeTime() {
     try {
-      const res = await wx.cloud.callFunction({ name: 'settings', data: { action: 'get' } })
+      const res = await api.callFunction({ name: 'settings', data: { action: 'get' } })
       if (res.result && res.result.success && res.result.settings && res.result.settings.analyzeTime) {
         this.setData({ analyzeTime: res.result.settings.analyzeTime })
       }

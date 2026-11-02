@@ -1,6 +1,7 @@
 // pages/settings/settings.js
 // 系统设置页 - 配置 AI 分析模式与集中分析时间、查看待分析队列、手动触发分析
 
+const api = require('../../utils/api')
 const app = getApp()
 
 function syncRole(role) {
@@ -72,7 +73,7 @@ Page({
   async loadSettings() {
     this.setData({ loading: true })
     try {
-      const res = await wx.cloud.callFunction({
+      const res = await api.callFunction({
         name: 'settings',
         data: { action: 'get' }
       })
@@ -220,7 +221,7 @@ Page({
 
     this.setData({ saving: true })
     try {
-      const res = await wx.cloud.callFunction({
+      const res = await api.callFunction({
         name: 'settings',
         data: { action: 'save', settings: payload }
       })
@@ -241,7 +242,7 @@ Page({
     const confirm = await new Promise(resolve => {
       wx.showModal({
         title: '清除 API Key',
-        content: '清除后将改用云函数环境变量里的 Key；若环境变量也没配置，分析会返回模拟报告。确定清除？',
+        content: '清除后将改用服务器环境变量里的 Key；若环境变量也没配置，分析会失败并提示未配置。确定清除？',
         success: r => resolve(r.confirm),
         fail: () => resolve(false)
       })
@@ -249,7 +250,7 @@ Page({
     if (!confirm) return
 
     try {
-      const res = await wx.cloud.callFunction({
+      const res = await api.callFunction({
         name: 'settings',
         data: { action: 'save', settings: { clearApiKey: true } }
       })
@@ -276,7 +277,7 @@ Page({
     if (!confirm) return
 
     try {
-      const res = await wx.cloud.callFunction({
+      const res = await api.callFunction({
         name: 'settings',
         data: { action: 'save', settings: { clearJxcApiKey: true } }
       })
@@ -298,7 +299,7 @@ Page({
     wx.showLoading({ title: '正在同步客户...', mask: true })
 
     try {
-      const res = await wx.cloud.callFunction({
+      const res = await api.callFunction({
         name: 'syncJxcCustomers',
         data: { manual: true }
       })
@@ -347,7 +348,7 @@ Page({
     wx.showLoading({ title: '分析中...', mask: true })
 
     try {
-      const res = await wx.cloud.callFunction({
+      const res = await api.callFunction({
         name: 'batchAnalyze',
         data: { action: 'runNow' }
       })
@@ -361,7 +362,7 @@ Page({
       wx.showModal({
         title: '本轮完成',
         content: `成功 ${r.succeeded} 条，失败 ${r.failed} 条，还剩 ${r.remaining} 条待分析。\n\n` +
-          (r.remaining > 0 ? '单次调用受云函数超时限制，可以再点一次继续处理剩余记录。' : '队列已清空。'),
+          (r.remaining > 0 ? '本轮只处理了一部分，可以再点一次继续处理剩余记录。' : '队列已清空。'),
         showCancel: false
       })
       this.loadSettings()
@@ -413,7 +414,7 @@ Page({
     if (!confirm) return
 
     try {
-      const res = await wx.cloud.callFunction({
+      const res = await api.callFunction({
         name: 'settings',
         data: { action: 'retryFailed' }
       })
@@ -445,7 +446,7 @@ Page({
     }
     this.setData({ activating: true })
     try {
-      const res = await wx.cloud.callFunction({
+      const res = await api.callFunction({
         name: 'settings',
         data: { action: 'activateAdmin', code: this.data.activateCode.trim() }
       })

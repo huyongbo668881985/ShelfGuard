@@ -8,6 +8,7 @@
 // 何时入队：无网 / uploadFile 失败 / submitInspection 失败（且用户选「稍后上传」）
 // 何时出队：app 启动、上传页 onShow、手动「一键重试」成功后
 
+const api = require('./api')
 const STORAGE_KEY = 'shelfguard_offline_queue_v1'
 const MAX_ITEMS = 30
 
@@ -189,7 +190,7 @@ async function safeDeleteCloudFiles(fileIDs) {
   const ids = (fileIDs || []).filter(Boolean)
   if (!ids.length) return
   try {
-    await wx.cloud.deleteFile({ fileList: ids })
+    await api.deleteFile({ fileList: ids })
   } catch (err) {
     console.warn('清理云文件失败:', err)
   }
@@ -204,7 +205,7 @@ async function uploadOne(localPath, openid, index) {
   }
   const owner = openid
   const cloudPath = `inspections/${owner}/${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}.jpg`
-  const uploadRes = await wx.cloud.uploadFile({
+  const uploadRes = await api.uploadFile({
     cloudPath,
     filePath: localPath
   })
@@ -234,7 +235,7 @@ async function flushOne(item, options = {}) {
     }
 
     const meta = item.meta || {}
-    const res = await wx.cloud.callFunction({
+    const res = await api.callFunction({
       name: 'submitInspection',
       data: {
         taskName: meta.taskName,
@@ -263,7 +264,7 @@ async function flushOne(item, options = {}) {
     // 即时分析模式：尽力触发，不阻塞出队
     if (meta.analyzeMode === 'instant' && res.result.inspectionId) {
       try {
-        await wx.cloud.callFunction({
+        await api.callFunction({
           name: 'analyzeImage',
           data: { fileIDs, inspectionId: res.result.inspectionId }
         })

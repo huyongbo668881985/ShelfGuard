@@ -1,6 +1,7 @@
 // pages/photo-detail/photo-detail.js
 // 照片明细：复用 getHistory 列表，按业务员/客户/时间筛选
 
+const api = require('../../utils/api')
 const { formatDate, timeAgo } = require('../../utils/date')
 const { formatScoreLevel } = require('../../utils/format')
 const app = getApp()
@@ -187,7 +188,7 @@ Page({
     if (this.data.loading) return
     this.setData({ loading: true })
     try {
-      const res = await wx.cloud.callFunction({
+      const res = await api.callFunction({
         name: 'getHistory',
         data: {
           action: 'list',

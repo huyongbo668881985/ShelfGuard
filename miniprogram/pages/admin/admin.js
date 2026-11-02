@@ -3,6 +3,7 @@
 //
 // 入口保护只是 UX：真正的权限边界在 users 云函数——非 admin 调用会被直接拒绝。
 
+const api = require('../../utils/api')
 const app = getApp()
 
 Page({
@@ -61,7 +62,7 @@ Page({
     const page = reset ? 1 : this.data.page
     const pageSize = this.data.pageSize
     try {
-      const res = await wx.cloud.callFunction({
+      const res = await api.callFunction({
         name: 'users',
         data: { action: 'listUsers', page, limit: pageSize }
       })
@@ -102,7 +103,7 @@ Page({
         if (newRole === current) return
         wx.showLoading({ title: '更新中', mask: true })
         try {
-          const res = await wx.cloud.callFunction({
+          const res = await api.callFunction({
             name: 'users',
             data: { action: 'setRole', targetId, role: newRole }
           })
@@ -140,7 +141,7 @@ Page({
 
     wx.showLoading({ title: '处理中', mask: true })
     try {
-      const res = await wx.cloud.callFunction({
+      const res = await api.callFunction({
         name: 'users',
         data: { action: 'setApproved', targetId, approved: true }
       })
@@ -175,7 +176,7 @@ Page({
 
     wx.showLoading({ title: '处理中', mask: true })
     try {
-      const res = await wx.cloud.callFunction({
+      const res = await api.callFunction({
         name: 'users',
         data: { action: 'setDisabled', targetId, disabled: !disabled }
       })

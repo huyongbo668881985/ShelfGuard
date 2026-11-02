@@ -5,6 +5,7 @@
 // 选门店复用 customers 页的选择模式：选完通过 globalData.selectedCustomer 回传，
 // 首页 onShow 读取后带着门店信息 navigateTo 相机页。
 
+const api = require('../../utils/api')
 const { formatDate } = require('../../utils/date')
 const { formatScoreLevel } = require('../../utils/format')
 const offlineQueue = require('../../utils/offlineQueue')
@@ -217,7 +218,7 @@ Page({
     try {
       const start = new Date(`${this.data.selectedDate.replace(/-/g, '/')} 00:00:00`)
       const end = new Date(start.getTime() + 864e5 - 1)
-      const res = await wx.cloud.callFunction({
+      const res = await api.callFunction({
         name: 'getHistory',
         data: {
           action: 'list',

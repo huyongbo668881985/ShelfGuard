@@ -9,6 +9,7 @@
 // 如果管理员在「分析设置」里把模式切成 instant，才会退回旧流程：
 // 提交后原地等 AI 出结果，再自动跳报告页。
 
+const api = require('../../utils/api')
 const app = getApp()
 const { smartCompress } = require('../../utils/compress')
 // 展示用格式化统一使用 utils/format.formatFileSize（入参为字节），
@@ -152,7 +153,7 @@ Page({
   // 拉取最新的分析模式配置（失败就沿用缓存/默认值，不打断流程）
   async refreshAnalyzeMode() {
     try {
-      const res = await wx.cloud.callFunction({
+      const res = await api.callFunction({
         name: 'settings',
         data: { action: 'get' }
       })
@@ -429,7 +430,7 @@ Page({
         if (!owner) throw new Error('登录状态已失效，请重新进入小程序')
         const fileName = `inspections/${owner}/${Date.now()}-${i}-${Math.random().toString(36).substr(2, 6)}.jpg`
 
-        const uploadRes = await wx.cloud.uploadFile({
+        const uploadRes = await api.uploadFile({
           cloudPath: fileName,
           filePath: filePath
         })
@@ -464,7 +465,7 @@ Page({
   async createInspection() {
     const { fileIDs, lat, lng, address, taskName, storeName, userName, customerId } = this.data
 
-    const res = await wx.cloud.callFunction({
+    const res = await api.callFunction({
       name: 'submitInspection',
       data: {
         taskName,
@@ -497,7 +498,7 @@ Page({
     const { fileIDs } = this.data
 
     try {
-      await wx.cloud.callFunction({
+      await api.callFunction({
         name: 'analyzeImage',
         data: { fileIDs, inspectionId }
       })
