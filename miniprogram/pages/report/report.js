@@ -58,13 +58,15 @@ Page({
     this.loadDetail(id).finally(() => wx.stopPullDownRefresh())
   },
 
-  // 底部操作栏：这两个页面都在 tabBar 里，必须用 switchTab 而不是 navigateTo
+  // 底部操作栏：首页和历史都在 tabBar 里，必须用 switchTab 而不是 navigateTo
   goToHistory() {
     wx.switchTab({ url: '/pages/history/history' })
   },
 
+  // 再拍一张：回首页并直接进入「选门店 → 拍照」流程
   goToCamera() {
-    wx.switchTab({ url: '/pages/camera/camera' })
+    getApp().globalData.startNextVisit = true
+    wx.switchTab({ url: '/pages/home/home' })
   },
 
   // 加载巡检详情

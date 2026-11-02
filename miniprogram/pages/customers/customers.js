@@ -39,6 +39,10 @@ Page({
     listScope: 'self',
     listTitle: '我的客户',
 
+    // 标签/定位状态筛选：'all'（全部） | 'unlocated'（无标签/待定位） | 'located'（已定位）
+    filterTag: 'all',
+    searchKeyword: '',
+
     // 选择模式相关
     selectMode: false,
     currentLat: null,
@@ -115,6 +119,26 @@ Page({
     return decorated
   },
 
+  onFilterTagChange(e) {
+    const tag = e.currentTarget.dataset.tag
+    if (tag === this.data.filterTag) return
+    this.setData({ filterTag: tag })
+    this.loadCustomers({ reset: true })
+  },
+
+  onSearchInput(e) {
+    this.setData({ searchKeyword: e.detail.value })
+  },
+
+  onSearch() {
+    this.loadCustomers({ reset: true })
+  },
+
+  onClearSearch() {
+    this.setData({ searchKeyword: '' })
+    this.loadCustomers({ reset: true })
+  },
+
   async loadCustomers({ reset = true, append = false } = {}) {
     if (append) {
       if (!this.data.hasMore || this.data.loadingMore) return
@@ -129,7 +153,13 @@ Page({
     try {
       const res = await wx.cloud.callFunction({
         name: 'customers',
-        data: { action: 'list', page, limit }
+        data: {
+          action: 'list',
+          page,
+          limit,
+          filterTag: this.data.filterTag,
+          keyword: this.data.searchKeyword
+        }
       })
       if (res.result && res.result.success) {
         let list = this.decorateList(res.result.list || [])
@@ -284,7 +314,47 @@ Page({
       if (res.result && res.result.success) {
         wx.showToast({ title: '已保存', icon: 'success' })
         this.setData({ showEditor: false })
-        this.loadCustomers()
+
+        if (editingId) {
+          // 编辑保存成功：就地原地更新，不重置回第一页，避免一直翻页的糟糕体验
+          const updatedFields = {
+            ...customerPayload,
+            _id: editingId,
+            updatedAt: new Date().toISOString()
+          }
+
+          let nextList = [...this.data.list]
+          const idx = nextList.findIndex(x => x._id === editingId)
+
+          if (idx !== -1) {
+            // 若在「待定位/无标签」筛选下，并且刚刚补充了位置信息，则平滑移出待办列表
+            if (this.data.filterTag === 'unlocated' && customerPayload.location) {
+              nextList.splice(idx, 1)
+              this.setData({
+                list: nextList,
+                total: Math.max(0, this.data.total - 1)
+              })
+            } else if (this.data.filterTag === 'located' && !customerPayload.location) {
+              // 若在「已定位」筛选下清除了位置信息，同样移出
+              nextList.splice(idx, 1)
+              this.setData({
+                list: nextList,
+                total: Math.max(0, this.data.total - 1)
+              })
+            } else {
+              // 否则就地更新本条记录
+              nextList[idx] = { ...nextList[idx], ...updatedFields }
+              this.setData({
+                list: this.decorateList(nextList)
+              })
+            }
+          } else {
+            this.loadCustomers({ reset: true })
+          }
+        } else {
+          // 新增客户才重载列表
+          this.loadCustomers({ reset: true })
+        }
       } else {
         wx.showToast({ title: (res.result && res.result.error) || '保存失败', icon: 'none' })
       }
@@ -310,7 +380,12 @@ Page({
           })
           if (result.result && result.result.success) {
             wx.showToast({ title: '已删除', icon: 'success' })
-            this.loadCustomers()
+            // 原地从列表中移除，不强制重载回第一页
+            const nextList = this.data.list.filter(x => x._id !== item._id)
+            this.setData({
+              list: nextList,
+              total: Math.max(0, this.data.total - 1)
+            })
           } else {
             wx.showToast({ title: '操作失败', icon: 'none' })
           }

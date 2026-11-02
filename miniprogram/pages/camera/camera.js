@@ -57,7 +57,13 @@ Page({
   },
 
   onLoad(options) {
-    // 从上一页或全局获取业务员信息
+    // 从首页「开始拜访」带来的门店信息：storeName / customerId / storeAddress，
+    // noStore=1 表示选了「无门店」。门店地址优先用于水印地址，定位只作兜底。
+    this.storeAddressFromHome = options.storeAddress || ''
+    this.setData({
+      selectedCustomerId: options.customerId || '',
+      address: this.storeAddressFromHome
+    })
     this.loadUserInfo(options)
     // 获取位置
     this.getLocation()
@@ -99,29 +105,13 @@ Page({
       this.showPrivacyAuthorize()
     }
 
-    // "继续拜访下一家"回传标记：upload 页提交完成后点了继续，回到相机页应当
-    // 清空上一家门店信息并直接进入下一家拍照阶段（自动弹出客户选择）。
-    // 用 globalData.startNextVisit 通信，因为相机是 tabBar 页，navigateBack
-    // 只触发 onShow 不触发 onLoad，没法用页面参数传。
-    if (app.globalData.startNextVisit) {
-      app.globalData.startNextVisit = false
-      this.setData({
-        storeName: '',
-        selectedCustomerId: '',
-        // 门店地址回退到当前定位地址，避免沿用上一家门店地址
-        address: (this.data.location && this.data.location.address) || this.data.address
-      })
-      wx.showToast({ title: '请选择下一家门店', icon: 'none' })
-      // 自动进入客户选择阶段
-      this.chooseCustomer()
-      return
-    }
-
     // 从"选择客户"页面（customers 页选择模式）返回时，globalData 里会带着
     // 选中的客户资料，这里取一次就清空，避免下次进相机页误把上次的选择带进来
     const selected = app.globalData.selectedCustomer
     if (selected) {
       app.globalData.selectedCustomer = null
+      // 在相机页内改了门店：不再沿用首页带来的门店地址
+      this.storeAddressFromHome = ''
       if (selected.isNoStore) {
         this.setData({
           storeName: '',
@@ -184,7 +174,8 @@ Page({
       this.setData({
         location,
         // 优先显示逆地理编码得到的路名/地标，失败则退回坐标
-        address: location.address || `${location.latitude.toFixed(6)}, ${location.longitude.toFixed(6)}`
+        // 首页选了有地址的门店时，水印保持用门店地址，不被当前定位覆盖
+        address: this.storeAddressFromHome || location.address || `${location.latitude.toFixed(6)}, ${location.longitude.toFixed(6)}`
       })
       // 临时诊断：逆地理编码失败时把原因弹到手机上，方便定位问题（确认修复后可删）
       if (location.geoReason) {
@@ -303,6 +294,7 @@ Page({
 
   // 一键清空门店（切换为无门店/沿街巡检模式）
   onClearStore() {
+    this.storeAddressFromHome = ''
     this.setData({
       storeName: '',
       selectedCustomerId: '',

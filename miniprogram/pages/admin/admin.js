@@ -39,7 +39,7 @@ Page({
       wx.showToast({ title: '仅管理员可访问', icon: 'none' })
       setTimeout(() => {
         wx.navigateBack({
-          fail: () => wx.switchTab({ url: '/pages/camera/camera' })
+          fail: () => wx.switchTab({ url: '/pages/home/home' })
         })
       }, 800)
       return

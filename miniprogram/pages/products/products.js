@@ -245,7 +245,23 @@ Page({
       if (res.result && res.result.success) {
         wx.showToast({ title: '已保存', icon: 'success' })
         this.setData({ showEditor: false })
-        this.loadProducts()
+        if (editingId) {
+          // 编辑产品保存成功：就地原地更新，不重置回第一页
+          const nextList = [...this.data.list]
+          const idx = nextList.findIndex(x => x._id === editingId)
+          if (idx !== -1) {
+            nextList[idx] = {
+              ...nextList[idx],
+              ...productPayload,
+              photoURLs: form.photoURLs || productPayload.photos
+            }
+            this.setData({ list: nextList })
+          } else {
+            this.loadProducts()
+          }
+        } else {
+          this.loadProducts()
+        }
       } else {
         wx.showToast({ title: (res.result && res.result.error) || '保存失败', icon: 'none' })
       }
@@ -277,7 +293,11 @@ Page({
           })
           if (result.result && result.result.success) {
             wx.showToast({ title: '已下架', icon: 'success' })
-            this.loadProducts()
+            const nextList = this.data.list.filter(x => x._id !== item._id)
+            this.setData({
+              list: nextList,
+              total: Math.max(0, this.data.total - 1)
+            })
           } else {
             wx.showToast({ title: '操作失败', icon: 'none' })
           }

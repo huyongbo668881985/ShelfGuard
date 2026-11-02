@@ -537,15 +537,15 @@ Page({
   // 提交完成后的两个出口
   // ============================================================
 
-  // 继续拜访下一家：回到相机页并清空上一家的门店信息，直接弹出客户选择
+  // 继续拜访下一家：回到首页（页面栈：首页 → 相机 → 上传，退 2 层），
+  // 首页 onShow 读到标记后直接进入选门店流程
   continueVisit() {
-    // 用全局标记跟相机页通信。相机页是 tabBar 页，navigateBack 回去只会触发
-    // onShow 不会触发 onLoad，没法用页面参数传，只能走 globalData。
     app.globalData.startNextVisit = true
     wx.navigateBack({
+      delta: 2,
       fail: () => {
         // 页面栈异常（比如从分享链接直接进来的）时兜底
-        wx.switchTab({ url: '/pages/camera/camera' })
+        wx.switchTab({ url: '/pages/home/home' })
       }
     })
   },
