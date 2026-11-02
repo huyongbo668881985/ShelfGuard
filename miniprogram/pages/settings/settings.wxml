@@ -112,7 +112,7 @@
           <text class="mode-name">识别精度优先</text>
           <text class="mode-check" wx:if="{{imageMode === 'quality'}}">✓</text>
         </view>
-        <text class="mode-desc">跳过拼图，多张原图各自全分辨率直传云函数合并分析，价签/品牌更清晰，流量与费用更高。</text>
+        <text class="mode-desc">跳过拼图，多张原图各自全分辨率上传后合并分析，价签/品牌更清晰，流量与费用更高。</text>
       </view>
       <text class="form-tip" style="padding: 0 8rpx;">业务员可本机切换；管理员点「保存」后会写入团队默认。</text>
     </view>
@@ -173,7 +173,7 @@
         <text class="key-clear" bindtap="onClearApiKey" wx:if="{{canEdit}}">清除</text>
       </view>
       <view class="key-status" wx:else>
-        <text class="key-status-none">此处未配置（可能已在云函数环境变量中配置）</text>
+        <text class="key-status-none">此处未配置（也可能已写在服务器环境变量里）</text>
       </view>
 
       <input
@@ -186,8 +186,8 @@
       />
 
       <view class="form-hint">
-        <text>推荐把 Key 配置在云函数环境变量里（更安全，不经过前端）：云开发控制台 → 云函数 → analyzeImage → 版本与配置 → 环境变量 → 新增 DASHSCOPE_API_KEY。</text>
-        <text class="hint-line">Key 从阿里云百炼控制台 bailian.console.aliyun.com 申请。两处都配了以环境变量优先。</text>
+        <text>推荐把 Key 配在服务器环境变量 DASHSCOPE_API_KEY（不经过小程序）。也可以填在上面，两处都配时以环境变量优先。</text>
+        <text class="hint-line">Key 从阿里云百炼控制台 bailian.console.aliyun.com 申请。</text>
       </view>
     </view>
 

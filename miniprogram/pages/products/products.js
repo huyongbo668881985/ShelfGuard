@@ -2,6 +2,7 @@
 // 产品库页面：录入自家产品的品牌名/别名/正背侧面参考照，
 // 供 AI 分析货架照片时做品牌识别归一化匹配（见 cloudfunctions/analyzeImage）。
 
+const api = require('../../utils/api')
 Page({
   data: {
     loading: true,
@@ -69,7 +70,7 @@ Page({
     const limit = this.data.limit
 
     try {
-      const res = await wx.cloud.callFunction({
+      const res = await api.callFunction({
         name: 'products',
         data: { action: 'list', page, limit }
       })
@@ -172,7 +173,7 @@ Page({
       })
       const tempPath = chooseRes.tempFiles[0].tempFilePath
       this.setData({
-        // photos 槽位暂存本地路径；以非 cloud:// 标记待上传
+        // photos 槽位暂存本地路径；已上传的 sg:// 文件不再重复上传
         [`form.photos.${slot}`]: tempPath,
         [`form.photoURLs.${slot}`]: tempPath
       })
@@ -188,9 +189,9 @@ Page({
     for (const slot of ['front', 'back', 'side']) {
       const v = next[slot]
       if (!v) continue
-      if (typeof v === 'string' && v.indexOf('cloud://') === 0) continue
+      if (typeof v === 'string' && (v.indexOf('sg://') === 0 || v.indexOf('cloud://') === 0)) continue
       const cloudPath = `products/${slot}-${Date.now()}-${Math.random().toString(36).substr(2, 6)}.jpg`
-      const uploadRes = await wx.cloud.uploadFile({ cloudPath, filePath: v })
+      const uploadRes = await api.uploadFile({ cloudPath, filePath: v })
       next[slot] = uploadRes.fileID
     }
     return next
@@ -235,7 +236,7 @@ Page({
         aliases,
         photos
       }
-      const res = await wx.cloud.callFunction({
+      const res = await api.callFunction({
         name: 'products',
         data: editingId
           ? { action: 'update', productId: editingId, product: productPayload }
@@ -245,7 +246,23 @@ Page({
       if (res.result && res.result.success) {
         wx.showToast({ title: '已保存', icon: 'success' })
         this.setData({ showEditor: false })
-        this.loadProducts()
+        if (editingId) {
+          // 编辑产品保存成功：就地原地更新，不重置回第一页
+          const nextList = [...this.data.list]
+          const idx = nextList.findIndex(x => x._id === editingId)
+          if (idx !== -1) {
+            nextList[idx] = {
+              ...nextList[idx],
+              ...productPayload,
+              photoURLs: form.photoURLs || productPayload.photos
+            }
+            this.setData({ list: nextList })
+          } else {
+            this.loadProducts()
+          }
+        } else {
+          this.loadProducts()
+        }
       } else {
         wx.showToast({ title: (res.result && res.result.error) || '保存失败', icon: 'none' })
       }
@@ -271,13 +288,17 @@ Page({
       success: async (res) => {
         if (!res.confirm) return
         try {
-          const result = await wx.cloud.callFunction({
+          const result = await api.callFunction({
             name: 'products',
             data: { action: 'remove', productId: item._id }
           })
           if (result.result && result.result.success) {
             wx.showToast({ title: '已下架', icon: 'success' })
-            this.loadProducts()
+            const nextList = this.data.list.filter(x => x._id !== item._id)
+            this.setData({
+              list: nextList,
+              total: Math.max(0, this.data.total - 1)
+            })
           } else {
             wx.showToast({ title: '操作失败', icon: 'none' })
           }

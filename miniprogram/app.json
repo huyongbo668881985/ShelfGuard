@@ -1,5 +1,6 @@
 {
   "pages": [
+    "pages/home/home",
     "pages/camera/camera",
     "pages/upload/upload",
     "pages/history/history",
@@ -25,8 +26,8 @@
     "borderStyle": "black",
     "list": [
       {
-        "pagePath": "pages/camera/camera",
-        "text": "拜访拍照",
+        "pagePath": "pages/home/home",
+        "text": "首页",
         "iconPath": "images/tab-camera.png",
         "selectedIconPath": "images/tab-camera-active.png"
       },

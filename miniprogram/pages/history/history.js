@@ -1,6 +1,7 @@
 // pages/history/history.js
 // 历史记录页面 - 支持搜索筛选、分页加载
 
+const api = require('../../utils/api')
 const { formatDate, timeAgo } = require('../../utils/date')
 const { formatScoreLevel } = require('../../utils/format')
 const app = getApp()
@@ -88,7 +89,7 @@ Page({
       // 构建查询条件
       const where = this.buildWhereCondition()
       
-      const res = await wx.cloud.callFunction({
+      const res = await api.callFunction({
         name: 'getHistory',
         data: {
           action: 'list',
@@ -199,7 +200,7 @@ Page({
   async loadStats() {
     try {
       const where = this.buildWhereCondition()
-      const res = await wx.cloud.callFunction({
+      const res = await api.callFunction({
         name: 'getHistory',
         data: {
           action: 'stats',

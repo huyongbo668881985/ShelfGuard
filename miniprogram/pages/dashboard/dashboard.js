@@ -1,6 +1,7 @@
 // pages/dashboard/dashboard.js
 // 排面看板：只读 shelfStats 预计算快照；不下钻全库现算
 
+const api = require('../../utils/api')
 const app = getApp()
 
 function currentYearMonth() {
@@ -86,7 +87,7 @@ Page({
   async loadDashboard() {
     this.setData({ loading: true })
     try {
-      const res = await wx.cloud.callFunction({
+      const res = await api.callFunction({
         name: 'shelfStats',
         data: {
           action: 'dashboard',
@@ -148,7 +149,7 @@ Page({
   async loadStoreTrend() {
     if (!this.data.customerId) return
     try {
-      const res = await wx.cloud.callFunction({
+      const res = await api.callFunction({
         name: 'shelfStats',
         data: {
           action: 'storeTrend',
@@ -180,7 +181,7 @@ Page({
     this.setData({ rebuilding: true })
     wx.showLoading({ title: '重建中…', mask: true })
     try {
-      const res = await wx.cloud.callFunction({
+      const res = await api.callFunction({
         name: 'shelfStats',
         data: { action: 'rebuild' }
       })

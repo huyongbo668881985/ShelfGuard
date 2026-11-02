@@ -14,6 +14,7 @@ const cloud = require('wx-server-sdk')
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV })
 
 const db = cloud.database()
+const _ = db.command
 
 const EDITABLE_FIELDS = ['storeName', 'address', 'contactName', 'contactPhone', 'location']
 const DEFAULT_PAGE_SIZE = 50
@@ -91,13 +92,43 @@ exports.main = async (event, context) => {
       // 列表：admin/manager 全量；sales 仅本人。仍分页。
       case 'list': {
         const includeInactive = !!(event && event.includeInactive)
-        const query = {}
+        const andConditions = []
+
         if (!caller.canSeeAll) {
-          query._openid = openid
+          andConditions.push({ _openid: openid })
         }
         if (!includeInactive) {
-          query.isActive = true
+          andConditions.push({ isActive: true })
         }
+
+        // 标签/定位状态筛选：'all'（全部） | 'unlocated'（无标签/待定位） | 'located'（已定位）
+        const filterTag = event.filterTag || event.locationStatus || 'all'
+        if (filterTag === 'unlocated' || filterTag === 'no_tag') {
+          andConditions.push(_.or([
+            { location: null },
+            { location: _.exists(false) }
+          ]))
+        } else if (filterTag === 'located') {
+          andConditions.push({
+            location: _.and(_.neq(null), _.exists(true))
+          })
+        }
+
+        // 搜索关键词（门店名称、地址、联系人）
+        const keyword = (event.keyword || '').trim().slice(0, 50)
+        if (keyword) {
+          const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+          const reg = db.RegExp({ regexp: escaped, options: 'i' })
+          andConditions.push(_.or([
+            { storeName: reg },
+            { address: reg },
+            { contactName: reg }
+          ]))
+        }
+
+        const query = andConditions.length === 0
+          ? {}
+          : (andConditions.length === 1 ? andConditions[0] : _.and(andConditions))
 
         const { limit, page, skip } = parsePaging(event)
 

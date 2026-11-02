@@ -1,6 +1,7 @@
 // utils/location.js
 // 位置获取与逆地理编码
 
+const api = require('./api')
 /**
  * 获取当前位置（带权限检查）
  * @returns {Promise<{latitude, longitude}>}
@@ -62,23 +63,19 @@ function showLocationAuth() {
  * @returns {Promise<string>} 地址文本
  */
 function reverseGeocode(lat, lng) {
-  return new Promise((resolve) => {
-    wx.cloud.callFunction({
-      name: 'geocode',
-      data: { lat, lng },
-      success: (res) => {
-        const r = (res && res.result) ? res.result : {}
-        resolve({
-          address: r.address || `${lat.toFixed(6)}, ${lng.toFixed(6)}`,
-          reason: r.reason || (r.success ? '' : 'GEOCODE_FAIL')
-        })
-      },
-      fail: (err) => resolve({
-        address: `${lat.toFixed(6)}, ${lng.toFixed(6)}`,
-        reason: `CALL_FAIL:${err && err.errMsg ? err.errMsg : 'unknown'}`
-      })
-    })
-  })
+  return api.callFunction({
+    name: 'geocode',
+    data: { lat, lng }
+  }).then(res => {
+    const r = (res && res.result) ? res.result : {}
+    return {
+      address: r.address || `${lat.toFixed(6)}, ${lng.toFixed(6)}`,
+      reason: r.reason || (r.success ? '' : 'GEOCODE_FAIL')
+    }
+  }).catch(err => ({
+    address: `${lat.toFixed(6)}, ${lng.toFixed(6)}`,
+    reason: `CALL_FAIL:${err && (err.errMsg || err.message) ? (err.errMsg || err.message) : 'unknown'}`
+  }))
 }
 
 module.exports = {

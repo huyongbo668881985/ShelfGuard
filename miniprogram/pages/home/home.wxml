@@ -1,0 +1,84 @@
+<!--pages/home/home.wxml-->
+<view class="home-page">
+  <view class="approval-banner" wx:if="{{needsApproval}}">账号待管理员审批，批准前无法提交巡检</view>
+
+  <!-- 顶部：问候 + 开始拜访 -->
+  <view class="hero">
+    <view class="hero-hello">{{userName ? userName + '，' : ''}}今天也辛苦了</view>
+    <view class="hero-date">{{todayStr}}</view>
+    <button class="start-btn" bindtap="startVisit" loading="{{starting}}" disabled="{{starting}}">
+      <text class="start-icon">📷</text>
+      <text>开始拜访</text>
+    </button>
+    <view class="hero-tip">先选门店，再拍照打水印（可选「无门店」）</view>
+  </view>
+
+  <!-- 离线待上传提示 -->
+  <view class="offline-banner" wx:if="{{offlineCount > 0}}" bindtap="flushOffline">
+    <text>有 {{offlineCount}} 条记录待上传，点击补传</text>
+    <text class="offline-arrow">›</text>
+  </view>
+
+  <!-- 拜访记录 -->
+  <view class="record-card">
+    <view class="record-head">
+      <text class="record-title">{{dateTitle}}</text>
+      <view class="record-more" bindtap="goHistory">全部记录 ›</view>
+    </view>
+
+    <!-- 日期切换 -->
+    <view class="date-bar">
+      <view class="date-arrow" data-delta="-1" bindtap="shiftDay">‹</view>
+      <picker mode="date" value="{{selectedDate}}" end="{{todayStr}}" bindchange="onDateChange">
+        <view class="date-current">{{dateLabel}} ▾</view>
+      </picker>
+      <view class="date-arrow {{isToday ? 'disabled' : ''}}" data-delta="1" bindtap="shiftDay">›</view>
+      <view class="date-today" wx:if="{{!isToday}}" bindtap="backToToday">回到今天</view>
+    </view>
+
+    <!-- 汇总 -->
+    <view class="summary-row">
+      <view class="summary-item">
+        <text class="summary-value">{{total}}</text>
+        <text class="summary-label">{{isToday ? '今日拜访' : '当日拜访'}}</text>
+      </view>
+      <view class="summary-divider"></view>
+      <view class="summary-item">
+        <text class="summary-value">{{analyzedCount ? avgScore : '--'}}</text>
+        <text class="summary-label">平均分</text>
+      </view>
+      <view class="summary-divider"></view>
+      <view class="summary-item">
+        <text class="summary-value">{{list.length - analyzedCount}}</text>
+        <text class="summary-label">待出报告</text>
+      </view>
+    </view>
+
+    <!-- 列表 -->
+    <view class="record-item" wx:for="{{list}}" wx:key="_id" data-id="{{item._id}}" bindtap="onTapItem">
+      <image class="record-thumb" wx:if="{{item.thumbnailURL}}" src="{{item.thumbnailURL}}" mode="aspectFill"></image>
+      <view class="record-thumb placeholder" wx:else>📷</view>
+      <view class="record-body">
+        <view class="record-store">{{item.displayStore}}</view>
+        <view class="record-meta">
+          <text>{{item.timeText}}</text>
+          <text wx:if="{{isManager && item.userName}}"> · {{item.userName}}</text>
+          <text wx:if="{{item.photoCount}}"> · {{item.photoCount}}张</text>
+        </view>
+      </view>
+      <view class="record-right">
+        <text class="record-score" wx:if="{{item.score !== undefined}}" style="color: {{item.scoreColor}}">{{item.score}}</text>
+        <text class="record-status" wx:elif="{{item.statusText}}">{{item.statusText}}</text>
+        <text class="record-status" wx:else>待分析</text>
+      </view>
+    </view>
+
+    <view class="empty" wx:if="{{loaded && list.length === 0}}">
+      <text>{{isToday ? '今天还没有拜访记录，点上方「开始拜访」' : '这一天没有拜访记录'}}</text>
+    </view>
+    <view class="loading-tip" wx:if="{{loading && list.length === 0 && !loaded}}">加载中...</view>
+    <view class="loading-tip" wx:if="{{hasMore}}">上拉加载更多</view>
+  </view>
+
+  <privacy-auth id="privacyAuth"></privacy-auth>
+</view>

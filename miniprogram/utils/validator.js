@@ -62,7 +62,7 @@ function isValidImagePath(path) {
  */
 function isValidFileID(fileID) {
   if (!fileID) return false
-  return fileID.startsWith('cloud://')
+  return fileID.startsWith('sg://') || fileID.startsWith('cloud://')
 }
 
 module.exports = {

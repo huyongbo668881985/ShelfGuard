@@ -7,6 +7,47 @@
     <text wx:else>我的客户。填了位置的客户，拍照时可按距离由近到远排序选择。</text>
   </view>
 
+  <!-- 搜索与标签筛选栏 -->
+  <view class="search-filter-section">
+    <view class="search-box">
+      <text class="search-icon">🔍</text>
+      <input
+        class="search-input"
+        placeholder="搜索门店名称、地址或联系人"
+        placeholder-style="color: #999;"
+        value="{{searchKeyword}}"
+        bindinput="onSearchInput"
+        bindconfirm="onSearch"
+      />
+      <text class="search-clear" wx:if="{{searchKeyword}}" bindtap="onClearSearch">✕</text>
+    </view>
+
+    <!-- 标签状态筛选：全部 / 待定位(无标签) / 已定位 -->
+    <view class="filter-tabs">
+      <view
+        class="filter-tab-item {{filterTag === 'all' ? 'active' : ''}}"
+        data-tag="all"
+        bindtap="onFilterTagChange"
+      >
+        <text>全部</text>
+      </view>
+      <view
+        class="filter-tab-item {{filterTag === 'unlocated' ? 'active' : ''}}"
+        data-tag="unlocated"
+        bindtap="onFilterTagChange"
+      >
+        <text>待定位 (无标签)</text>
+      </view>
+      <view
+        class="filter-tab-item {{filterTag === 'located' ? 'active' : ''}}"
+        data-tag="located"
+        bindtap="onFilterTagChange"
+      >
+        <text>已定位</text>
+      </view>
+    </view>
+  </view>
+
   <!-- 选择模式下的快捷项：无门店 / 沿街巡检 -->
   <view class="no-store-card" wx:if="{{selectMode}}" bindtap="onSelectNoStore">
     <view class="no-store-left">
@@ -60,8 +101,10 @@
   <!-- 空状态 -->
   <view class="empty-state" wx:if="{{!loading && list.length === 0}}">
     <text class="empty-icon">🏬</text>
-    <text class="empty-text">还没有客户资料</text>
-    <text class="empty-hint">{{selectMode ? '先去客户管理里加一个客户' : '先加一个客户，拍照时就能直接选，不用每次手打门店名'}}</text>
+    <text class="empty-text">{{filterTag === 'unlocated' ? '没有待定位的客户' : (filterTag === 'located' ? '暂无已定位客户' : (searchKeyword ? '未找到相关客户' : '还没有客户资料'))}}</text>
+    <text class="empty-hint" wx:if="{{filterTag === 'unlocated'}}">所有客户均已标记定位标签</text>
+    <text class="empty-hint" wx:elif="{{selectMode}}">先去客户管理里加一个客户</text>
+    <text class="empty-hint" wx:else>先加一个客户，拍照时就能直接选，不用每次手打门店名</text>
   </view>
 
   <view class="loading-state" wx:if="{{loading}}">

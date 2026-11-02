@@ -1,0 +1,19 @@
+{
+  "name": "shelfguard-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "ShelfGuard 自建后端：替代微信云开发云函数、云数据库与云存储",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning src/index.js",
+    "test": "node --disable-warning=ExperimentalWarning --test --test-concurrency=1 test/*.test.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.9",
+    "express": "^4.21.2",
+    "multer": "^2.5.0"
+  }
+}

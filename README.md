@@ -2,6 +2,8 @@
 
 微信小程序，用于白酒终端门店陈列巡检，支持水印拍照、AI 智能分析、巡检记录管理。
 
+> **当前部署方式**：不再使用微信云开发。自建后端在 `server/`，部署、环境变量、nginx 和小程序合法域名见 [server/README.md](server/README.md)。新 AppID 为 `wxd60258ccfc36cb75`，API 根地址在 `miniprogram/utils/config.js`。`cloudfunctions/` 只留作对照，不要再上传部署。下文里关于云开发控制台的步骤是迁移前的记录。
+
 ## 功能特性
 
 - **排面看板 / 照片明细**：夜间云函数 `shelfStats` 预计算店月与整体排面（环比/同比/店均拜访/拜访不足 N 次）；历史页入口进入看板与可筛选照片明细（业务员/客户/时间）。默认 N=2，存 `settings.global.lowVisitThreshold`。

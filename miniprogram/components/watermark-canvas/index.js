@@ -143,11 +143,11 @@ Component({
      * 绘制水印
      */
     _drawWatermark(ctx, width, height, config) {
-      // 比例参考短边，防止多图横向拼接（宽远大于高）时字体与内边距暴增占满半张图
+      // 比例参考短边，基准系数放大约20%，确保拼图及大图上的水印清晰醒目、有分量感
       const refDim = Math.min(width, height)
-      const scale = Math.max(0.65, refDim / 900)
+      const scale = Math.max(0.75, (refDim / 900) * 1.2)
       const padding = Math.round(20 * scale)
-      const baseFontSize = Math.round((config.fontSize || 16) * scale)
+      const baseFontSize = Math.round((config.fontSize || 17) * scale)
       const titleFontSize = Math.round(baseFontSize * 1.25)
       const lineSpacing = Math.round(baseFontSize * 1.45)
 
@@ -175,20 +175,24 @@ Component({
      * 底部水印 —— 今日水印相机经典卡片排版
      * 特性：
      * 1. 左下角圆角卡片，紧凑精致，绝不占满半张图；
-     * 2. 大字真实时间 + 经典黄色强调竖条 + 星期标注；
-     * 3. 结构化字段行：任务、门店（可选）、地点、记录人。
+     * 2. [真实时间] 防伪小标签置于大时间上方，杜绝横向遮挡时间数字；
+     * 3. 经典黄色强调竖条 + 大字时间 + 星期标注；
+     * 4. 整体位置下沉贴底，整体比例适度放大，增强巡检报表大图权威感；
+     * 5. 结构化字段行：任务、门店（可选）、地点、记录人。
      */
     _drawBottomWatermark(ctx, width, height, config, params) {
       const { scale, baseFontSize, dateTimeObj } = params
 
-      const cardMargin = Math.round(24 * scale)
+      // 边距与卡片内边距：底部距离收紧至 12*scale，让整体下沉贴近左下角
+      const cardMarginX = Math.round(18 * scale)
+      const cardMarginBottom = Math.round(12 * scale)
       const cardPadX = Math.round(20 * scale)
       const cardPadY = Math.round(16 * scale)
 
-      const timeFontSize = Math.round(baseFontSize * 2.2)
-      const subFontSize = Math.round(baseFontSize * 0.85)
-      const fieldFontSize = Math.round(baseFontSize * 0.95)
-      const lineH = Math.round(baseFontSize * 1.45)
+      const timeFontSize = Math.round(baseFontSize * 2.3)
+      const subFontSize = Math.round(baseFontSize * 0.88)
+      const fieldFontSize = Math.round(baseFontSize * 1.0)
+      const lineH = Math.round(baseFontSize * 1.55)
 
       // 提取项目条目
       const items = []
@@ -197,16 +201,21 @@ Component({
       if (config.address) items.push({ label: '地点', value: config.address })
       if (config.userName) items.push({ label: '记录人', value: config.userName })
 
-      // 卡片宽度自适应（大屏或横图时限宽 540*scale，小图限宽 width - margin*2）
-      const cardW = Math.min(width - cardMargin * 2, Math.round(520 * scale))
+      // 卡片宽度自适应：适度放宽至 580*scale，保证长任务名和详细地址完整展示
+      const cardW = Math.min(width - cardMarginX * 2, Math.round(580 * scale))
       const maxTextW = cardW - cardPadX * 2
 
-      // 时间块高度 + 分割线 + 各字段高度
-      const headerH = Math.round(48 * scale)
+      // 头部尺寸（真实时间标签行 + 大时间+日期星期区域）
+      const tagFontSize = Math.round(baseFontSize * 0.72)
+      const tagH = Math.round(18 * scale)
+      const tagGapY = Math.round(6 * scale)
+      const timeAreaH = Math.round(52 * scale) // 大时间 + 日期星期的垂直高度
+      const headerH = tagH + tagGapY + timeAreaH
+
       const cardH = cardPadY * 2 + headerH + items.length * lineH + Math.round(8 * scale)
 
-      const cardX = cardMargin
-      const cardY = height - cardMargin - cardH
+      const cardX = cardMarginX
+      const cardY = height - cardMarginBottom - cardH
 
       // 1. 背景处理：默认无大黑框（纯透明），仅当外部显式配置了有色背景时才画底板
       const hasBg = config.bgColor && config.bgColor !== 'transparent' && config.bgColor !== 'none'
@@ -217,47 +226,58 @@ Component({
 
       // 开启柔和暗色微阴影，确保纯透明纯白文字在任何亮色/复杂货架背景上都清晰立体、不刺眼
       ctx.save()
-      ctx.shadowColor = 'rgba(0, 0, 0, 0.75)'
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.8)'
       ctx.shadowBlur = Math.round(4 * scale)
       ctx.shadowOffsetX = Math.round(1.2 * scale)
       ctx.shadowOffsetY = Math.round(1.2 * scale)
 
-      // 2. 绘制今日水印黄色强调竖条
-      const barW = Math.max(3, Math.round(4 * scale))
-      const barH = Math.round(38 * scale)
-      const barX = cardX + (hasBg ? cardPadX : 0)
-      const barY = cardY + (hasBg ? cardPadY : 0) + Math.round(4 * scale)
+      const contentStartX = cardX + (hasBg ? cardPadX : 0)
+      const headerTopY = cardY + (hasBg ? cardPadY : 0)
+
+      // 2. 真实时间防伪标 —— 置于大时间正上方（方案 A）
+      ctx.font = `bold ${tagFontSize}px sans-serif`
+      const tagText = '真实时间'
+      const tagTextW = ctx.measureText(tagText).width
+      const tagPadW = Math.round(7 * scale)
+      const tagW = Math.round(tagTextW + tagPadW * 2)
+      const tagX = contentStartX
+      const tagY = headerTopY
+
+      ctx.fillStyle = '#FFA000'
+      this._drawRoundRect(ctx, tagX, tagY, tagW, tagH, Math.round(3 * scale))
+
+      ctx.fillStyle = '#FFFFFF'
+      ctx.textAlign = 'left'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(tagText, tagX + tagPadW, tagY + tagH / 2)
+
+      // 恢复基线设置
+      ctx.textBaseline = 'alphabetic'
+
+      // 3. 黄色强调竖条与大时间
+      const timeAreaY = tagY + tagH + tagGapY
+      const barW = Math.max(3, Math.round(4.5 * scale))
+      const barH = Math.round(36 * scale)
+      const barX = contentStartX
+      const barY = timeAreaY + Math.round(3 * scale)
+
       ctx.fillStyle = '#FFA000'
       ctx.fillRect(barX, barY, barW, barH)
 
-      // 3. 绘制大时间 (如 15:54)
+      // 大时间 (如 12:48，右侧不再受防伪标挤压遮挡)
       const timeX = barX + barW + Math.round(10 * scale)
-      const textBaseY = cardY + (hasBg ? cardPadY : 0)
       ctx.fillStyle = '#FFFFFF'
-      ctx.textAlign = 'left'
       ctx.font = `bold ${timeFontSize}px sans-serif`
-      ctx.fillText(dateTimeObj.timeStr, timeX, textBaseY + Math.round(30 * scale))
+      ctx.fillText(dateTimeObj.timeStr, timeX, timeAreaY + Math.round(30 * scale))
 
-      // 3.1 真实时间防伪标
-      const tagFontSize = Math.round(baseFontSize * 0.72)
-      const tagW = Math.round(56 * scale)
-      const tagH = Math.round(18 * scale)
-      const tagX = timeX + Math.round(timeFontSize * 2.1)
-      const tagY = textBaseY + Math.round(10 * scale)
-      ctx.fillStyle = '#FFA000'
-      this._drawRoundRect(ctx, tagX, tagY, tagW, tagH, Math.round(3 * scale))
-      ctx.font = `bold ${tagFontSize}px sans-serif`
-      ctx.fillStyle = '#FFFFFF'
-      ctx.fillText('真实时间', tagX + Math.round(5 * scale), tagY + Math.round(13 * scale))
-
-      // 4. 绘制时间下方日期与星期 (如 2026.10.21 星期三)
+      // 4. 时间下方日期与星期 (如 2026.10.30 星期五)
       ctx.font = `${subFontSize}px sans-serif`
       ctx.fillStyle = 'rgba(240, 245, 250, 0.95)'
-      ctx.fillText(dateTimeObj.dateWeekStr, timeX, textBaseY + Math.round(47 * scale))
+      ctx.fillText(dateTimeObj.dateWeekStr, timeX, timeAreaY + Math.round(48 * scale))
 
       // 5. 分割线
-      const divY = textBaseY + headerH
-      const lineStartX = cardX + (hasBg ? cardPadX : 0)
+      const divY = headerTopY + headerH
+      const lineStartX = contentStartX
       const lineEndX = lineStartX + cardW - (hasBg ? cardPadX * 2 : 0)
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)'
       ctx.lineWidth = Math.max(1, Math.round(1 * scale))
@@ -267,13 +287,13 @@ Component({
       ctx.stroke()
 
       // 6. 逐行绘制字段 (任务 / 门店 / 地点 / 记录人)
-      let currY = divY + Math.round(16 * scale)
-      const labelW = Math.round(62 * scale)
+      let currY = divY + Math.round(18 * scale)
+      const labelW = Math.round(70 * scale)
       const valMaxW = maxTextW - labelW
 
       items.forEach(item => {
         ctx.font = `${fieldFontSize}px sans-serif`
-        ctx.fillStyle = 'rgba(225, 230, 240, 0.9)'
+        ctx.fillStyle = 'rgba(225, 230, 240, 0.92)'
         ctx.fillText(item.label + '：', lineStartX, currY)
 
         ctx.font = `500 ${fieldFontSize}px sans-serif`

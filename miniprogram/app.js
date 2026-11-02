@@ -1,6 +1,7 @@
 // app.js
-// 应用入口 - 全局状态管理、云开发初始化、用户登录
+// 应用入口 - 全局状态管理、登录
 
+const api = require('./utils/api')
 const offlineQueue = require('./utils/offlineQueue')
 
 // 统一错误处理工具
@@ -18,17 +19,6 @@ const hideLoading = () => {
 
 App({
   onLaunch: function () {
-    // 初始化云开发
-    if (!wx.cloud) {
-      console.error('请使用 2.2.3 或以上的基础库以使用云能力')
-      return
-    }
-
-    wx.cloud.init({
-      env: this.globalData.cloudEnv,
-      traceUser: true
-    })
-
     // 隐私授权拦截：自微信基础库 2.32.3 起，调用相机/位置等敏感接口前
     // 必须先让用户同意《隐私保护指引》。这里注册全局拦截，当小程序首次
     // 触发隐私协议时，在当前页（相机页）弹出自定义同意窗，同意后调用
@@ -63,9 +53,6 @@ App({
   },
 
   globalData: {
-    // 云开发环境 ID（请替换为实际环境 ID）
-    cloudEnv: 'cloud1-d8gop997sa25927c4',
-    
     // 用户信息
     userInfo: null,
     openid: null,
@@ -116,11 +103,13 @@ App({
   // 用户登录
   async login() {
     try {
-      const res = await wx.cloud.callFunction({
-        name: 'login'
+      const code = await new Promise((resolve, reject) => {
+        wx.login({
+          success: (res) => res.code ? resolve(res.code) : reject(new Error('未取得登录凭证')),
+          fail: reject
+        })
       })
-
-      const result = res.result
+      const result = await api.loginWithCode(code)
       this.globalData.openid = result.openid
       this.globalData.isLoggedIn = true
 
@@ -159,7 +148,7 @@ App({
   // 更新用户信息
   async updateUserInfo(userInfo) {
     try {
-      await wx.cloud.callFunction({
+      await api.callFunction({
         name: 'login',
         data: {
           action: 'update',
@@ -227,7 +216,7 @@ App({
     async callCloud(name, data = {}) {
       try {
         showLoading()
-        const res = await wx.cloud.callFunction({ name, data })
+        const res = await api.callFunction({ name, data })
         hideLoading()
         return res.result
       } catch (err) {
