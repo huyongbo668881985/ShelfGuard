@@ -1,6 +1,6 @@
 <!--pages/home/home.wxml-->
 <view class="home-page">
-  <view class="approval-banner" wx:if="{{needsApproval}}">账号待管理员审批，批准前无法提交巡检</view>
+  <view class="approval-banner" wx:if="{{needsApproval}}">账号待管理员审批，批准前无法提交拜访</view>
 
   <!-- 顶部：问候 + 开始拜访 + 上下班打卡 -->
   <view class="hero">

@@ -6,7 +6,7 @@
 
   <block wx:if="{{!loading}}">
     <view class="page-tip">
-      <text>仅管理员可见。在这里分配「业务员 / 管理者 / 管理员」角色，或停用离职员工账号。所有变更都会记入审计日志。</text>
+      <text>仅管理员可见。在这里批准新人、分配「业务员 / 管理者 / 管理员」角色、修改姓名、绑定进销存业务员，或停用离职员工账号。客户按姓名（或绑定的进销存业务员）自动分配，改完后下一次进销存同步生效。</text>
     </view>
 
     <view class="empty-state" wx:if="{{users.length === 0}}">
@@ -20,9 +20,10 @@
       </view>
 
       <view class="user-meta">
+        <text class="meta-item" wx:if="{{item.jxcOperatorName}}">绑定进销存业务员：{{item.jxcOperatorName}}</text>
         <text class="meta-item" wx:if="{{item.department}}">部门：{{item.department}}</text>
         <text class="meta-item" wx:if="{{item.phone}}">电话：{{item.phone}}</text>
-        <text class="meta-item" wx:if="{{!item.department && !item.phone}}">暂无更多信息</text>
+        <text class="meta-item" wx:if="{{!item.department && !item.phone && !item.jxcOperatorName}}">暂无更多信息</text>
       </view>
 
       <view class="user-tags">
@@ -42,7 +43,22 @@
           data-id="{{item._id}}"
           data-role="{{item.role}}"
           bindtap="changeRole"
+          wx:if="{{!item.isMe}}"
         >改角色</button>
+        <button
+          class="btn-outline act-btn"
+          size="mini"
+          data-id="{{item._id}}"
+          data-name="{{item.name}}"
+          bindtap="editName"
+        >改姓名</button>
+        <button
+          class="btn-outline act-btn"
+          size="mini"
+          data-id="{{item._id}}"
+          data-binding="{{item.jxcOperatorName}}"
+          bindtap="editJxcBinding"
+        >绑定进销存</button>
         <button
           class="btn-outline act-btn"
           size="mini"

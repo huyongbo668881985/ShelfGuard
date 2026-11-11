@@ -284,7 +284,7 @@ Page({
     const item = e.currentTarget.dataset.item
     wx.showModal({
       title: '下架产品',
-      content: `确定要下架「${item.brandName}」吗？下架后 AI 分析将不再参考这条产品资料，历史巡检报告不受影响。`,
+      content: `确定要下架「${item.brandName}」吗？下架后 AI 分析将不再参考这条产品资料，历史拜访报告不受影响。`,
       success: async (res) => {
         if (!res.confirm) return
         try {

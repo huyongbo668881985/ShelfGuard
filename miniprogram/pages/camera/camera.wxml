@@ -2,7 +2,7 @@
 <view class="camera-page">
   <view class="approval-banner" wx:if="{{needsApproval}}">{{approvalBannerText}}</view>
   <!-- 相机预览区域 -->
-  <view class="camera-wrapper" wx:if="{{!showPreview && !showSettings}}">
+  <view class="camera-wrapper" wx:if="{{!showPreview}}">
     <camera
       class="camera"
       device-position="{{devicePosition}}"
@@ -32,11 +32,10 @@
         </cover-view>
       </cover-view>
 
-      <!-- 快捷设置按钮：之前是普通 view + position:absolute 悬浮在相机预览上方，
-           真机上会被相机的原生视图挡住，点击没有任何反应。挪进 camera 标签内部，
-           改成 cover-view 就能正常接收点击了。 -->
-      <cover-view class="settings-btn" bindtap="openSettings">
-        <cover-view>⚙️ 设置</cover-view>
+      <!-- 选择门店按钮：原来这里是「⚙️ 设置」。正常流程里门店在首页 / 「下一家」时就选好了，
+           这里只是临时换一家时用的备用入口。必须是 cover-view 才能盖在原生相机上并接收点击。 -->
+      <cover-view class="settings-btn" wx:if="{{recordType === 'visit'}}" bindtap="chooseCustomer">
+        <cover-view>🏬 选择门店</cover-view>
       </cover-view>
 
       <!-- 连拍缩略图 + 完成按钮：拍1张时不强制拼图，多于1张才会在点"完成"后拼成一张大图 -->
@@ -70,7 +69,7 @@
   <!-- 相机控制栏：从 camera-wrapper 里移出来，作为 camera-page 的直接子节点。
        原因：下面把 .camera 改成 position:absolute 绝对填充预览区，若控制栏还
        留在 wrapper 内会和相机原生层重叠被遮挡；移到外层正常文档流就稳定可见。 -->
-  <view class="camera-controls" wx:if="{{!showPreview && !showSettings}}">
+  <view class="camera-controls" wx:if="{{!showPreview}}">
     <view class="control-btn" bindtap="switchFlash">
       <text class="control-icon">{{flashMode === 'on' ? '⚡️' : flashMode === 'off' ? '🔦' : '⚡️'}}</text>
       <text class="control-label">{{flashMode === 'on' ? '开' : flashMode === 'off' ? '关' : '自动'}}</text>
@@ -135,99 +134,6 @@
         {{confirmBtnText}}
       </button>
     </view>
-  </view>
-
-  <!-- 设置面板 -->
-  <view class="settings-mask" wx:if="{{showSettings}}" bindtap="closeSettings"></view>
-  <view class="settings-panel {{showSettings ? 'show' : ''}}">
-    <view class="settings-header">
-      <view class="settings-brand">
-        <image class="settings-brand-logo" src="/images/logo-te.png" mode="aspectFit"></image>
-        <text class="settings-title">特8水印 · 设置</text>
-      </view>
-      <text class="settings-close" bindtap="closeSettings">✕</text>
-    </view>
-
-    <scroll-view class="settings-content" scroll-y="true">
-      <!-- 任务名称 -->
-      <view class="setting-item">
-        <text class="setting-label">任务名称</text>
-        <input
-          class="setting-input"
-          style="color: #1a1a2e; background: #fff; height: 80rpx;"
-          placeholder="请输入任务名称"
-          placeholder-class="setting-ph"
-          placeholder-style="color: #999;"
-          value="{{taskName}}"
-          maxlength="50"
-          bindinput="onTaskNameInput"
-          adjust-position="{{false}}"
-        />
-      </view>
-
-      <!-- 门店：可从客户库选择，也可一键清空/设为无门店模式 -->
-      <view class="setting-item">
-        <text class="setting-label">门店</text>
-        <view class="select-store-wrap">
-          <view class="select-store" bindtap="chooseCustomer">
-            <text class="select-store-text {{storeName ? '' : 'placeholder'}}">{{storeName || '无门店（沿街巡检）'}}</text>
-            <text class="setting-arrow">›</text>
-          </view>
-          <text class="store-clear-btn" wx:if="{{storeName}}" catchtap="onClearStore">清除</text>
-        </view>
-      </view>
-
-      <!-- 业务员姓名 -->
-      <view class="setting-item">
-        <text class="setting-label">业务员姓名</text>
-        <input
-          class="setting-input"
-          style="color: #1a1a2e; background: #fff; height: 80rpx;"
-          placeholder="请输入姓名"
-          placeholder-class="setting-ph"
-          placeholder-style="color: #999;"
-          value="{{userName}}"
-          maxlength="50"
-          bindinput="onUserNameInput"
-        />
-      </view>
-
-      <!-- 水印位置 -->
-      <view class="setting-item">
-        <text class="setting-label">水印位置</text>
-        <view class="setting-value" bindtap="switchPosition">
-          <text>{{watermarkConfig.position === 'bottom' ? '底部' : watermarkConfig.position === 'top' ? '顶部' : '全屏'}}</text>
-          <text class="setting-arrow">›</text>
-        </view>
-      </view>
-
-      <!-- 产品库入口 -->
-      <view class="setting-item">
-        <text class="setting-label">产品库</text>
-        <view class="setting-value" bindtap="goToProducts">
-          <text>管理品牌产品资料</text>
-          <text class="setting-arrow">›</text>
-        </view>
-      </view>
-
-      <!-- 客户管理入口 -->
-      <view class="setting-item">
-        <text class="setting-label">客户管理</text>
-        <view class="setting-value" bindtap="goToCustomers">
-          <text>管理我的客户资料</text>
-          <text class="setting-arrow">›</text>
-        </view>
-      </view>
-
-      <!-- 分析设置入口：集中分析时间、API Key、待分析队列 -->
-      <view class="setting-item">
-        <text class="setting-label">分析设置</text>
-        <view class="setting-value" bindtap="goToAnalyzeSettings">
-          <text>集中分析时间 / API Key</text>
-          <text class="setting-arrow">›</text>
-        </view>
-      </view>
-    </scroll-view>
   </view>
 
   <!-- 隐藏的水印合成组件：始终挂载（组件自身用 CSS 移出屏幕外隐藏），

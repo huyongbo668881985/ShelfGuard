@@ -90,11 +90,12 @@
 
 .user-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--spacing-sm);
 }
 
 .act-btn {
-  flex: 1;
+  flex: 1 0 28%;
   margin: 0;
   font-size: var(--font-sm);
 }

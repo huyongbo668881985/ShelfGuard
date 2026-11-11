@@ -53,7 +53,7 @@
     <view class="no-store-left">
       <text class="no-store-icon">🚶‍♂️</text>
       <view class="no-store-info">
-        <text class="no-store-title">不关联门店（沿街 / 临时巡检）</text>
+        <text class="no-store-title">不关联门店（常规拜访）</text>
         <text class="no-store-sub">水印不打印门店名，仅记录地理定位、业务员及时间</text>
       </view>
     </view>
@@ -101,10 +101,17 @@
   <!-- 空状态 -->
   <view class="empty-state" wx:if="{{!loading && list.length === 0}}">
     <text class="empty-icon">🏬</text>
+    <!-- 业务员一家都没有：多半是管理员还没分配，或姓名和进销存对不上 -->
+    <block wx:if="{{listScope === 'self' && filterTag === 'all' && !searchKeyword}}">
+      <text class="empty-text">暂无分配给你的门店，请联系管理员</text>
+      <text class="empty-hint">门店按你的姓名从进销存自动分配，姓名需与进销存里的业务员姓名一致</text>
+    </block>
+    <block wx:else>
     <text class="empty-text">{{filterTag === 'unlocated' ? '没有待定位的客户' : (filterTag === 'located' ? '暂无已定位客户' : (searchKeyword ? '未找到相关客户' : '还没有客户资料'))}}</text>
     <text class="empty-hint" wx:if="{{filterTag === 'unlocated'}}">所有客户均已标记定位标签</text>
     <text class="empty-hint" wx:elif="{{selectMode}}">先去客户管理里加一个客户</text>
     <text class="empty-hint" wx:else>先加一个客户，拍照时就能直接选，不用每次手打门店名</text>
+    </block>
   </view>
 
   <view class="loading-state" wx:if="{{loading}}">

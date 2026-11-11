@@ -1,12 +1,11 @@
 // pages/camera/camera.js
 // 水印相机页面
 
-const api = require('../../utils/api')
 const app = getApp()
 const { getLocation: fetchLocation } = require('../../utils/location')
 const { validateInspection } = require('../../utils/validator')
 
-// 任务名称默认值（用户可随时更改，改动会本机记忆）
+// 任务名称：统一固定为默认值，业务员不能改（拍照页没有任何修改入口）
 const TASK_NAME_DEFAULT = '永丰特8：常规拜访'
 
 Page({
@@ -26,7 +25,7 @@ Page({
     location: null,
     selectedCustomerId: '', // 从客户库选中的客户 _id，跟着这次巡检一起提交，方便以后按客户查
 
-    // 水印样式配置（默认无黑框纯透明悬浮，带立体微阴影）
+    // 水印样式配置（默认无黑框纯透明悬浮，带立体微阴影）；位置固定在底部，没有修改入口
     watermarkConfig: {
       position: 'bottom',
       color: '#ffffff',
@@ -49,9 +48,6 @@ Page({
     // 只有1张的话跳过拼图步骤，直接走原来的单图水印流程
     capturedPhotos: [],
     maxPhotos: 6,
-
-    // 设置面板
-    showSettings: false,
 
     // traffic=拼图；quality=多图各自打水印后直传
     imageMode: 'traffic',
@@ -101,7 +97,7 @@ Page({
     )
     this.setData({
       needsApproval: !approvedOk,
-      approvalBannerText: approvedOk ? '' : '账号待管理员审批，批准前无法提交巡检'
+      approvalBannerText: approvedOk ? '' : '账号待管理员审批，批准前无法提交拜访'
     })
   },
 
@@ -181,13 +177,11 @@ Page({
       return
     }
 
-    // 任务名称：上次填过的优先（本机记忆），否则用固定默认值，用户可随时更改
-    const lastTaskName = wx.getStorageSync('shelfguard_lastTaskName') || ''
-
+    // 任务名称固定用默认值：不读页面参数，也不再沿用上次填写的名称
     this.setData({
       userName: (options && options.userName ? decodeURIComponent(options.userName) : '') || userInfo.name || '',
       storeName: (options && options.storeName ? decodeURIComponent(options.storeName) : '') || '',
-      taskName: (options && options.taskName ? decodeURIComponent(options.taskName) : '') || lastTaskName || TASK_NAME_DEFAULT
+      taskName: TASK_NAME_DEFAULT
     })
   },
 
@@ -235,66 +229,6 @@ Page({
     this.setData({ flashMode: modes[(current + 1) % modes.length] })
   },
 
-  // 打开设置面板
-  openSettings() {
-    this.setData({ showSettings: true })
-  },
-
-  // 关闭设置面板
-  closeSettings() {
-    // 业务员姓名变更时回写云端（按 openid 绑定），下次登录即默认带出；
-    // 不同微信登录 = 不同业务员，自然显示各自姓名。
-    const newName = (this.data.userName || '').trim()
-    const oldName = (app.globalData.userInfo && app.globalData.userInfo.name) || ''
-    if (newName && newName !== oldName) {
-      app.updateUserInfo({ name: newName }).then((ok) => {
-        if (ok) wx.showToast({ title: '业务员姓名已保存', icon: 'none' })
-      })
-    }
-    this.setData({ showSettings: false })
-  },
-
-  // 输入处理
-  onTaskNameInput(e) {
-    const v = String(e.detail.value || '').replace(/[\r\n]+/g, ' ').slice(0, 50)
-    this.setData({ taskName: v })
-    // 记住上次填的任务名，下次进入默认带出（可更改）
-    wx.setStorageSync('shelfguard_lastTaskName', v)
-  },
-
-  onUserNameInput(e) {
-    const v = String(e.detail.value || '').replace(/[\r\n]+/g, ' ').slice(0, 50)
-    this.setData({ userName: v })
-  },
-
-  // 切换水印位置
-  switchPosition() {
-    const positions = ['bottom', 'top', 'full']
-    const current = positions.indexOf(this.data.watermarkConfig.position)
-    const next = positions[(current + 1) % positions.length]
-    this.setData({
-      'watermarkConfig.position': next
-    })
-  },
-
-  // 跳转产品库管理页
-  goToProducts() {
-    wx.navigateTo({ url: '/pages/products/products' })
-  },
-
-  // 客户管理入口（跟产品库一样，正常管理模式，不带 select 参数）
-  goToCustomers() {
-    wx.navigateTo({ url: '/pages/customers/customers' })
-  },
-
-  // 分析设置入口：集中分析时间、API Key、待分析队列
-  // 走 closeSettings() 而不是直接 setData，是为了顺带把改过的业务员姓名存下来，
-  // 同时关掉水印设置面板——否则从设置页返回后面板还盖在相机上
-  goToAnalyzeSettings() {
-    this.closeSettings()
-    wx.navigateTo({ url: '/pages/settings/settings' })
-  },
-
   // 选客户：带上当前定位，customers 页会按距离由近到远排好序
   async chooseCustomer() {
     let lat = this.data.location && this.data.location.latitude
@@ -314,17 +248,6 @@ Page({
 
     const query = (lat != null && lng != null) ? `&lat=${lat}&lng=${lng}` : ''
     wx.navigateTo({ url: `/pages/customers/customers?mode=select${query}` })
-  },
-
-  // 一键清空门店（切换为无门店/沿街巡检模式）
-  onClearStore() {
-    this.storeAddressFromHome = ''
-    this.setData({
-      storeName: '',
-      selectedCustomerId: '',
-      address: (this.data.location && this.data.location.address) || this.data.address
-    })
-    wx.showToast({ title: '已清空门店', icon: 'none' })
   },
 
   // 拍照：每次拍一张加入 capturedPhotos 数组，不立即预览，方便连续拍多张
@@ -410,35 +333,21 @@ Page({
   },
 
 
+  // 拍照上传策略：由管理员在「管理」里统一设置、全员生效（不再有本机偏好）。
+  // 先用 app 里缓存的团队设置（没有就默认 traffic），再后台刷新一次服务端最新值。
   loadImageMode() {
-    let mode = 'traffic'
-    try {
-      const local = wx.getStorageSync('shelfguard_imageMode')
-      if (local === 'quality' || local === 'traffic') mode = local
-      else if (app.globalData.systemConfig && app.globalData.systemConfig.imageMode) {
-        mode = app.globalData.systemConfig.imageMode === 'quality' ? 'quality' : 'traffic'
-      }
-    } catch (_) {}
-    this.setData({ imageMode: mode })
-    // 后台刷新团队默认
-    api.callFunction({ name: 'settings', data: { action: 'get' } }).then(res => {
-      if (res.result && res.result.success && res.result.settings) {
-        const s = res.result.settings
-        app.globalData.systemConfig = {
-          ...(app.globalData.systemConfig || {}),
-          analyzeMode: s.analyzeMode,
-          analyzeTime: s.analyzeTime,
-          imageMode: s.imageMode === 'quality' ? 'quality' : 'traffic'
-        }
-        // 本地无显式偏好时跟随团队设置
-        try {
-          const local = wx.getStorageSync('shelfguard_imageMode')
-          if (!local) {
-            this.setData({ imageMode: app.globalData.systemConfig.imageMode })
-          }
-        } catch (_) {}
-      }
+    this.setData({ imageMode: app.getImageMode() })
+    app.refreshClientConfig().then(() => {
+      this.setData({ imageMode: app.getImageMode() })
     }).catch(() => {})
+  },
+
+  // 首次登录填完姓名后由 app.js 通知：把姓名带进水印
+  onUserNameReady() {
+    const name = (app.globalData.userInfo && app.globalData.userInfo.name) || ''
+    if (name && !this.data.userName) {
+      this.setData({ userName: name })
+    }
   },
 
   // 完成拍照：1张直接走原来的单图水印流程；
@@ -683,7 +592,7 @@ Page({
     if (!location) {
       wx.showModal({
         title: '未获取到位置信息',
-        content: '当前巡检记录将不包含门店定位，是否仍要继续？',
+        content: '当前拜访记录将不包含门店定位，是否仍要继续？',
         confirmText: '继续',
         cancelText: '重新定位',
         success: (res) => {

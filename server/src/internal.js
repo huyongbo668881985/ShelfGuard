@@ -240,7 +240,7 @@ async function customerSummaryHandler(req, res) {
     })
   } catch (err) {
     console.error('[internal] customerSummaryHandler 异常:', err)
-    return res.status(500).json({ success: false, error: '查询门店巡检汇总失败' })
+    return res.status(500).json({ success: false, error: '查询门店拜访汇总失败' })
   }
 }
 
@@ -403,7 +403,7 @@ async function overviewHandler(req, res) {
     })
   } catch (err) {
     console.error('[internal] overviewHandler 异常:', err)
-    return res.status(500).json({ success: false, error: '查询巡检概览失败' })
+    return res.status(500).json({ success: false, error: '查询拜访概览失败' })
   }
 }
 

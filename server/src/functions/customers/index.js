@@ -156,6 +156,50 @@ exports.main = async (event, context) => {
         }
       }
 
+      // 未分配的客户（仅 admin / manager）：进销存同步时没对上业务员、暂归管理员兜底的客户。
+      // 依据同步写入的 jxcAssignMatched === false；部署后第一次同步之前，旧客户没有这个字段，
+      // 用 pendingSync 告诉前端「等下一次同步后再看」。
+      case 'listUnassigned': {
+        if (!caller.canSeeAll) {
+          return { success: false, error: '只有管理员或管理者可以查看' }
+        }
+        const { limit, page, skip } = parsePaging(event)
+        const query = { jxcAssignMatched: false, isActive: true }
+        const countRes = await db.collection('customers').where(query).count()
+        const total = countRes.total || 0
+        const res = await db.collection('customers')
+          .where(query)
+          .orderBy('createdAt', 'desc')
+          .skip(skip)
+          .limit(limit)
+          .get()
+        const list = (res.data || []).map(c => ({
+          _id: c._id,
+          storeName: c.storeName || '',
+          address: c.address || '',
+          jxcOperatorName: c.jxcOperatorName || ''
+        }))
+        let pendingSync = 0
+        try {
+          const pendingRes = await db.collection('customers').where({
+            jxcCustomerId: _.exists(true),
+            jxcAssignMatched: _.exists(false),
+            isActive: true
+          }).count()
+          pendingSync = pendingRes.total || 0
+        } catch (_) {}
+        return {
+          success: true,
+          list,
+          total,
+          page,
+          limit,
+          skip,
+          hasMore: skip + list.length < total,
+          pendingSync
+        }
+      }
+
       // 单条读取：与 list 同一套可见性
       case 'get': {
         if (!customerId) {

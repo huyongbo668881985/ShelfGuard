@@ -214,7 +214,7 @@ Page({
     if (me.disabled) {
       wx.showModal({
         title: '账号已停用',
-        content: '你的账号已被管理员停用，无法提交巡检记录。如有疑问请联系管理员。',
+        content: '你的账号已被管理员停用，无法提交拜访记录。如有疑问请联系管理员。',
         showCancel: false
       })
       return
@@ -227,7 +227,7 @@ Page({
     if (!approvedOk) {
       wx.showModal({
         title: '等待管理员审批',
-        content: '你的账号尚未通过管理员审批，暂时无法提交巡检。请联系管理员在「用户与权限管理」中批准。',
+        content: '你的账号尚未通过管理员审批，暂时无法提交拜访。请联系管理员在「用户与权限管理」中批准。',
         showCancel: false
       })
       this.setData({
@@ -297,7 +297,7 @@ Page({
         })
         wx.showModal({
           title: '等待管理员审批',
-          content: '你的账号尚未通过管理员审批，暂时无法提交巡检。',
+          content: '你的账号尚未通过管理员审批，暂时无法提交拜访。',
           showCancel: false
         })
         return
@@ -491,7 +491,7 @@ Page({
     })
 
     if (!res.result || !res.result.success) {
-      const err = new Error((res.result && res.result.error) || '提交巡检记录失败')
+      const err = new Error((res.result && res.result.error) || '提交拜访记录失败')
       err.code = (res.result && res.result.code) || ''
       throw err
     }

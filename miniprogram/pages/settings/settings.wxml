@@ -11,9 +11,9 @@
   </view>
 
   <block wx:if="{{!loading}}">
-    <!-- 只读提示 -->
-    <view class="readonly-tip" wx:if="{{!canEdit}}">
-      <text>你不是管理员，以下设置仅供查看</text>
+    <!-- 只读提示（管理者） -->
+    <view class="readonly-tip" wx:if="{{!canEdit && isManager}}">
+      <text>你是管理者，以下设置仅供查看，修改请联系管理员</text>
     </view>
 
     <!-- 首管理员激活（仅当系统尚无管理员、且当前用户不是管理员时显示） -->
@@ -36,9 +36,52 @@
     <view class="card admin-entry" wx:if="{{canEdit}}" bindtap="goAdmin">
       <view class="entry-left">
         <text class="entry-title">用户与权限管理</text>
-        <text class="entry-sub">分配业务员 / 管理者 / 管理员角色，停用离职账号</text>
+        <text class="entry-sub">批准新人、分配角色、修改姓名、绑定进销存业务员、停用离职账号</text>
       </view>
       <text class="entry-arrow">›</text>
+    </view>
+
+    <!-- 以下内容只对管理员 / 管理者显示（系统无管理员时，非管理者进来只看到激活卡片） -->
+    <block wx:if="{{isManager}}">
+
+    <!-- 客户管理 / 产品库（原来在拍照页「⚙️ 设置」里） -->
+    <view class="card admin-entry" bindtap="goCustomers">
+      <view class="entry-left">
+        <text class="entry-title">客户管理</text>
+        <text class="entry-sub">查看和编辑全部客户（门店）资料</text>
+      </view>
+      <text class="entry-arrow">›</text>
+    </view>
+    <view class="card admin-entry" bindtap="goProducts">
+      <view class="entry-left">
+        <text class="entry-title">产品库</text>
+        <text class="entry-sub">管理品牌产品资料</text>
+      </view>
+      <text class="entry-arrow">›</text>
+    </view>
+
+    <!-- 未分配的客户：进销存同步时没对上业务员，暂时归在管理员名下（管理员 / 管理者可看） -->
+    <view class="card" wx:if="{{unassignedLoaded}}">
+      <view class="section-title">未分配的客户（{{unassignedTotal}}）</view>
+      <view class="form-hint" wx:if="{{unassignedPendingSync > 0}}">
+        <text>管理员点击「立即同步」后显示。</text>
+      </view>
+      <view class="form-hint" wx:elif="{{unassignedTotal === 0}}">
+        <text>所有进销存客户都已分到业务员名下。</text>
+      </view>
+      <view class="unassigned-item" wx:for="{{unassigned}}" wx:key="_id">
+        <text class="unassigned-name">{{item.storeName}}</text>
+        <text class="unassigned-op">进销存业务员：{{item.jxcOperatorName || '（未填写）'}}</text>
+      </view>
+      <!-- 分页：每页 30 家，第一页禁用上一页、最后一页禁用下一页 -->
+      <view class="unassigned-pager" wx:if="{{unassignedTotal > 0}}">
+        <button class="btn-outline pager-btn" size="mini" bindtap="onPrevUnassigned" disabled="{{unassignedPage <= 1 || unassignedLoadingPage}}">上一页</button>
+        <text class="unassigned-count">第 {{unassignedPage}} / {{unassignedTotalPages}} 页，共 {{unassignedTotal}} 家</text>
+        <button class="btn-outline pager-btn" size="mini" bindtap="onNextUnassigned" disabled="{{unassignedPage >= unassignedTotalPages || unassignedLoadingPage}}">下一页</button>
+      </view>
+      <view class="form-hint" wx:if="{{unassignedTotal > 0}}">
+        <text>处理方法：在「用户与权限管理」里把对应业务员的姓名改成和进销存一致，或用「绑定进销存」手动对应（重名的也用它区分）。改完后下一次同步自动分过去。</text>
+      </view>
     </view>
 
     <!-- 队列概览：admin/manager 看团队；sales 只看自己 -->
@@ -113,7 +156,7 @@
         </view>
         <text class="mode-desc">跳过拼图，多张原图各自全分辨率上传后合并分析，价签/品牌更清晰，流量与费用更高。</text>
       </view>
-      <text class="form-tip" style="padding: 0 8rpx;">业务员可本机切换；管理员点「保存」后会写入团队默认。</text>
+      <text class="form-tip" style="padding: 0 8rpx;">由管理员统一设置，点「保存设置」后对全员生效，业务员下次打开拍照页自动使用。</text>
     </view>
 
     <!-- 集中分析时间 -->
@@ -165,7 +208,7 @@
 
     <!-- API Key -->
     <view class="card">
-      <view class="section-title">Qwen-VL-Plus API Key</view>
+      <view class="section-title">通义千问 API Key</view>
 
       <view class="key-status" wx:if="{{hasApiKey}}">
         <text class="key-status-ok">已配置：{{apiKeyMasked}}</text>
@@ -229,14 +272,15 @@
         <text class="last-run-detail" wx:if="{{jxcLastSyncSummaryText}}">{{jxcLastSyncSummaryText}}</text>
       </view>
 
-      <view class="queue-actions">
-        <button class="btn-primary" bindtap="onManualSyncJxc" disabled="{{!canEdit || syncingJxc}}">
+      <!-- 立即同步：只有管理员可见 -->
+      <view class="queue-actions" wx:if="{{canEdit}}">
+        <button class="btn-primary" bindtap="onManualSyncJxc" disabled="{{syncingJxc}}">
           {{syncingJxc ? '正在同步...' : '立即从进销存同步客户'}}
         </button>
       </view>
 
       <view class="form-hint">
-        <text>云端已配置定时增量同步（每30分钟自动触发）。在此点击可手动触发立即同步。同步时将自动通过业务员手机号或姓名归属到对应业务员，坐标留空并在业务员首次到店巡检时自动绑定。</text>
+        <text>云端已配置定时增量同步（每30分钟自动触发），管理员也可点上方按钮立即同步。同步时将自动通过业务员手机号或姓名归属到对应业务员，坐标留空并在业务员首次到店拜访时自动绑定。</text>
       </view>
     </view>
 
@@ -246,5 +290,6 @@
         {{saving ? '保存中...' : '保存设置'}}
       </button>
     </view>
+    </block>
   </block>
 </view>

@@ -13,6 +13,20 @@ const db = cloud.database()
 // 系统字段覆盖数据库记录（role 权限应由管理端单独接口修改，这里不开放）
 const UPDATABLE_FIELDS = ['name', 'phone', 'department']
 
+// 姓名规则：去首尾空格、合并连续空白，1-20 个字符。客户归属按姓名精确匹配进销存，
+// 所以这里不做任何「模糊」处理，只去掉明显误输入的空白。
+const NAME_MAX_LEN = 20
+
+function normalizeName(raw) {
+  return String(raw === undefined || raw === null ? '' : raw).replace(/\s+/g, ' ').trim()
+}
+
+function validateName(name) {
+  if (!name) return '姓名不能为空'
+  if (name.length > NAME_MAX_LEN) return `姓名不能超过 ${NAME_MAX_LEN} 个字`
+  return ''
+}
+
 function pickUpdatableFields(userInfo) {
   const picked = {}
   UPDATABLE_FIELDS.forEach(key => {
@@ -33,10 +47,43 @@ exports.main = async (event, context) => {
     if (action === 'update' && userInfo) {
       const safeUserInfo = pickUpdatableFields(userInfo)
       const userRes = await db.collection('users').where({ _openid: openid }).get()
+      const existingUser = userRes.data[0] || null
+      let nameLocked = false
 
-      if (userRes.data.length > 0) {
+      // 业务员姓名决定进销存客户归属：
+      // - 还没填过姓名的人可以自己填一次（首次登录的必填弹窗走这里）；
+      // - 已经有姓名的非管理员不能自己改（旧版前端的「⚙️ 设置」里改名也会被这里拦下），
+      //   要改只能由管理员在「用户与权限管理」里改（users.setName）。
+      // - 管理员可以改自己的姓名。
+      if (safeUserInfo.name !== undefined) {
+        const name = normalizeName(safeUserInfo.name)
+        const oldName = normalizeName(existingUser && existingUser.name)
+        const isAdminCaller = !!(existingUser && existingUser.role === 'admin')
+        if (oldName && !isAdminCaller) {
+          if (name !== oldName) nameLocked = true
+          delete safeUserInfo.name
+        } else {
+          const nameErr = validateName(name)
+          if (nameErr) {
+            return { openid, success: false, error: nameErr }
+          }
+          safeUserInfo.name = name
+        }
+      }
+
+      if (Object.keys(safeUserInfo).length === 0) {
+        return {
+          openid,
+          success: !nameLocked,
+          nameLocked,
+          error: nameLocked ? '姓名已设置，如需修改请联系管理员' : '',
+          userInfo: existingUser
+        }
+      }
+
+      if (existingUser) {
         // 更新已有用户
-        await db.collection('users').doc(userRes.data[0]._id).update({
+        await db.collection('users').doc(existingUser._id).update({
           data: {
             ...safeUserInfo,
             updatedAt: db.serverDate()
@@ -57,7 +104,12 @@ exports.main = async (event, context) => {
         })
       }
 
-      return { openid, userInfo: { ...safeUserInfo, _openid: openid } }
+      return {
+        openid,
+        success: true,
+        nameLocked,
+        userInfo: { ...(existingUser || {}), ...safeUserInfo, _openid: openid }
+      }
     }
 
     // 查询用户信息（新用户首次登录时自动初始化创建，避免业务员首次提交巡检时因用户不存在被拦截）

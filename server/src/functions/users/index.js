@@ -3,6 +3,9 @@
 //   - listUsers：列出全部用户（openid 掩码，不泄露完整标识）
 //   - setRole：调整某用户角色（sales / manager / admin），并写 roleChanges 审计
 //   - setDisabled：停用 / 启用某用户（不能停用自己）
+//   - setName：修改某用户的业务员姓名（业务员自己填过后不能再改，只能管理员改）
+//   - setJxcBinding：手动把某用户绑定到进销存里的业务员姓名（jxcOperatorName），
+//     syncJxcCustomers 会把它当作精确匹配键（手机号之后、姓名之前）
 //
 // 安全边界全部在服务端：角色判断只读 users 表的 role 字段，绝不信任客户端传参。
 // 非 admin 调用任何动作都会直接被拒。
@@ -38,6 +41,10 @@ exports.main = async (event, context) => {
         return await handleSetDisabled(openid, event)
       case 'setApproved':
         return await handleSetApproved(openid, event)
+      case 'setName':
+        return await handleSetName(openid, event)
+      case 'setJxcBinding':
+        return await handleSetJxcBinding(openid, event)
       default:
         return { success: false, error: `未知操作: ${action}` }
     }
@@ -96,6 +103,8 @@ async function handleListUsers(openid, event = {}) {
     _id: u._id,
     openidMasked: maskOpenid(u._openid),
     name: u.name || '',
+    jxcOperatorName: u.jxcOperatorName || '',
+    isMe: u._openid === openid,
     phone: u.phone || '',
     department: u.department || '',
     role: u.role || 'sales',
@@ -258,4 +267,99 @@ async function handleSetApproved(openid, event) {
   })
 
   return { success: true, approved: willApprove }
+}
+
+// ============================================================
+// 修改姓名 / 绑定进销存业务员（仅 admin，可以改自己）
+// 姓名或绑定变了以后，下一次进销存同步（每 30 分钟，或「立即同步」）
+// 会按新规则把客户重新分给对应的人。
+// ============================================================
+const NAME_MAX_LEN = 20
+
+function normalizeName(raw) {
+  return String(raw === undefined || raw === null ? '' : raw).replace(/\s+/g, ' ').trim()
+}
+
+async function writeUserChangeAudit(byOpenid, target, field, from, to) {
+  // 审计写入失败不阻断主操作
+  try {
+    await db.collection('userChanges').add({
+      data: {
+        byOpenid,
+        targetOpenid: target._openid,
+        field,
+        from: from || '',
+        to: to || '',
+        at: db.serverDate()
+      }
+    })
+  } catch (auditErr) {
+    console.error(`写入 userChanges 审计日志失败(${field}):`, auditErr)
+  }
+}
+
+async function loadTargetForAdmin(openid, targetId) {
+  const me = await getCaller(openid)
+  if (!me || !ADMIN_ROLES.includes(me.role)) {
+    return { error: '只有管理员可以管理用户' }
+  }
+  if (me.disabled) {
+    return { error: '账号已停用，请联系管理员' }
+  }
+  if (!targetId) {
+    return { error: '参数错误' }
+  }
+  let target = null
+  try {
+    const targetDoc = await db.collection('users').doc(targetId).get()
+    target = targetDoc.data
+  } catch (_) {}
+  if (!target) {
+    return { error: '目标用户不存在' }
+  }
+  return { me, target }
+}
+
+async function handleSetName(openid, event) {
+  const { error, target } = await loadTargetForAdmin(openid, event.targetId)
+  if (error) return { success: false, error }
+
+  const name = normalizeName(event.name)
+  if (!name) {
+    return { success: false, error: '姓名不能为空' }
+  }
+  if (name.length > NAME_MAX_LEN) {
+    return { success: false, error: `姓名不能超过 ${NAME_MAX_LEN} 个字` }
+  }
+  const from = target.name || ''
+  if (from === name) {
+    return { success: true, updated: false }
+  }
+
+  await db.collection('users').doc(target._id).update({
+    data: { name, updatedAt: db.serverDate() }
+  })
+  await writeUserChangeAudit(openid, target, 'name', from, name)
+  return { success: true, updated: true }
+}
+
+async function handleSetJxcBinding(openid, event) {
+  const { error, target } = await loadTargetForAdmin(openid, event.targetId)
+  if (error) return { success: false, error }
+
+  // 传空字符串表示解除绑定，回到按手机号 / 姓名自动匹配
+  const jxcOperatorName = normalizeName(event.jxcOperatorName)
+  if (jxcOperatorName.length > NAME_MAX_LEN) {
+    return { success: false, error: `进销存业务员姓名不能超过 ${NAME_MAX_LEN} 个字` }
+  }
+  const from = target.jxcOperatorName || ''
+  if (from === jxcOperatorName) {
+    return { success: true, updated: false }
+  }
+
+  await db.collection('users').doc(target._id).update({
+    data: { jxcOperatorName, updatedAt: db.serverDate() }
+  })
+  await writeUserChangeAudit(openid, target, 'jxcOperatorName', from, jxcOperatorName)
+  return { success: true, updated: true }
 }

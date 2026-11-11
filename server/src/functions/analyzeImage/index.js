@@ -213,17 +213,17 @@ exports.main = async (event, context) => {
     const inspectionRes = await db.collection('inspections').doc(inspectionId).get()
     inspectionDoc = inspectionRes.data
   } catch (err) {
-    return { success: false, error: '巡检记录不存在' }
+    return { success: false, error: '拜访记录不存在' }
   }
   if (!inspectionDoc) {
-    return { success: false, error: '巡检记录不存在' }
+    return { success: false, error: '拜访记录不存在' }
   }
 
   if (!isInternalCall && inspectionDoc._openid !== callerOpenid) {
     const callerRole = callerUser ? callerUser.role : 'sales'
     if (callerRole !== 'admin' && callerRole !== 'manager') {
       console.warn(`拒绝越权分析请求: caller=${callerOpenid} 试图分析 inspection=${inspectionId}（属于 ${inspectionDoc._openid}）`)
-      return { success: false, error: '无权操作该巡检记录' }
+      return { success: false, error: '无权操作该拜访记录' }
     }
   }
 
@@ -233,7 +233,7 @@ exports.main = async (event, context) => {
     : (fileID ? [fileID] : (inspectionDoc.photoFileIDs || []))
 
   if (idsToAnalyze.length === 0) {
-    return { success: false, error: '该巡检记录没有可分析的照片' }
+    return { success: false, error: '该拜访记录没有可分析的照片' }
   }
 
   // fileIDs 也做一层归属校验：只允许分析这条巡检记录自己名下的照片，
@@ -242,7 +242,7 @@ exports.main = async (event, context) => {
   const invalidIds = idsToAnalyze.filter(id => !allowedFileIDs.has(id))
   if (invalidIds.length > 0) {
     console.warn(`拒绝分析请求: fileID 不属于该巡检记录 inspection=${inspectionId}`, invalidIds)
-    return { success: false, error: '提交的图片不属于该巡检记录' }
+    return { success: false, error: '提交的图片不属于该拜访记录' }
   }
 
   // 配额：归属/照片校验通过后再扣，避免无效请求烧额度
@@ -826,7 +826,7 @@ async function handleDailySummary(event, wxContext) {
   }
 
   if (inspections.length === 0) {
-    return { success: false, error: '今日暂无巡检记录可供汇总' }
+    return { success: false, error: '今日暂无拜访记录可供汇总' }
   }
 
   const inspectionIds = inspections.map(i => i._id)
@@ -841,9 +841,9 @@ async function handleDailySummary(event, wxContext) {
   const targetFileIDs = allFileIDs.slice(0, 8)
   if (targetFileIDs.length === 0) {
     await db.collection('inspections').where({ _id: db.command.in(inspectionIds) }).update({
-      data: { status: 'analyze_failed', analyzeError: '巡检记录中未找到有效照片', analyzedAt: db.serverDate() }
+      data: { status: 'analyze_failed', analyzeError: '拜访记录中未找到有效照片', analyzedAt: db.serverDate() }
     }).catch(console.error)
-    return { success: false, error: '巡检记录中未找到有效照片' }
+    return { success: false, error: '拜访记录中未找到有效照片' }
   }
 
   // 3. 检查 API Key（未配置时不把模拟报告落库，防止假数据污染统计，与单条分析保持一致）
@@ -893,7 +893,7 @@ async function handleDailySummary(event, wxContext) {
     const { text } = await withHardTimeout(
       callQwen(config, apiKey, imageUrls, userPrompt, DAILY_SUMMARY_SYSTEM_PROMPT),
       AI_HARD_TIMEOUT_MS,
-      '今日巡检汇总分析超过时限'
+      '今日拜访汇总分析超过时限'
     )
     const summaryReport = parseDailySummaryResponse(text, inspections)
 
@@ -939,7 +939,7 @@ async function handleDailySummary(event, wxContext) {
           }),
           summaryConclusion: (summaryReport.summaryConclusion || '') +
             ((p.report && p.report.summaryConclusion && mergedInspectionIds.length > newInspectionIds.length)
-              ? `（含本日前序 ${mergedInspectionIds.length - newInspectionIds.length} 条巡检已合并）`
+              ? `（含本日前序 ${mergedInspectionIds.length - newInspectionIds.length} 条拜访已合并）`
               : '')
         })
       }
@@ -1095,10 +1095,10 @@ function parseDailySummaryResponse(responseText, inspections) {
 function generateMockDailySummary(inspections) {
   const storeNames = Array.from(new Set(inspections.map(i => i.storeName || '未命名门店')))
   return {
-    summaryTitle: '今日终端巡检综合分析日报（模拟报告）',
+    summaryTitle: '今日终端拜访综合分析日报（模拟报告）',
     overallScore: 84,
     overallLevel: '优秀',
-    summaryConclusion: `今日共完成 ${inspections.length} 家门店的终端陈列巡检（涉及：${storeNames.slice(0, 3).join('、')}等）。我方白酒产品在核心货架排面较为饱满，大部分正标朝向规范；建议后续重点跟进缺失价签的补全与底层堆头的整洁度。`,
+    summaryConclusion: `今日共完成 ${inspections.length} 家门店的终端陈列拜访（涉及：${storeNames.slice(0, 3).join('、')}等）。我方白酒产品在核心货架排面较为饱满，大部分正标朝向规范；建议后续重点跟进缺失价签的补全与底层堆头的整洁度。`,
     storeStats: {
       totalStores: inspections.length,
       totalPhotos: inspections.reduce((acc, cur) => acc + (cur.photoCount || 1), 0),
@@ -1151,10 +1151,10 @@ function generateMockDailySummary(inspections) {
 function generateFallbackDailySummary(inspections, errorMsg) {
   const storeNames = Array.from(new Set(inspections.map(i => i.storeName || '未命名门店')))
   return {
-    summaryTitle: '今日终端巡检基础汇总报告',
+    summaryTitle: '今日终端拜访基础汇总报告',
     overallScore: 80,
     overallLevel: '良好',
-    summaryConclusion: `今日共完成 ${inspections.length} 家门店巡检。由于网络或接口原因，未生成深度 AI 诊断，系统已自动完成照片存档与基础数据汇总。`,
+    summaryConclusion: `今日共完成 ${inspections.length} 家门店拜访。由于网络或接口原因，未生成深度 AI 诊断，系统已自动完成照片存档与基础数据汇总。`,
     storeStats: {
       totalStores: inspections.length,
       totalPhotos: inspections.reduce((acc, cur) => acc + (cur.photoCount || 1), 0),
@@ -1185,7 +1185,7 @@ function generateFallbackDailySummary(inspections, errorMsg) {
     storeRankings: storeNames.map(name => ({
       storeName: name,
       score: 80,
-      status: '已巡检',
+      status: '已拜访',
       comment: '照片已完成归档'
     }))
   }

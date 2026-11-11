@@ -1026,7 +1026,7 @@ function renderHtml(prefix) {
   <div class="lightbox" id="lightbox">
     <button class="lb-close" id="lbCloseBtn">✕</button>
     <div class="lb-img-wrap">
-      <img class="lb-img" id="lbImg" src="" alt="巡检照片预览" />
+      <img class="lb-img" id="lbImg" src="" alt="拜访照片预览" />
     </div>
     <div class="lb-controls">
       <button class="lb-btn" id="lbPrevBtn">‹ 上一张</button>
@@ -1220,7 +1220,7 @@ function renderHtml(prefix) {
             perUserVisitSeq.set(uKey, seq);
             badgeText = String(seq);
             typeLabel = '第' + seq + '站';
-            displayTitle = item.storeName || '无门店（沿街巡检）';
+            displayTitle = item.storeName || '无门店（常规拜访）';
           }
 
           const rawLat = item.location ? Number(item.location.latitude) : 0;

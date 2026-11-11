@@ -6,6 +6,17 @@ const { formatDate, timeAgo } = require('../../utils/date')
 const { formatScoreLevel } = require('../../utils/format')
 const app = getApp()
 
+// 旧日报（改名前生成并存进数据库的）标题和结论里还带「巡检」字样，
+// 只在显示时换成「拜访」，不改库里的数据
+function toVisitWording(daily) {
+  if (!daily) return daily
+  try {
+    return JSON.parse(JSON.stringify(daily).replace(/沿街巡检/g, '常规拜访').replace(/巡检/g, '拜访'))
+  } catch (_) {
+    return daily
+  }
+}
+
 Page({
   data: {
     // 列表数据
@@ -214,7 +225,7 @@ Page({
       if (res.result && res.result.success) {
         this.setData({
           stats: res.result.stats,
-          latestDailyReport: res.result.latestDailyReport || null
+          latestDailyReport: toVisitWording(res.result.latestDailyReport || null)
         })
       }
     } catch (err) {
@@ -237,10 +248,10 @@ Page({
     if (!report) return
 
     const lines = [
-      `📋【${report.summaryTitle || '白酒终端巡检综合分析日报'}】`,
+      `📋【${report.summaryTitle || '白酒终端拜访综合分析日报'}】`,
       `📅 日期：${this.data.latestDailyReport.date || '今日'}`,
       `⭐ 综合评分：${report.overallScore}分（${report.overallLevel || '良好'}）`,
-      `🏬 巡检门店：${this.data.latestDailyReport.inspectionCount || 0}家`,
+      `🏬 拜访门店：${this.data.latestDailyReport.inspectionCount || 0}家`,
       `\n💡 核心结论：\n${report.summaryConclusion || '暂无'}`,
       `\n⚠️ 今日共性问题：`
     ]
@@ -344,6 +355,11 @@ Page({
       showFilter: false
     })
     this.refreshList()
+  },
+
+  // 「管理」入口：只有管理员 / 管理者能看到（页面里还会再按服务端角色拦一次）
+  goManage() {
+    wx.navigateTo({ url: '/pages/settings/settings' })
   },
 
   goDashboard() {

@@ -53,11 +53,11 @@ exports.main = async (event, context) => {
     doc = res.data
   } catch (err) {
     console.error('查询巡检详情失败:', err)
-    return { success: false, error: '巡检记录不存在或无权访问' }
+    return { success: false, error: '拜访记录不存在或无权访问' }
   }
 
   if (!doc) {
-    return { success: false, error: '巡检记录不存在' }
+    return { success: false, error: '拜访记录不存在' }
   }
 
   // 归属校验：本人可直接读；管理者可读全员；其余拒绝
@@ -65,7 +65,7 @@ exports.main = async (event, context) => {
     const role = (caller && MANAGER_ROLES.includes(caller.role)) ? caller.role : 'sales'
     if (!MANAGER_ROLES.includes(role)) {
       console.warn(`拒绝越权读取: caller=${openid} 试图读取 inspection=${inspectionId}（属于 ${doc._openid}）`)
-      return { success: false, error: '无权访问该巡检记录' }
+      return { success: false, error: '无权访问该拜访记录' }
     }
   }
 

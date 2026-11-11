@@ -1,8 +1,15 @@
 // pages/settings/settings.js
-// 系统设置页 - 配置 AI 分析模式与集中分析时间、查看待分析队列、手动触发分析
+// 「管理」页（原「分析设置」页，文件名保持不变）：
+// 入口只在「拜访记录」页右上角，仅管理员 / 管理者可见；进入后再按服务端返回的角色拦一次。
+// - 管理员：可改分析模式/时间、拍照上传策略（全员生效）、API Key、进销存同步，进入用户与权限管理
+// - 管理者：只读查看，可看未分配的客户、进客户管理 / 产品库
+// - 系统还没有任何管理员时：显示「激活管理员」卡片（首管理员自举）
 
 const api = require('../../utils/api')
 const app = getApp()
+
+const TEAM_IMAGE_MODE_KEY = 'shelfguard_teamImageMode'
+const UNASSIGNED_PAGE_SIZE = 30
 
 function syncRole(role) {
   if (!role) return
@@ -18,6 +25,17 @@ Page({
     saving: false,
     running: false,
     canEdit: false,
+    role: 'sales',
+    isManager: false,
+
+    // 未分配的客户（进销存同步时没对上业务员，暂归管理员）
+    unassigned: [],
+    unassignedTotal: 0,
+    unassignedPendingSync: 0,
+    unassignedLoaded: false,
+    unassignedPage: 1,
+    unassignedTotalPages: 1,
+    unassignedLoadingPage: false,
 
     // 配置项
     analyzeMode: 'batch',       // batch = 每日集中分析；instant = 提交即分析
@@ -87,24 +105,42 @@ Page({
       // 把服务端认定的最新角色同步到全局，避免激活后跳转到 admin 页时被旧角色拦住
       syncRole(result.role)
 
-      // 同步到全局，供相机页读取
+      const role = result.role || 'sales'
+      const isManager = role === 'admin' || role === 'manager'
+      const showActivate = (!result.canEdit && !result.hasAdmin)
+      // 页面入口保护：业务员不该进来（入口已隐藏，这里兜底）。
+      // 例外：系统还没有任何管理员时，允许进来用激活码激活首个管理员。
+      if (!isManager && !showActivate) {
+        this.setData({ loading: false })
+        wx.showToast({ title: '仅管理员或管理者可访问', icon: 'none' })
+        setTimeout(() => {
+          wx.navigateBack({ fail: () => wx.switchTab({ url: '/pages/home/home' }) })
+        }, 800)
+        return
+      }
+
+      // 同步到全局 + 本机缓存，供相机页读取（拍照上传策略全员统一）
+      const teamImageMode = s.imageMode === 'quality' ? 'quality' : 'traffic'
       app.globalData.systemConfig = {
         ...(app.globalData.systemConfig || {}),
         analyzeMode: s.analyzeMode,
         analyzeTime: s.analyzeTime,
-        imageMode: s.imageMode === 'quality' ? 'quality' : 'traffic'
+        imageMode: teamImageMode
       }
+      try { wx.setStorageSync(TEAM_IMAGE_MODE_KEY, teamImageMode) } catch (_) {}
 
       this.setData({
         loading: false,
+        role,
+        isManager,
         canEdit: result.canEdit,
         hasAdmin: result.hasAdmin,
-        showActivate: (!result.canEdit && !result.hasAdmin),
+        showActivate,
         analyzeMode: s.analyzeMode,
         analyzeTime: s.analyzeTime,
         windowMinutes: s.windowMinutes,
         batchSize: s.batchSize,
-        imageMode: s.imageMode === 'quality' ? 'quality' : 'traffic',
+        imageMode: teamImageMode,
         hasApiKey: s.hasApiKey,
         apiKeyMasked: s.apiKeyMasked,
         queue: result.queue || { pending: 0, analyzing: 0, failed: 0, scope: 'self' },
@@ -117,6 +153,9 @@ Page({
         jxcLastSyncText: this.formatLastRun(s.jxcLastSyncAt, s.jxcLastSyncTriggeredBy),
         jxcLastSyncSummaryText: this.formatJxcSummary(s.jxcLastSyncSummary)
       })
+      if (isManager) {
+        this.loadUnassigned(this.data.unassignedPage || 1)
+      }
     } catch (err) {
       console.error('读取设置失败:', err)
       this.setData({ loading: false })
@@ -150,18 +189,78 @@ Page({
   },
 
   onSelectImageMode(e) {
-    // 识别精度 vs 流量：所有人可改本机偏好；管理员保存时还会写入团队默认
+    // 拍照上传策略：管理员统一设置，点「保存设置」后对全员生效
+    if (!this.checkEditable()) return
     const mode = e.currentTarget.dataset.mode
     if (mode !== 'quality' && mode !== 'traffic') return
     this.setData({ imageMode: mode })
-    try { wx.setStorageSync('shelfguard_imageMode', mode) } catch (_) {}
-    app.globalData.systemConfig = {
-      ...(app.globalData.systemConfig || {}),
-      imageMode: mode
+  },
+
+  // ---------- 未分配的客户 ----------
+
+  // 未分配客户分页：每页 30 家，后端按 page / limit 分页返回（listUnassigned 支持），总数始终显示
+  async loadUnassigned(page = 1) {
+    if (this.data.unassignedLoadingPage) return
+    this.setData({ unassignedLoadingPage: true })
+    try {
+      const res = await api.callFunction({
+        name: 'customers',
+        data: { action: 'listUnassigned', page, limit: UNASSIGNED_PAGE_SIZE }
+      })
+      const r = res.result
+      if (!r || !r.success) {
+        throw new Error((r && r.error) || '加载失败')
+      }
+      const total = r.total || 0
+      const totalPages = Math.max(1, Math.ceil(total / UNASSIGNED_PAGE_SIZE))
+      // 删减后当前页可能超出范围（比如刚分配掉一批），自动回到最后一页
+      if (page > totalPages && total > 0) {
+        this.setData({ unassignedLoadingPage: false })
+        return this.loadUnassigned(totalPages)
+      }
+      this.setData({
+        unassigned: r.list || [],
+        unassignedTotal: total,
+        unassignedPage: page,
+        unassignedTotalPages: totalPages,
+        unassignedPendingSync: r.pendingSync || 0,
+        unassignedLoaded: true,
+        unassignedLoadingPage: false
+      })
+    } catch (err) {
+      console.warn('读取未分配客户失败:', err)
+      if (this.data.unassignedLoaded) {
+        // 翻页失败：保留当前页内容
+        this.setData({ unassignedLoadingPage: false })
+        wx.showToast({ title: '加载失败，请重试', icon: 'none' })
+        return
+      }
+      // 后端还没更新到支持 listUnassigned 时，静默隐藏这一块
+      this.setData({
+        unassigned: [], unassignedTotal: 0, unassignedPage: 1, unassignedTotalPages: 1,
+        unassignedPendingSync: 0, unassignedLoaded: false, unassignedLoadingPage: false
+      })
     }
-    if (!this.data.canEdit) {
-      wx.showToast({ title: mode === 'quality' ? '已选精度优先' : '已选流量优先', icon: 'none' })
-    }
+  },
+
+  onPrevUnassigned() {
+    if (this.data.unassignedPage <= 1) return
+    this.loadUnassigned(this.data.unassignedPage - 1)
+  },
+
+  onNextUnassigned() {
+    if (this.data.unassignedPage >= this.data.unassignedTotalPages) return
+    this.loadUnassigned(this.data.unassignedPage + 1)
+  },
+
+  // ---------- 其他管理入口 ----------
+
+  goCustomers() {
+    wx.navigateTo({ url: '/pages/customers/customers' })
+  },
+
+  goProducts() {
+    wx.navigateTo({ url: '/pages/products/products' })
   },
 
   onTimeChange(e) {

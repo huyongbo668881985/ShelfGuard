@@ -257,7 +257,7 @@ Page({
           if (err && err.errMsg && err.errMsg.includes('auth deny')) {
             wx.showModal({
               title: '需要相册权限',
-              content: '请在设置中开启相册权限，用于保存巡检照片',
+              content: '请在设置中开启相册权限，用于保存拜访照片',
               confirmText: '去设置',
               success: (r) => { if (r.confirm) wx.openSetting() }
             })
@@ -305,7 +305,7 @@ Page({
     if (denied) {
       wx.showModal({
         title: '需要相册权限',
-        content: '请在设置中开启相册权限，用于保存巡检照片',
+        content: '请在设置中开启相册权限，用于保存拜访照片',
         confirmText: '去设置',
         success: (r) => { if (r.confirm) wx.openSetting() }
       })
@@ -372,7 +372,7 @@ Page({
   onShareAppMessage() {
     const { detail } = this.data
     return {
-      title: `巡检报告 - ${detail.taskName || '白酒终端巡检'}`,
+      title: `拜访报告 - ${detail.taskName || '白酒终端拜访'}`,
       path: `/pages/report/report?id=${this.data.inspectionId}`
     }
   }

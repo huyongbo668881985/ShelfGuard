@@ -17,6 +17,15 @@ const hideLoading = () => {
   wx.hideLoading()
 }
 
+// 团队统一的拍照上传策略缓存（服务端 settings.global.imageMode 的本机副本）
+const TEAM_IMAGE_MODE_KEY = 'shelfguard_teamImageMode'
+const DEFAULT_IMAGE_MODE = 'traffic'
+const NAME_MAX_LEN = 20
+
+function normalizeName(raw) {
+  return String(raw === undefined || raw === null ? '' : raw).replace(/\s+/g, ' ').trim()
+}
+
 App({
   onLaunch: function () {
     // 隐私授权拦截：自微信基础库 2.32.3 起，调用相机/位置等敏感接口前
@@ -48,6 +57,19 @@ App({
       })
     }
 
+    // 旧版本里「拍照上传策略」是每台手机各自选的（本机偏好 shelfguard_imageMode），
+    // 现在改成管理员在「管理」里统一设置、全员生效，清掉旧的本机偏好，避免它盖过团队设置
+    try { wx.removeStorageSync('shelfguard_imageMode') } catch (_) {}
+    // 任务名称已固定为默认值，清掉旧版本记住的「上次任务名」
+    try { wx.removeStorageSync('shelfguard_lastTaskName') } catch (_) {}
+    // 先用上次缓存的团队设置，登录后再从服务端刷新
+    try {
+      const cachedMode = wx.getStorageSync(TEAM_IMAGE_MODE_KEY)
+      if (cachedMode === 'quality' || cachedMode === 'traffic') {
+        this.globalData.systemConfig.imageMode = cachedMode
+      }
+    } catch (_) {}
+
     // 用户登录
     this.login()
   },
@@ -61,6 +83,8 @@ App({
     userRole: 'sales',
     userDisabled: false,
     userApproved: false,
+    // 还没填业务员姓名（首次登录）：弹出必填的姓名输入框
+    needsName: false,
     
     // 当前巡检任务
     currentTask: {
@@ -88,7 +112,8 @@ App({
     systemConfig: {
       analyzeMode: 'batch',
       analyzeTime: '21:00',
-      // traffic=拼图省流量；quality=多图直传提高识别精度
+      // traffic=拼图省流量；quality=多图直传提高识别精度。
+      // 由管理员在「管理」里统一设置，登录后从服务端刷新（refreshClientConfig）
       imageMode: 'traffic'
     },
 
@@ -129,12 +154,21 @@ App({
         if (result.userInfo.name) {
           this.globalData.currentTask.userName = result.userInfo.name
         }
+        this.globalData.needsName = !normalizeName(result.userInfo.name) && !result.userInfo.disabled
       }
 
       console.log('[登录] 成功:', result.openid)
 
       // 登录成功后静默刷离线待上传队列
       this.flushOfflineQueueQuiet()
+
+      // 拉一次团队统一设置（拍照上传策略等），失败就沿用缓存/默认值
+      this.refreshClientConfig()
+
+      // 首次登录还没有姓名：弹出必填输入框
+      if (this.globalData.needsName) {
+        this.promptForName()
+      }
 
       // 触发登录成功事件
       this.loginCallback && this.loginCallback(result)
@@ -145,16 +179,140 @@ App({
     }
   },
 
+  // 从服务端读取团队统一设置（只读，所有已登录用户都能读；修改只有管理员能在「管理」里改）
+  async refreshClientConfig() {
+    try {
+      const res = await api.callFunction({ name: 'settings', data: { action: 'get' } })
+      const r = res && res.result
+      if (!r || !r.success || !r.settings) return this.globalData.systemConfig
+      const s = r.settings
+      const imageMode = s.imageMode === 'quality' ? 'quality' : DEFAULT_IMAGE_MODE
+      this.globalData.systemConfig = {
+        ...(this.globalData.systemConfig || {}),
+        analyzeMode: s.analyzeMode,
+        analyzeTime: s.analyzeTime,
+        imageMode
+      }
+      try { wx.setStorageSync(TEAM_IMAGE_MODE_KEY, imageMode) } catch (_) {}
+    } catch (err) {
+      console.warn('[团队设置] 读取失败，沿用缓存/默认值', err)
+    }
+    return this.globalData.systemConfig
+  },
+
+  // 团队统一的拍照上传策略：内存 → 本机缓存 → 默认 traffic
+  getImageMode() {
+    const cfg = this.globalData.systemConfig || {}
+    if (cfg.imageMode === 'quality' || cfg.imageMode === 'traffic') return cfg.imageMode
+    try {
+      const cached = wx.getStorageSync(TEAM_IMAGE_MODE_KEY)
+      if (cached === 'quality' || cached === 'traffic') return cached
+    } catch (_) {}
+    return DEFAULT_IMAGE_MODE
+  },
+
+  // 首次登录必填姓名：用可输入的系统弹窗，业务员没有「取消」按钮，填好才能继续用。
+  // 管理员可以点「稍后」跳过（本次打开不再弹），保证管理员随时能去批准新人。
+  promptForName(prefill = '', errorTitle = '') {
+    if (this._namePrompting || !this.globalData.needsName) return
+    const isAdmin = this.globalData.userRole === 'admin'
+    if (isAdmin && this._nameSkipped) return
+    this._namePrompting = true
+
+    const retry = (value, title) => {
+      setTimeout(() => this.promptForName(value, title), 300)
+    }
+
+    wx.showModal({
+      title: errorTitle || '请输入你的姓名',
+      content: prefill,
+      editable: true,
+      placeholderText: '需与进销存里的业务员姓名一致',
+      showCancel: isAdmin,
+      cancelText: '稍后',
+      confirmText: '保存',
+      success: async (r) => {
+        this._namePrompting = false
+        if (!r.confirm) {
+          if (isAdmin) {
+            this._nameSkipped = true
+          } else {
+            retry(prefill)
+          }
+          return
+        }
+        const name = normalizeName(r.content)
+        if (!name) {
+          retry('', '姓名不能为空，请重新输入')
+          return
+        }
+        if (name.length > NAME_MAX_LEN) {
+          retry(name.slice(0, NAME_MAX_LEN), `姓名不能超过 ${NAME_MAX_LEN} 个字`)
+          return
+        }
+
+        showLoading('保存中...')
+        let result = null
+        try {
+          const res = await api.callFunction({
+            name: 'login',
+            data: { action: 'update', userInfo: { name } }
+          })
+          result = res && res.result
+        } catch (err) {
+          console.error('[姓名] 保存失败:', err)
+        }
+        hideLoading()
+
+        if (result && result.success !== false) {
+          this.globalData.userInfo = { ...(this.globalData.userInfo || {}), name }
+          this.globalData.currentTask.userName = name
+          this.globalData.needsName = false
+          toast('姓名已保存', 'success')
+          this.notifyUserNameReady()
+          return
+        }
+        if (result && result.nameLocked) {
+          // 服务端已经有姓名了（比如管理员刚帮你填了），重新登录拿最新资料
+          this.globalData.needsName = false
+          await this.login()
+          this.notifyUserNameReady()
+          return
+        }
+        retry(name, (result && result.error) || '保存失败，请重试')
+      },
+      fail: () => {
+        this._namePrompting = false
+        retry(prefill)
+      }
+    })
+  },
+
+  // 姓名保存后通知当前页面刷新显示（页面实现了 onUserNameReady 才会调用）
+  notifyUserNameReady() {
+    try {
+      const pages = getCurrentPages()
+      pages.forEach(p => {
+        if (p && typeof p.onUserNameReady === 'function') p.onUserNameReady()
+      })
+    } catch (_) {}
+  },
+
   // 更新用户信息
   async updateUserInfo(userInfo) {
     try {
-      await api.callFunction({
+      const res = await api.callFunction({
         name: 'login',
         data: {
           action: 'update',
           userInfo: userInfo
         }
       })
+      // 服务端可能拒绝（比如业务员已有姓名不能自己改），这时不要改本地显示
+      if (res && res.result && res.result.success === false) {
+        console.warn('[用户信息] 服务端拒绝:', res.result.error)
+        return false
+      }
 
       this.globalData.userInfo = {
         ...this.globalData.userInfo,

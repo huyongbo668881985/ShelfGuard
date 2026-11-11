@@ -42,7 +42,7 @@
   },
   "permission": {
     "scope.userLocation": {
-      "desc": "需要获取您的位置用于记录巡检门店地址"
+      "desc": "需要获取您的位置用于记录拜访门店地址"
     }
   },
   "requiredPrivateInfos": [

@@ -24,7 +24,7 @@
 // ------------------------------------------------------------
 // System Prompt：定义 AI 的身份、评估标准、输出格式
 // ------------------------------------------------------------
-const SYSTEM_PROMPT = `你是一位资深的白酒行业终端陈列评估专家，拥有超过15年的白酒品牌管理和终端巡检经验。你的任务是对货架陈列照片进行专业、客观、细致的分析。
+const SYSTEM_PROMPT = `你是一位资深的白酒行业终端陈列评估专家，拥有超过15年的白酒品牌管理和终端拜访经验。你的任务是对货架陈列照片进行专业、客观、细致的分析。
 
 ## 你的专业背景
 
@@ -236,7 +236,7 @@ user prompt 末尾可能会附上一份「本品牌产品资料」。那些品�
  */
 function buildUserPrompt(imageCount, brandReferenceText) {
   const basePrompt = imageCount > 1
-    ? `以下 ${imageCount} 张照片是同一次巡检、同一个货架从不同角度或不同排面拍摄的。请综合所有图片作为一个整体给出一份评估结果，注意跨图片去重（同一产品出现在多张照片中不要重复计数），不要为每张图分别输出。请严格按照 System Prompt 中定义的 JSON 格式输出评估结果。注意：只输出 JSON，不要输出任何其他内容。`
+    ? `以下 ${imageCount} 张照片是同一次拜访、同一个货架从不同角度或不同排面拍摄的。请综合所有图片作为一个整体给出一份评估结果，注意跨图片去重（同一产品出现在多张照片中不要重复计数），不要为每张图分别输出。请严格按照 System Prompt 中定义的 JSON 格式输出评估结果。注意：只输出 JSON，不要输出任何其他内容。`
     : `请分析这张白酒货架陈列照片。请严格按照 System Prompt 中定义的 JSON 格式输出评估结果。注意：只输出 JSON，不要输出任何其他内容。`
 
   return basePrompt + (brandReferenceText || '')
@@ -245,19 +245,19 @@ function buildUserPrompt(imageCount, brandReferenceText) {
 // ------------------------------------------------------------
 // Daily Summary Prompt：晚间全天巡检综合分析日报（大盘综合结论）
 // ------------------------------------------------------------
-const DAILY_SUMMARY_SYSTEM_PROMPT = `你是一位白酒品牌终端动销与陈列战略评估专家。你的任务是对业务员今天全天巡检的多家终端门店陈列情况进行综合汇总分析，输出一份权威、客观、极具实战指导意义的《今日巡检综合陈列评估日报》。
+const DAILY_SUMMARY_SYSTEM_PROMPT = `你是一位白酒品牌终端动销与陈列战略评估专家。你的任务是对业务员今天全天拜访的多家终端门店陈列情况进行综合汇总分析，输出一份权威、客观、极具实战指导意义的《今日拜访综合陈列评估日报》。
 
 ## 你的分析目标
-这不是针对单张照片的孤立评价，而是对今天全天所有巡检门店的陈列大盘进行全面体检与横向对比，给出全局结论。
+这不是针对单张照片的孤立评价，而是对今天全天所有拜访门店的陈列大盘进行全面体检与横向对比，给出全局结论。
 
 ## 输出要求
 严格按照以下 JSON 格式输出，不要输出任何解释说明、markdown 标记或前缀后缀：
 \`\`\`json
 {
-  "summaryTitle": "今日终端巡检综合分析日报",
+  "summaryTitle": "今日终端拜访综合分析日报",
   "overallScore": 82,
   "overallLevel": "优秀",
-  "summaryConclusion": "今日共完成巡检5家门店，整体陈列整齐度良好。我方核心产品在3家门店占据黄金视线排面，但普遍存在价签脱落和底层正标未摆正的问题，需在明日拜访时重点跟进整改。",
+  "summaryConclusion": "今日共完成拜访5家门店，整体陈列整齐度良好。我方核心产品在3家门店占据黄金视线排面，但普遍存在价签脱落和底层正标未摆正的问题，需在明日拜访时重点跟进整改。",
   "storeStats": {
     "totalStores": 5,
     "totalPhotos": 8,
@@ -316,7 +316,7 @@ const DAILY_SUMMARY_SYSTEM_PROMPT = `你是一位白酒品牌终端动销与陈�
 
 function buildDailySummaryUserPrompt(inspectionList, brandReferenceText) {
   const storeNames = Array.from(new Set(inspectionList.map(item => item.storeName || '未命名门店'))).join('、')
-  return `以下是业务员今天全天完成的 ${inspectionList.length} 条终端门店巡检照片（涉及门店：${storeNames}）。请综合今天所有门店照片，客观评估今日全天陈列大盘表现，提炼出全天共性问题及明日行动方案，生成今日巡检综合结论日报。注意：只输出合法的 JSON 格式。` + (brandReferenceText || '')
+  return `以下是业务员今天全天完成的 ${inspectionList.length} 条终端门店拜访照片（涉及门店：${storeNames}）。请综合今天所有门店照片，客观评估今日全天陈列大盘表现，提炼出全天共性问题及明日行动方案，生成今日拜访综合结论日报。注意：只输出合法的 JSON 格式。` + (brandReferenceText || '')
 }
 
 module.exports = {

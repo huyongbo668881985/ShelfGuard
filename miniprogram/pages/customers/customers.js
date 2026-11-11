@@ -371,7 +371,7 @@ Page({
     const item = e.currentTarget.dataset.item
     wx.showModal({
       title: '删除客户',
-      content: `确定要删除「${item.storeName}」吗？历史巡检记录不受影响。`,
+      content: `确定要删除「${item.storeName}」吗？历史拜访记录不受影响。`,
       success: async (res) => {
         if (!res.confirm) return
         try {

@@ -122,6 +122,75 @@ Page({
     })
   },
 
+  // 弹出可输入的系统弹窗，返回 { confirm, value }
+  askText({ title, value = '', placeholder = '' }) {
+    return new Promise(resolve => {
+      wx.showModal({
+        title,
+        content: value,
+        editable: true,
+        placeholderText: placeholder,
+        confirmText: '保存',
+        success: r => resolve({ confirm: !!r.confirm, value: String(r.content || '').replace(/\s+/g, ' ').trim() }),
+        fail: () => resolve({ confirm: false, value: '' })
+      })
+    })
+  },
+
+  async callUsers(data, okText) {
+    wx.showLoading({ title: '保存中', mask: true })
+    try {
+      const res = await api.callFunction({ name: 'users', data })
+      wx.hideLoading()
+      if (!res.result || !res.result.success) {
+        throw new Error(res.result && res.result.error || '操作失败')
+      }
+      // success 图标的提示最多显示 7 个字，长提示改用纯文字
+      wx.showToast({ title: okText, icon: okText.length > 7 ? 'none' : 'success', duration: okText.length > 7 ? 2500 : 1500 })
+      this.loadUsers({ reset: true })
+      return true
+    } catch (err) {
+      wx.hideLoading()
+      wx.showToast({ title: err.message || '操作失败', icon: 'none' })
+      return false
+    }
+  },
+
+  // 改姓名：业务员自己填过后不能再改，只能管理员在这里改（users.setName）
+  async editName(e) {
+    const targetId = e.currentTarget.dataset.id
+    const current = e.currentTarget.dataset.name || ''
+    const r = await this.askText({
+      title: '修改姓名',
+      value: current,
+      placeholder: '需与进销存里的业务员姓名一致'
+    })
+    if (!r.confirm) return
+    if (!r.value) {
+      wx.showToast({ title: '姓名不能为空', icon: 'none' })
+      return
+    }
+    if (r.value === current) return
+    await this.callUsers({ action: 'setName', targetId, name: r.value }, '已修改，下次同步后重新分配客户')
+  },
+
+  // 绑定进销存业务员：姓名对不上或重名时，手动指定这个账号对应进销存里的哪个业务员
+  async editJxcBinding(e) {
+    const targetId = e.currentTarget.dataset.id
+    const current = e.currentTarget.dataset.binding || ''
+    const r = await this.askText({
+      title: '绑定进销存业务员',
+      value: current,
+      placeholder: '填进销存里的业务员姓名，留空表示解除绑定'
+    })
+    if (!r.confirm) return
+    if (r.value === current) return
+    await this.callUsers(
+      { action: 'setJxcBinding', targetId, jxcOperatorName: r.value },
+      r.value ? '已绑定，下次同步后重新分配客户' : '已解除绑定，下次同步后生效'
+    )
+  },
+
   // 停用 / 启用：调用 users.setDisabled
   // 批准业务员准入（未批准时显示按钮）
   async toggleApproved(e) {
@@ -132,7 +201,7 @@ Page({
     const confirm = await new Promise(resolve => {
       wx.showModal({
         title: '批准账号',
-        content: '确定批准该用户？批准后其可提交巡检与触发分析。',
+        content: '确定批准该用户？批准后其可提交拜访记录。',
         success: x => resolve(x.confirm),
         fail: () => resolve(false)
       })
@@ -167,7 +236,7 @@ Page({
         title: `${actionText}账号`,
         content: disabled
           ? '确定启用该用户？启用后其可正常提交与查看记录。'
-          : '确定停用该用户？停用后其将无法提交巡检、查看记录与修改设置（历史数据不受影响，已排队的记录仍会被系统分析完）。',
+          : '确定停用该用户？停用后其将无法提交拜访、查看记录与修改设置（历史数据不受影响，已排队的记录仍会被系统分析完）。',
         success: x => resolve(x.confirm),
         fail: () => resolve(false)
       })

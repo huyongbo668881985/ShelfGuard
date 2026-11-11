@@ -327,3 +327,40 @@
   font-size: 40rpx;
   color: var(--color-text-hint);
 }
+
+/* 未分配的客户列表 */
+.unassigned-item {
+  display: flex;
+  flex-direction: column;
+  padding: 16rpx 8rpx;
+  border-bottom: 1rpx solid #f0f0f0;
+}
+
+.unassigned-name {
+  font-size: 28rpx;
+  color: #1a1a2e;
+}
+
+.unassigned-op {
+  font-size: 24rpx;
+  color: #888;
+  margin-top: 4rpx;
+}
+
+.unassigned-pager {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16rpx 0 4rpx;
+}
+
+.pager-btn {
+  margin: 0;
+  min-width: 140rpx;
+}
+
+.unassigned-count {
+  font-size: 24rpx;
+  color: #888;
+}
+

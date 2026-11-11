@@ -137,6 +137,11 @@ Page({
     this.setData({ userName: me.name || '', isManager, needsApproval })
   },
 
+  // 首次登录填完姓名后由 app.js 通知：刷新问候语里的姓名
+  onUserNameReady() {
+    this.syncUser()
+  },
+
   refreshOfflineCount() {
     try {
       this.setData({ offlineCount: offlineQueue.count() })
@@ -306,7 +311,7 @@ Page({
     if (isClock) {
       item.displayStore = item.recordType === 'clock_out' ? '下班打卡' : '上班打卡'
     } else {
-      item.displayStore = item.storeName || '无门店（沿街巡检）'
+      item.displayStore = item.storeName || '无门店（常规拜访）'
     }
     return item
   },

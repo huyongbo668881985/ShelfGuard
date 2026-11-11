@@ -3,7 +3,10 @@
 //
 // 策略规则：
 // 1. 业务员对齐（方式 A）：优先用进销存业务员账号手机号匹配 users.phone；
-//    姓名仅在唯一命中时使用（重名不自动绑定，归管理员兜底并记入 warnings）。
+//    其次是管理员在「用户与权限管理」里手动绑定的进销存业务员姓名（users.jxcOperatorName，唯一命中才用）；
+//    最后是姓名唯一命中（重名不自动绑定，归管理员兜底并记入 warnings）。
+//    每条客户都会记下进销存业务员（jxcOperatorName / jxcOperatorUsername）和是否匹配上（jxcAssignMatched），
+//    管理页「未分配的客户」就是 jxcAssignMatched === false 的客户。
 // 2. 坐标对齐（策略 B）：同步过来的 location 初始为 null；已有现场打卡坐标绝不覆盖。
 // 3. 运行方式：定时触发器 + 管理员手动「立即同步」。
 // 4. 查询：users 分页拉全；customers 按 jxcCustomerId 批量 _.in，避免逐条 N+1。
@@ -156,7 +159,13 @@ async function loadCustomersByJxcIds(jxcIds) {
 function buildUserMaps(users) {
   const phoneToOpenid = {}
   const nameToOpenids = {} // name -> [openid,...] 用于检测重名
+  const bindingToOpenids = {} // 管理员手动绑定的进销存业务员姓名 -> [openid,...]
   let fallbackOpenid = ''
+
+  const pushUnique = (map, key, openid) => {
+    if (!map[key]) map[key] = []
+    if (!map[key].includes(openid)) map[key].push(openid)
+  }
 
   users.forEach(u => {
     if (u.disabled) return
@@ -164,40 +173,53 @@ function buildUserMaps(users) {
       phoneToOpenid[String(u.phone).trim()] = u._openid
     }
     if (u.name && String(u.name).trim()) {
-      const n = String(u.name).trim()
-      if (!nameToOpenids[n]) nameToOpenids[n] = []
-      if (!nameToOpenids[n].includes(u._openid)) {
-        nameToOpenids[n].push(u._openid)
-      }
+      pushUnique(nameToOpenids, String(u.name).trim(), u._openid)
+    }
+    if (u.jxcOperatorName && String(u.jxcOperatorName).trim()) {
+      pushUnique(bindingToOpenids, String(u.jxcOperatorName).trim(), u._openid)
     }
     if (u.role === 'admin' && !fallbackOpenid) {
       fallbackOpenid = u._openid
     }
   })
 
-  return { phoneToOpenid, nameToOpenids, fallbackOpenid }
+  return { phoneToOpenid, nameToOpenids, bindingToOpenids, fallbackOpenid }
 }
 
-function resolveTargetOpenid(item, maps, warnings) {
-  const { phoneToOpenid, nameToOpenids, fallbackOpenid } = maps
+/**
+ * 返回 { openid, matched, by }：
+ * - matched=true 表示按手机号 / 手动绑定 / 唯一姓名对上了业务员；
+ * - matched=false 表示没对上（含重名），openid 是管理员兜底。
+ */
+function resolveTarget(item, maps, warnings) {
+  const { phoneToOpenid, nameToOpenids, bindingToOpenids = {}, fallbackOpenid } = maps
   const opUsername = String(item.operator_username || '').trim()
   const opName = String(item.operator_name || '').trim()
 
   // 优先手机号 / 账号
   if (opUsername && phoneToOpenid[opUsername]) {
-    return phoneToOpenid[opUsername]
+    return { openid: phoneToOpenid[opUsername], matched: true, by: 'phone' }
+  }
+
+  // 管理员手动绑定：唯一命中才用；多人绑了同一个名字时记警告，继续按姓名匹配
+  if (opName && bindingToOpenids[opName]) {
+    const hits = bindingToOpenids[opName]
+    if (hits.length === 1) {
+      return { openid: hits[0], matched: true, by: 'binding' }
+    }
+    warnings.push(`进销存业务员「${opName}」被 ${hits.length} 个账号手动绑定，已忽略绑定，改按姓名匹配`)
   }
 
   // 姓名仅唯一命中时可用；重名归兜底并记警告
   if (opName && nameToOpenids[opName]) {
     const hits = nameToOpenids[opName]
     if (hits.length === 1) {
-      return hits[0]
+      return { openid: hits[0], matched: true, by: 'name' }
     }
     warnings.push(`客户「${item.name || item.id}」业务员姓名「${opName}」在 ShelfGuard 中重名(${hits.length})，已归属管理员`)
   }
 
-  return fallbackOpenid
+  return { openid: fallbackOpenid, matched: false, by: 'fallback' }
 }
 
 exports.main = async (event, context) => {
@@ -288,7 +310,12 @@ exports.main = async (event, context) => {
     const address = (item.address || '').trim()
     const contactName = (item.contact || '').trim()
     const contactPhone = (item.phone || '').trim()
-    const targetOpenid = resolveTargetOpenid(item, maps, warnings)
+    const target = resolveTarget(item, maps, warnings)
+    const targetOpenid = target.openid
+    // 记下进销存那边的业务员和匹配结果，管理页据此列出「未分配的客户」
+    const jxcOperatorName = String(item.operator_name || '').trim()
+    const jxcOperatorUsername = String(item.operator_username || '').trim()
+    const jxcAssignMatched = !!target.matched
     const existing = existingByJxcId.get(jxcId)
 
     if (existing) {
@@ -297,11 +324,17 @@ exports.main = async (event, context) => {
         (address && existing.address !== address) ||
         (contactName && existing.contactName !== contactName) ||
         (contactPhone && existing.contactPhone !== contactPhone) ||
-        (targetOpenid && existing._openid !== targetOpenid)
+        (targetOpenid && existing._openid !== targetOpenid) ||
+        (existing.jxcOperatorName || '') !== jxcOperatorName ||
+        (existing.jxcOperatorUsername || '') !== jxcOperatorUsername ||
+        existing.jxcAssignMatched !== jxcAssignMatched
 
       if (needUpdate) {
         const updateData = {
           storeName,
+          jxcOperatorName,
+          jxcOperatorUsername,
+          jxcAssignMatched,
           updatedAt: db.serverDate()
         }
         if (address) updateData.address = address
@@ -329,10 +362,13 @@ exports.main = async (event, context) => {
       await db.collection('customers').doc(matchedOld._id).update({
         data: {
           jxcCustomerId: jxcId,
+          jxcOperatorName,
+          jxcOperatorUsername,
+          jxcAssignMatched,
           updatedAt: db.serverDate()
         }
       })
-      existingByJxcId.set(jxcId, { ...matchedOld, jxcCustomerId: jxcId })
+      existingByJxcId.set(jxcId, { ...matchedOld, jxcCustomerId: jxcId, jxcOperatorName, jxcOperatorUsername, jxcAssignMatched })
       return { kind: 'updated' }
     }
 
@@ -344,13 +380,16 @@ exports.main = async (event, context) => {
         address,
         contactName,
         contactPhone,
+        jxcOperatorName,
+        jxcOperatorUsername,
+        jxcAssignMatched,
         location: null,
         isActive: true,
         createdAt: db.serverDate(),
         updatedAt: db.serverDate()
       }
     })
-    existingByJxcId.set(jxcId, { _id: addRes._id, jxcCustomerId: jxcId })
+    existingByJxcId.set(jxcId, { _id: addRes._id, _openid: targetOpenid, storeName, address, contactName, contactPhone, jxcCustomerId: jxcId, jxcOperatorName, jxcOperatorUsername, jxcAssignMatched })
     return { kind: 'added' }
   }
 
@@ -408,3 +447,6 @@ exports.main = async (event, context) => {
     summary
   }
 }
+
+// 供本地测试使用（不影响云函数入口）
+exports._internal = { buildUserMaps, resolveTarget }

@@ -57,7 +57,7 @@ exports.main = async (event, context) => {
     return { success: false, error: '缺少照片文件，无法提交' }
   }
   if (fileIDs.length > MAX_PHOTOS) {
-    return { success: false, error: `单次巡检最多提交 ${MAX_PHOTOS} 张照片` }
+    return { success: false, error: `单次拜访最多提交 ${MAX_PHOTOS} 张照片` }
   }
   if (!fileIDs.every(id => isValidFileID(id, openid))) {
     return { success: false, error: '照片文件格式不合法' }
@@ -100,7 +100,7 @@ exports.main = async (event, context) => {
     const userRes = await db.collection('users').where({ _openid: openid }).get()
     let user = userRes.data[0]
     if (user && user.disabled) {
-      return { success: false, error: '账号已停用，无法提交巡检' }
+      return { success: false, error: '账号已停用，无法提交拜访' }
     }
     // 自动兜底建档：避免新用户初次提交因时序未及时建档而被阻断
     if (!user) {

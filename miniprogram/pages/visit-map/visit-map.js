@@ -183,7 +183,7 @@ Page({
           visitCount++
           typeLabel = `第${visitSeq}站`
           badgeText = String(visitSeq)
-          displayTitle = item.storeName || '无门店（沿街巡检）'
+          displayTitle = item.storeName || '无门店（常规拜访）'
           shortTitle = displayTitle.length > 7 ? displayTitle.slice(0, 7) + '…' : displayTitle
         }
 

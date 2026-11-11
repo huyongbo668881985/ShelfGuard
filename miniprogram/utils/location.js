@@ -44,7 +44,7 @@ function getLocation() {
 function showLocationAuth() {
   wx.showModal({
     title: '需要位置权限',
-    content: '请在设置中开启位置权限，用于记录巡检门店地址',
+    content: '请在设置中开启位置权限，用于记录拜访门店地址',
     confirmText: '去设置',
     success: res => {
       if (res.confirm) {

@@ -30,7 +30,7 @@
 
     <!-- 基本信息 -->
     <view class="card info-section">
-      <view class="section-title">巡检信息</view>
+      <view class="section-title">拜访信息</view>
       <view class="info-row">
         <text class="info-label">任务名称</text>
         <text class="info-value">{{detail.taskName || '未填写'}}</text>
@@ -44,7 +44,7 @@
         <text class="info-value">{{detail.userName || '未设置'}}</text>
       </view>
       <view class="info-row">
-        <text class="info-label">巡检时间</text>
+        <text class="info-label">拜访时间</text>
         <text class="info-value">{{detail.createdAtFormatted}}</text>
       </view>
       <view class="info-row">

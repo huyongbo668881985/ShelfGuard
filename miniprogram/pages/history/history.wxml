@@ -1,9 +1,13 @@
 <!--pages/history/history.wxml-->
 <view class="history-page">
   <!-- 品牌头 -->
-  <view class="brand-header">
-    <view class="brand-logo">特8水印</view>
-    <view class="brand-sub">终端拜访 · 真实水印</view>
+  <view class="brand-header brand-header--with-action">
+    <view>
+      <view class="brand-logo">特8水印</view>
+      <view class="brand-sub">终端拜访 · 真实水印</view>
+    </view>
+    <!-- 「管理」入口：仅管理员 / 管理者可见（角色来自服务端登录结果，管理页里还会再校验） -->
+    <view class="manage-btn" wx:if="{{isManager}}" bindtap="goManage">⚙️ 管理</view>
   </view>
 
   <!-- 统计卡片 -->
@@ -46,7 +50,7 @@
       <view class="daily-title-group">
         <text class="daily-icon">📊</text>
         <view>
-          <text class="daily-main-title">{{latestDailyReport.report.summaryTitle || '今日终端巡检综合分析日报'}}</text>
+          <text class="daily-main-title">{{latestDailyReport.report.summaryTitle || '今日终端拜访综合分析日报'}}</text>
           <text class="daily-date-sub">{{latestDailyReport.date}} · 汇总 {{latestDailyReport.inspectionCount}} 家门店</text>
         </view>
       </view>
@@ -151,11 +155,11 @@
   <!-- 空状态 -->
   <view class="empty-state" wx:if="{{!loading && list.length === 0}}">
     <text class="empty-icon">📋</text>
-    <text class="empty-text">暂无巡检记录</text>
+    <text class="empty-text">暂无拜访记录</text>
     <text class="empty-hint" wx:if="{{searchKeyword || filterDate || filterScore}}">
       尝试调整筛选条件
     </text>
-    <text class="empty-hint" wx:else>去拍照开始第一次巡检吧</text>
+    <text class="empty-hint" wx:else>去拍照开始第一次拜访吧</text>
   </view>
 
   <!-- 加载更多 -->
@@ -235,7 +239,7 @@
   <view class="daily-modal-panel {{showDailyModal ? 'show' : ''}}" wx:if="{{showDailyModal}}">
     <view class="daily-modal-header">
       <view class="daily-modal-title">
-        <text class="title-main">{{latestDailyReport.report.summaryTitle || '今日巡检综合分析日报'}}</text>
+        <text class="title-main">{{latestDailyReport.report.summaryTitle || '今日拜访综合分析日报'}}</text>
         <text class="title-sub">{{latestDailyReport.date}} · 共评估 {{latestDailyReport.inspectionCount}} 家门店</text>
       </view>
       <text class="daily-modal-close" bindtap="closeDailyModal">✕</text>
@@ -300,7 +304,7 @@
 
       <!-- 门店红黑榜简表 -->
       <view class="daily-section-card" wx:if="{{latestDailyReport.report.storeRankings && latestDailyReport.report.storeRankings.length > 0}}">
-        <text class="section-badge">🏬 巡检门店表现简表</text>
+        <text class="section-badge">🏬 拜访门店表现简表</text>
         <view class="ranking-list">
           <view class="ranking-item" wx:for="{{latestDailyReport.report.storeRankings}}" wx:key="index">
             <text class="rk-store">{{item.storeName}}</text>

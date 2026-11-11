@@ -178,7 +178,14 @@ async function handleUpload(req, res) {
     }
     const dest = absPath(rel)
     fs.mkdirSync(path.dirname(dest), { recursive: true })
-    fs.renameSync(tmp, dest)
+    try {
+      fs.renameSync(tmp, dest)
+    } catch (err) {
+      // systemd PrivateTmp puts /tmp on a different device than data/
+      if (!err || err.code !== 'EXDEV') throw err
+      fs.copyFileSync(tmp, dest)
+      fs.unlinkSync(tmp)
+    }
     return res.json({ fileID: fileIdOf(rel) })
   } catch (err) {
     cleanup()
