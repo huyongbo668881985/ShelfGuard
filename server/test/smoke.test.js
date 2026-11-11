@@ -365,7 +365,7 @@ test('登录、审批、巡检、照片和看板主路径', async () => {
   assert.equal(ovBody.success, true)
   assert.ok(ovBody.totals.inspectionCount >= 1)
 
-  const csRes = await fetch(`${base}/api/internal/customer-summary?storeName=${encodeURIComponent('永丰烟酒')}&days=90`, {
+  const csRes = await fetch(`${base}/api/internal/customer-summary?storeName=${encodeURIComponent('特8烟酒店')}&days=90`, {
     headers: { 'X-Internal-Key': 'internal-test-secret-key-2026' }
   })
   assert.equal(csRes.status, 200)

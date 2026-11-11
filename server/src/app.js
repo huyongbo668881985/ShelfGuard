@@ -9,6 +9,7 @@ const cloud = require('./cloud-shim')
 const files = require('./files')
 const auth = require('./auth')
 const internal = require('./internal')
+const webMap = require('./web-map')
 const { basePath } = require('./config')
 
 const uploadDir = path.join(os.tmpdir(), 'shelfguard-uploads')
@@ -34,6 +35,10 @@ function createApp() {
   // 供进销存 (jxc-app) 经营诊断助手调用的内部只读接口（使用 INTERNAL_API_KEY 鉴权）
   router.get('/api/internal/customer-summary', internal.requireInternalKey, internal.customerSummaryHandler)
   router.get('/api/internal/overview', internal.requireInternalKey, internal.overviewHandler)
+
+  // 电脑端 Chrome 拜访地图大屏页与数据接口
+  router.get('/map', webMap.mapPageHandler)
+  router.get('/api/web/map-route', webMap.mapRouteApiHandler)
 
   router.post('/api/auth/login', auth.loginHandler)
 
