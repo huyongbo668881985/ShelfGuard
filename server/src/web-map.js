@@ -879,6 +879,76 @@ function renderHtml(prefix) {
       font-size: 20px;
       cursor: pointer;
     }
+
+    /* Password Auth Modal */
+    .auth-modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.85);
+      backdrop-filter: blur(6px);
+      z-index: 3000;
+      display: none;
+      align-items: center;
+      justify-content: center;
+    }
+    .auth-modal.open { display: flex; }
+    .auth-card {
+      width: 380px;
+      max-width: 90vw;
+      background: #fff;
+      border-radius: 16px;
+      padding: 28px 26px;
+      box-shadow: 0 20px 50px rgba(0,0,0,0.35);
+      text-align: center;
+    }
+    .auth-icon {
+      font-size: 36px;
+      margin-bottom: 10px;
+    }
+    .auth-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--navy);
+    }
+    .auth-desc {
+      margin-top: 6px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .auth-input {
+      margin-top: 18px;
+      width: 100%;
+      padding: 11px 14px;
+      border: 1px solid #CBD2D9;
+      border-radius: 10px;
+      font-size: 15px;
+      outline: none;
+      text-align: center;
+      letter-spacing: 1px;
+    }
+    .auth-input:focus {
+      border-color: var(--navy);
+      box-shadow: 0 0 0 3px rgba(28,61,90,0.12);
+    }
+    .auth-err {
+      margin-top: 8px;
+      font-size: 12px;
+      color: #DC2626;
+      min-height: 18px;
+    }
+    .auth-submit {
+      margin-top: 10px;
+      width: 100%;
+      padding: 11px;
+      background: var(--navy);
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .auth-submit:hover { background: var(--navy-light); }
   </style>
 </head>
 <body>
@@ -893,6 +963,7 @@ function renderHtml(prefix) {
       <button class="btn" id="nextDayBtn">后一天 ›</button>
       <button class="btn btn-gold" id="todayBtn">回到今天</button>
       <button class="btn" id="refreshBtn">↻ 刷新</button>
+      <button class="btn" id="lockBtn" title="清除本机保存的密码并重新锁屏">🔒 锁屏</button>
     </div>
   </header>
 
@@ -964,6 +1035,18 @@ function renderHtml(prefix) {
       <button class="lb-btn" id="lbZoomInBtn">＋ 放大</button>
       <button class="lb-btn" id="lbZoomOutBtn">－ 缩小</button>
       <a class="lb-btn" id="lbDownloadBtn" href="#" target="_blank" style="text-decoration:none">⬇ 查看原图</a>
+    </div>
+  </div>
+
+  <!-- Password Auth Modal -->
+  <div class="auth-modal" id="authModal">
+    <div class="auth-card">
+      <div class="auth-icon">🔒</div>
+      <div class="auth-title">拜访地图查看验证</div>
+      <div class="auth-desc">请输入团队查看密码以加载轨迹与现场照片</div>
+      <input type="password" class="auth-input" id="authInput" placeholder="请输入查看密码" autocomplete="current-password" />
+      <div class="auth-err" id="authErr"></div>
+      <button class="auth-submit" id="authSubmitBtn">确认进入</button>
     </div>
   </div>
 
@@ -1056,6 +1139,20 @@ function renderHtml(prefix) {
         return USER_COLORS[(idx >= 0 ? idx : 0) % USER_COLORS.length];
       }
 
+      function showAuthModal(errMsg) {
+        const modal = document.getElementById('authModal');
+        const errEl = document.getElementById('authErr');
+        const inputEl = document.getElementById('authInput');
+        errEl.textContent = errMsg || '';
+        modal.classList.add('open');
+        setTimeout(() => inputEl.focus(), 50);
+      }
+
+      function hideAuthModal() {
+        document.getElementById('authModal').classList.remove('open');
+        document.getElementById('authErr').textContent = '';
+      }
+
       async function loadRoute() {
         const key = localStorage.getItem('sg_web_map_key') || '';
         const url = API_BASE + '/api/web/map-route?date=' + encodeURIComponent(selectedDate) +
@@ -1066,13 +1163,10 @@ function renderHtml(prefix) {
             headers: key ? { 'x-map-key': key } : {}
           });
           if (res.status === 401) {
-            const input = window.prompt('请输入拜访地图查看口令：');
-            if (input) {
-              localStorage.setItem('sg_web_map_key', input.trim());
-              return loadRoute();
-            }
+            showAuthModal(key ? '密码不正确，请重新输入' : '');
             return;
           }
+          hideAuthModal();
           const data = await res.json();
           if (!data.success) {
             alert(data.error || '加载失败');
@@ -1513,6 +1607,25 @@ function renderHtml(prefix) {
       });
 
       document.getElementById('refreshBtn').addEventListener('click', () => loadRoute());
+      document.getElementById('lockBtn').addEventListener('click', () => {
+        localStorage.removeItem('sg_web_map_key');
+        document.getElementById('authInput').value = '';
+        showAuthModal('已锁屏，请重新输入密码');
+      });
+      document.getElementById('authSubmitBtn').addEventListener('click', () => {
+        const val = document.getElementById('authInput').value.trim();
+        if (!val) {
+          document.getElementById('authErr').textContent = '请输入密码';
+          return;
+        }
+        localStorage.setItem('sg_web_map_key', val);
+        loadRoute();
+      });
+      document.getElementById('authInput').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          document.getElementById('authSubmitBtn').click();
+        }
+      });
       document.getElementById('fitBoundsBtn').addEventListener('click', () => fitBounds());
       document.getElementById('drawerCloseBtn').addEventListener('click', () => closeDrawer());
 
