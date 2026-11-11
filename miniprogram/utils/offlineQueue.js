@@ -144,7 +144,8 @@ async function enqueue(payload) {
       lat: (payload.meta && payload.meta.lat) || 0,
       lng: (payload.meta && payload.meta.lng) || 0,
       address: (payload.meta && payload.meta.address) || '',
-      analyzeMode: (payload.meta && payload.meta.analyzeMode) || 'batch'
+      analyzeMode: (payload.meta && payload.meta.analyzeMode) || 'batch',
+      recordType: (payload.meta && payload.meta.recordType) || 'visit'
     }
   }
 
@@ -235,9 +236,11 @@ async function flushOne(item, options = {}) {
     }
 
     const meta = item.meta || {}
+    const recordType = meta.recordType || 'visit'
     const res = await api.callFunction({
       name: 'submitInspection',
       data: {
+        recordType,
         taskName: meta.taskName,
         storeName: meta.storeName,
         userName: meta.userName,
@@ -261,8 +264,8 @@ async function flushOne(item, options = {}) {
       return { ok: false, error: err }
     }
 
-    // 即时分析模式：尽力触发，不阻塞出队
-    if (meta.analyzeMode === 'instant' && res.result.inspectionId) {
+    // 即时分析模式（仅门店拜访，上下班打卡不触发 AI）：尽力触发，不阻塞出队
+    if (meta.analyzeMode === 'instant' && recordType === 'visit' && res.result.inspectionId) {
       try {
         await api.callFunction({
           name: 'analyzeImage',

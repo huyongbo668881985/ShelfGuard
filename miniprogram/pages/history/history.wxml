@@ -2,16 +2,15 @@
 <view class="history-page">
   <!-- 品牌头 -->
   <view class="brand-header">
-    <image class="brand-logo-img" src="/images/logo.png" mode="aspectFit"></image>
     <view class="brand-logo">特8水印</view>
-    <view class="brand-sub">白酒终端巡检 · 智能水印</view>
+    <view class="brand-sub">终端拜访 · 真实水印</view>
   </view>
 
   <!-- 统计卡片 -->
   <view class="stats-card">
     <view class="stats-item">
       <text class="stats-value">{{stats.total}}</text>
-      <text class="stats-label">总巡检</text>
+      <text class="stats-label">拜访数量</text>
     </view>
     <view class="stats-divider"></view>
     <view class="stats-item">
@@ -25,7 +24,7 @@
     </view>
   </view>
 
-  <!-- 排面看板 / 照片明细入口 -->
+  <!-- 排面看板 / 照片明细 / 拜访地图入口 -->
   <view class="dash-entry-row">
     <view class="dash-entry-btn" bindtap="goDashboard">
       <text class="dash-entry-icon">📈</text>
@@ -34,6 +33,10 @@
     <view class="dash-entry-btn" bindtap="goPhotoDetail">
       <text class="dash-entry-icon">🖼️</text>
       <text class="dash-entry-text">照片明细</text>
+    </view>
+    <view class="dash-entry-btn" bindtap="goVisitMap">
+      <text class="dash-entry-icon">🗺️</text>
+      <text class="dash-entry-text">拜访地图</text>
     </view>
   </view>
 

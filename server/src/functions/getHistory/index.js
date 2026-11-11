@@ -167,8 +167,11 @@ exports.main = async (event, context) => {
         targetUserName: safeTargetUserName,
         where: boardWhere
       })
-      // 统计口径：排除历史遗留的模拟报告（isMock: true）
-      const statsConditions = _.and(boardConditions, { 'aiReport.metadata.isMock': _.neq(true) })
+      // 统计口径：排除历史遗留的模拟报告（isMock: true）以及上下班考勤打卡记录（status: 'clocked'）
+      const statsConditions = _.and(boardConditions, {
+        'aiReport.metadata.isMock': _.neq(true),
+        status: _.neq('clocked')
+      })
       const totalRes = await db.collection('inspections').where(statsConditions).count()
 
       const weekAgo = new Date()
@@ -232,6 +235,210 @@ exports.main = async (event, context) => {
       }
     }
 
+    if (action === 'mapRoute') {
+      const now = new Date()
+      let startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0)
+      let endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999)
+      if (safeWhere.startDateISO) {
+        const p = new Date(safeWhere.startDateISO)
+        if (!isNaN(p.getTime())) startDate = p
+      }
+      if (safeWhere.endDateISO) {
+        const p = new Date(safeWhere.endDateISO)
+        if (!isNaN(p.getTime())) endDate = p
+      }
+
+      const dayCond = {
+        createdAt: _.and(_.gte(startDate), _.lte(endDate)),
+        'aiReport.metadata.isMock': _.neq(true)
+      }
+      if (!isManager) {
+        dayCond._openid = openid
+      }
+
+      const dayRes = await db.collection('inspections')
+        .where(dayCond)
+        .orderBy('createdAt', 'asc')
+        .limit(500)
+        .field({
+          _id: true,
+          _openid: true,
+          recordType: true,
+          taskName: true,
+          storeName: true,
+          userName: true,
+          customerId: true,
+          photoFileIDs: true,
+          photoCount: true,
+          location: true,
+          status: true,
+          createdAt: true,
+          aiReport: true
+        })
+        .get()
+
+      const allDayRecords = dayRes.data || []
+      let usersList = []
+      let selectedUserId = ''
+      let selectedUserName = (caller && caller.name) || ''
+      let personRecords = allDayRecords
+
+      if (isManager) {
+        // 汇总人员列表：结合 users 表在册人员 + 当日实际有记录的人员
+        const userMap = new Map() // key: openid || ('name:' + userName)
+        try {
+          const uRes = await db.collection('users').orderBy('createdAt', 'asc').limit(200).get()
+          ;(uRes.data || []).forEach(u => {
+            if (u.disabled) return
+            const isApproved = u.approved === true || (
+              (u.approved === undefined || u.approved === null) &&
+              (u.role === 'admin' || u.role === 'manager')
+            )
+            if (!isApproved) return
+            const key = u._openid || `id:${u._id}`
+            userMap.set(key, {
+              userId: u._id || key,
+              _openid: u._openid || '',
+              name: (u.name && u.name.trim()) ? u.name.trim() : '未命名业务员',
+              visitCount: 0,
+              clockCount: 0,
+              totalCount: 0
+            })
+          })
+        } catch (uErr) {
+          console.warn('读取业务员列表失败:', uErr)
+        }
+
+        allDayRecords.forEach(r => {
+          const key = r._openid || `name:${r.userName || '未知'}`
+          if (!userMap.has(key)) {
+            userMap.set(key, {
+              userId: key,
+              _openid: r._openid || '',
+              name: (r.userName && r.userName.trim()) ? r.userName.trim() : '未命名业务员',
+              visitCount: 0,
+              clockCount: 0,
+              totalCount: 0
+            })
+          }
+          const entry = userMap.get(key)
+          if ((!entry.name || entry.name === '未命名业务员') && r.userName) {
+            entry.name = r.userName.trim()
+          }
+          const isClock = r.recordType === 'clock_in' || r.recordType === 'clock_out' || r.status === 'clocked'
+          if (isClock) entry.clockCount++
+          else entry.visitCount++
+          entry.totalCount++
+        })
+
+        // 排序：当日有记录的排前面，同条件下按记录数降序
+        const entries = Array.from(userMap.values()).sort((a, b) => {
+          if ((b.totalCount > 0) !== (a.totalCount > 0)) return b.totalCount > 0 ? 1 : -1
+          if (b.totalCount !== a.totalCount) return b.totalCount - a.totalCount
+          return String(a.name).localeCompare(String(b.name), 'zh-CN')
+        })
+
+        const reqUserId = typeof event.targetUserId === 'string' ? event.targetUserId.trim() : ''
+        let targetEntry = null
+        if (reqUserId) {
+          targetEntry = entries.find(e => e.userId === reqUserId)
+        }
+        if (!targetEntry && safeTargetUserName) {
+          targetEntry = entries.find(e => e.name === safeTargetUserName)
+        }
+        if (!targetEntry && entries.length > 0) {
+          targetEntry = entries[0]
+        }
+
+        if (targetEntry) {
+          selectedUserId = targetEntry.userId
+          selectedUserName = targetEntry.name
+          personRecords = allDayRecords.filter(r => {
+            if (targetEntry._openid && r._openid) return r._openid === targetEntry._openid
+            return (r.userName || '未命名业务员') === targetEntry.name
+          })
+        } else {
+          personRecords = []
+        }
+
+        usersList = entries.map(e => ({
+          userId: e.userId,
+          name: e.name,
+          visitCount: e.visitCount,
+          clockCount: e.clockCount,
+          totalCount: e.totalCount
+        }))
+      } else {
+        selectedUserId = (caller && caller._id) || 'me'
+        selectedUserName = (caller && caller.name) || (personRecords[0] && personRecords[0].userName) || '我'
+      }
+
+      // 批量换取选中人员当日所有照片的临时链接（地图点开气泡卡片可直接看全部照片）
+      const allPhotoIds = []
+      personRecords.forEach(item => {
+        if (Array.isArray(item.photoFileIDs)) {
+          item.photoFileIDs.forEach(fid => {
+            if (fid && !allPhotoIds.includes(fid)) allPhotoIds.push(fid)
+          })
+        }
+      })
+      const photoURLMap = {}
+      if (allPhotoIds.length > 0) {
+        try {
+          const fileRes = await cloud.getTempFileURL({ fileList: allPhotoIds })
+          ;(fileRes.fileList || []).forEach(f => {
+            if (f.tempFileURL) photoURLMap[f.fileID] = f.tempFileURL
+          })
+        } catch (err) {
+          console.error('获取地图点位照片临时链接失败:', err)
+        }
+      }
+
+      const points = personRecords.map(item => {
+        const photoURLs = Array.isArray(item.photoFileIDs)
+          ? item.photoFileIDs.map(fid => photoURLMap[fid] || '').filter(Boolean)
+          : []
+        const recordType = (item.recordType === 'clock_in' || item.recordType === 'clock_out')
+          ? item.recordType
+          : 'visit'
+        let aiSummary = null
+        if (item.aiReport && typeof item.aiReport === 'object') {
+          const ar = item.aiReport
+          const sharePercent = extractListSharePercent(ar)
+          aiSummary = {
+            score: ar.score,
+            scoreLevel: ar.scoreLevel,
+            summary: ar.summary,
+            sharePercent
+          }
+        }
+        return {
+          _id: item._id,
+          recordType,
+          taskName: item.taskName || '',
+          storeName: item.storeName || '',
+          userName: item.userName || selectedUserName || '',
+          customerId: item.customerId || '',
+          photoCount: item.photoCount || photoURLs.length,
+          photoURLs,
+          thumbnailURL: photoURLs[0] || '',
+          location: item.location || {},
+          status: item.status || '',
+          createdAt: item.createdAt,
+          aiReport: aiSummary
+        }
+      })
+
+      return {
+        success: true,
+        isManager,
+        selectedUserId,
+        selectedUserName,
+        usersList,
+        points
+      }
+    }
+
     // action === 'list'：与 stats 同样排除 isMock，避免列表出现假分而看板不计
     const listConditions = _.and(queryConditions, { 'aiReport.metadata.isMock': _.neq(true) })
     const countRes = await db.collection('inspections').where(listConditions).count()
@@ -244,6 +451,7 @@ exports.main = async (event, context) => {
       .limit(safePageSize)
       .field({
         _id: true,
+        recordType: true,
         taskName: true,
         storeName: true,
         userName: true,

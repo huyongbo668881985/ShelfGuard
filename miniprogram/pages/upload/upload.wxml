@@ -102,7 +102,7 @@
     <!-- AI 分析中 -->
     <view class="progress-item" wx:if="{{status === 'analyzing'}}">
       <view class="progress-header">
-        <text class="progress-label">AI 正在分析陈列情况...</text>
+        <text class="progress-label">正在提交...</text>
       </view>
       <view class="progress-bar">
         <view class="progress-fill progress-indeterminate"></view>
@@ -113,16 +113,16 @@
   <!-- 成功状态（即时分析模式：AI 已出报告，马上跳报告页） -->
   <view class="success-section" wx:if="{{status === 'success'}}">
     <text class="success-icon">✓</text>
-    <text class="success-text">上传成功！即将跳转到报告页...</text>
+    <text class="success-text">已提交</text>
   </view>
 
   <!-- 已提交状态（集中分析模式：提交即完成，不用原地等 AI） -->
   <view class="submitted-section" wx:if="{{status === 'submitted'}}">
     <text class="submitted-icon">✓</text>
-    <text class="submitted-title">已提交</text>
+    <text class="submitted-title">{{isClockRecord ? '打卡成功' : '已提交'}}</text>
     <view class="submitted-actions">
       <button class="btn-secondary" bindtap="viewReport">查看记录</button>
-      <button class="btn-primary" bindtap="continueVisit">继续拜访下一家</button>
+      <button class="btn-primary" bindtap="continueVisit">{{isClockRecord ? '返回首页' : '继续拜访下一家'}}</button>
     </view>
   </view>
 
@@ -149,7 +149,7 @@
     >
       <block wx:if="{{status === 'compressing'}}">压缩中...</block>
       <block wx:elif="{{status === 'uploading'}}">上传中...</block>
-      <block wx:elif="{{status === 'analyzing'}}">AI 分析中...</block>
+      <block wx:elif="{{status === 'analyzing'}}">提交中...</block>
       <block wx:elif="{{status === 'error'}}">重试上传</block>
       <block wx:else>上传</block>
     </button>

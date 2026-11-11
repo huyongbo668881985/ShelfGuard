@@ -347,5 +347,32 @@ test('登录、审批、巡检、照片和看板主路径', async () => {
   assert.equal(removed.body.success, true)
   assert.equal(removed.body.deleted, 1)
 
+  // 验证内部只读接口：未配置 INTERNAL_API_KEY 时 503，配置后错误密钥 401，正确密钥返回巡检汇总
+  const noKeyRes = await fetch(`${base}/api/internal/overview`)
+  assert.equal(noKeyRes.status, 503)
+
+  process.env.INTERNAL_API_KEY = 'internal-test-secret-key-2026'
+  const badKeyRes = await fetch(`${base}/api/internal/overview`, {
+    headers: { Authorization: 'Bearer wrong-key' }
+  })
+  assert.equal(badKeyRes.status, 401)
+
+  const ovRes = await fetch(`${base}/api/internal/overview?days=30`, {
+    headers: { Authorization: 'Bearer internal-test-secret-key-2026' }
+  })
+  assert.equal(ovRes.status, 200)
+  const ovBody = await ovRes.json()
+  assert.equal(ovBody.success, true)
+  assert.ok(ovBody.totals.inspectionCount >= 1)
+
+  const csRes = await fetch(`${base}/api/internal/customer-summary?storeName=${encodeURIComponent('永丰烟酒')}&days=90`, {
+    headers: { 'X-Internal-Key': 'internal-test-secret-key-2026' }
+  })
+  assert.equal(csRes.status, 200)
+  const csBody = await csRes.json()
+  assert.equal(csBody.success, true)
+  assert.ok(csBody.summary.visitCount >= 1)
+  assert.ok(csBody.recentInspections[0].thumbnailURL.includes('/files/'))
+
   assert.ok(salesRow || sales)
 })

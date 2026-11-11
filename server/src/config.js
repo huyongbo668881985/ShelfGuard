@@ -25,10 +25,15 @@ function fileUrlSecret() {
   return process.env.FILE_URL_SECRET || jwtSecret()
 }
 
+function internalApiKey() {
+  return process.env.INTERNAL_API_KEY || ''
+}
+
 module.exports = {
   basePath,
   publicBase,
   port,
   jwtSecret,
-  fileUrlSecret
+  fileUrlSecret,
+  internalApiKey
 }

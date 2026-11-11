@@ -6,6 +6,7 @@
     "pages/history/history",
     "pages/dashboard/dashboard",
     "pages/photo-detail/photo-detail",
+    "pages/visit-map/visit-map",
     "pages/report/report",
     "pages/products/products",
     "pages/customers/customers",
@@ -33,7 +34,7 @@
       },
       {
         "pagePath": "pages/history/history",
-        "text": "巡检记录",
+        "text": "拜访记录",
         "iconPath": "images/tab-list.png",
         "selectedIconPath": "images/tab-list-active.png"
       }

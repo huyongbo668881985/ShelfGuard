@@ -48,7 +48,9 @@ exports.main = async (event, context) => {
     return { success: false, error: '未获取到用户身份' }
   }
 
-  const { taskName, storeName, userName, customerId, fileIDs, location } = event
+  const { taskName, storeName, userName, customerId, fileIDs, location, recordType } = event
+  const safeRecordType = (recordType === 'clock_in' || recordType === 'clock_out') ? recordType : 'visit'
+  const isClockRecord = safeRecordType === 'clock_in' || safeRecordType === 'clock_out'
 
   // ---- 入参校验（防绕过前端直接构造请求） ----
   if (!Array.isArray(fileIDs) || fileIDs.length === 0) {
@@ -140,14 +142,15 @@ exports.main = async (event, context) => {
     const addRes = await db.collection('inspections').add({
       data: {
         _openid: openid,                 // 显式写入归属，便于 sales 仅看自己的记录
+        recordType: safeRecordType,      // 'visit' | 'clock_in' | 'clock_out'
         taskName: taskName.trim(),
-        storeName: safeStoreName,
+        storeName: isClockRecord ? (safeRecordType === 'clock_in' ? '上班打卡' : '下班打卡') : safeStoreName,
         userName: finalUserName,
-        customerId: safeCustomerId,
+        customerId: isClockRecord ? '' : safeCustomerId,
         photoFileIDs: fileIDs,
         photoCount: fileIDs.length,
         location: safeLocation,
-        status: 'pending',              // 待分析，batchAnalyze 领取的唯一依据
+        status: isClockRecord ? 'clocked' : 'pending', // 上下班打卡直接置为 clocked，不进入 AI 分析队列
         analyzeAttempts: 0,
         createdAt: db.serverDate()
       }
@@ -156,8 +159,8 @@ exports.main = async (event, context) => {
     // 策略 B 闭环：关联客户且有有效定位、客户尚无坐标时，回填门店坐标。
     // 必须校验客户归属：仅允许回填本人名下客户，防止拿别人的 customerId 改坐标。
     // 归属不匹配则丢弃关联（不写客户表），巡检记录本身已落库不受影响。
-    let boundCustomerId = safeCustomerId
-    if (safeCustomerId) {
+    let boundCustomerId = isClockRecord ? '' : safeCustomerId
+    if (boundCustomerId) {
       try {
         const custDoc = await db.collection('customers').doc(safeCustomerId).get()
         const cust = custDoc && custDoc.data

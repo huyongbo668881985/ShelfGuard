@@ -176,9 +176,10 @@ Page({
       item.sharePercent = item.aiReport.sharePercent
     }
     const STATUS_TEXT = {
-      pending: '待分析',
-      analyzing: '分析中',
-      analyze_failed: '分析失败'
+      pending: '已提交',
+      uploaded: '已提交',
+      analyzing: '已提交',
+      analyze_failed: '已提交'
     }
     item.statusText = STATUS_TEXT[item.status] || ''
     return item

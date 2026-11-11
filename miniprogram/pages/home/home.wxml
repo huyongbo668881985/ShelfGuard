@@ -2,7 +2,7 @@
 <view class="home-page">
   <view class="approval-banner" wx:if="{{needsApproval}}">账号待管理员审批，批准前无法提交巡检</view>
 
-  <!-- 顶部：问候 + 开始拜访 -->
+  <!-- 顶部：问候 + 开始拜访 + 上下班打卡 -->
   <view class="hero">
     <view class="hero-hello">{{userName ? userName + '，' : ''}}今天也辛苦了</view>
     <view class="hero-date">{{todayStr}}</view>
@@ -11,6 +11,27 @@
       <text>开始拜访</text>
     </button>
     <view class="hero-tip">先选门店，再拍照打水印（可选「无门店」）</view>
+
+    <!-- 上下班打卡位置区 -->
+    <view class="clock-bar">
+      <view class="clock-card {{todayClockIn ? 'clocked' : ''}}" data-type="clock_in" bindtap="onTapClock">
+        <view class="clock-card-head">
+          <text class="clock-icon">🌅</text>
+          <text class="clock-title">上班打卡</text>
+          <text class="clock-badge {{todayClockIn ? 'done' : ''}}">{{todayClockIn ? todayClockIn.timeText : '未打卡'}}</text>
+        </view>
+        <view class="clock-addr">{{todayClockIn ? (todayClockIn.address || '已记录位置') : '点击拍照记录上班位置'}}</view>
+      </view>
+
+      <view class="clock-card {{todayClockOut ? 'clocked' : ''}}" data-type="clock_out" bindtap="onTapClock">
+        <view class="clock-card-head">
+          <text class="clock-icon">🌙</text>
+          <text class="clock-title">下班打卡</text>
+          <text class="clock-badge {{todayClockOut ? 'done' : ''}}">{{todayClockOut ? todayClockOut.timeText : '未打卡'}}</text>
+        </view>
+        <view class="clock-addr">{{todayClockOut ? (todayClockOut.address || '已记录位置') : '点击拍照记录下班位置'}}</view>
+      </view>
+    </view>
   </view>
 
   <!-- 离线待上传提示 -->
@@ -49,7 +70,7 @@
       </view>
       <view class="summary-divider"></view>
       <view class="summary-item">
-        <text class="summary-value">{{list.length - analyzedCount}}</text>
+        <text class="summary-value">{{pendingCount}}</text>
         <text class="summary-label">待出报告</text>
       </view>
     </view>
@@ -57,19 +78,24 @@
     <!-- 列表 -->
     <view class="record-item" wx:for="{{list}}" wx:key="_id" data-id="{{item._id}}" bindtap="onTapItem">
       <image class="record-thumb" wx:if="{{item.thumbnailURL}}" src="{{item.thumbnailURL}}" mode="aspectFill"></image>
-      <view class="record-thumb placeholder" wx:else>📷</view>
+      <view class="record-thumb placeholder" wx:else>{{item.isClock ? (item.recordType === 'clock_in' ? '🌅' : '🌙') : '📷'}}</view>
       <view class="record-body">
-        <view class="record-store">{{item.displayStore}}</view>
+        <view class="record-store-row">
+          <text class="record-clock-tag {{item.recordType}}" wx:if="{{item.isClock}}">{{item.recordType === 'clock_in' ? '上班' : '下班'}}</text>
+          <text class="record-store">{{item.displayStore}}</text>
+        </view>
         <view class="record-meta">
           <text>{{item.timeText}}</text>
           <text wx:if="{{isManager && item.userName}}"> · {{item.userName}}</text>
-          <text wx:if="{{item.photoCount}}"> · {{item.photoCount}}张</text>
+          <text wx:if="{{item.location && item.location.address}}"> · {{item.location.address}}</text>
+          <text wx:elif="{{item.photoCount}}"> · {{item.photoCount}}张</text>
         </view>
       </view>
       <view class="record-right">
         <text class="record-score" wx:if="{{item.score !== undefined}}" style="color: {{item.scoreColor}}">{{item.score}}</text>
+        <text class="record-status clocked" wx:elif="{{item.isClock}}">已打卡</text>
         <text class="record-status" wx:elif="{{item.statusText}}">{{item.statusText}}</text>
-        <text class="record-status" wx:else>待分析</text>
+        <text class="record-status" wx:else>已提交</text>
       </view>
     </view>
 

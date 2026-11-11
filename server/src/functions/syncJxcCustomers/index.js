@@ -201,8 +201,10 @@ function resolveTargetOpenid(item, maps, warnings) {
 }
 
 exports.main = async (event, context) => {
-  const isTimerTrigger = event && (event.Type === 'Timer' || event.triggerName)
+  // 自建服务器上 event 完全由客户端控制，不能用 event.Type 判断定时触发；
+  // 只信任服务端注入的上下文：定时任务以 SOURCE=timer、无 OPENID 调用。
   const wxContext = cloud.getWXContext()
+  const isTimerTrigger = !!wxContext && wxContext.SOURCE === 'timer' && !wxContext.OPENID
   const openid = wxContext ? (wxContext.OPENID || '') : ''
 
   if (!isTimerTrigger) {

@@ -14,7 +14,7 @@ const app = getApp()
 
 const PAGE_SIZE = 50
 const WEEK_NAMES = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
-const STATUS_TEXT = { pending: '待分析', analyzing: '分析中', analyze_failed: '分析失败' }
+const STATUS_TEXT = { pending: '已提交', uploaded: '已提交', analyzing: '已提交', analyze_failed: '已提交' }
 
 function pad(n) {
   return String(n).padStart(2, '0')
@@ -41,10 +41,14 @@ Page({
     total: 0,
     avgScore: 0,
     analyzedCount: 0,
+    pendingCount: 0,
     loading: false,
     loaded: false,
     hasMore: false,
     page: 1,
+
+    todayClockIn: null,
+    todayClockOut: null,
 
     offlineCount: 0,
     starting: false
@@ -234,20 +238,46 @@ Page({
 
       const items = (result.list || []).map(it => this.formatItem(it))
       const list = reset ? items : this.data.list.concat(items)
-      const scored = list.filter(it => typeof it.score === 'number')
+      const visitItems = list.filter(it => !it.isClock)
+      const scored = visitItems.filter(it => typeof it.score === 'number')
       const avg = scored.length
         ? Math.round(scored.reduce((s, it) => s + it.score, 0) / scored.length)
         : 0
+      const pendingCount = Math.max(0, visitItems.length - scored.length)
 
-      this.setData({
+      const nextData = {
         list,
-        total: result.total || list.length,
+        total: visitItems.length,
         avgScore: avg,
         analyzedCount: scored.length,
+        pendingCount,
         page: page + 1,
         hasMore: list.length < (result.total || 0),
         loaded: true
-      })
+      }
+
+      // 若当前加载的是今天的数据，同步更新顶部「上班打卡 / 下班打卡」状态
+      if (this.data.selectedDate === this.data.todayStr) {
+        const myName = this.data.userName
+        const myClockItems = list.filter(it => {
+          if (!it.isClock) return false
+          if (!this.data.isManager) return true
+          return myName && it.userName === myName
+        })
+        // 列表按时间倒序：上班取最早一条（或最新一条），下班取最新一条
+        const clockInList = myClockItems.filter(it => it.recordType === 'clock_in')
+        const clockOutList = myClockItems.filter(it => it.recordType === 'clock_out')
+        const ci = clockInList.length > 0 ? clockInList[clockInList.length - 1] : null
+        const co = clockOutList.length > 0 ? clockOutList[0] : null
+        nextData.todayClockIn = ci
+          ? { _id: ci._id, timeText: ci.timeText, address: (ci.location && ci.location.address) || '' }
+          : null
+        nextData.todayClockOut = co
+          ? { _id: co._id, timeText: co.timeText, address: (co.location && co.location.address) || '' }
+          : null
+      }
+
+      this.setData(nextData)
     } catch (err) {
       console.error('加载拜访记录失败:', err)
       if (seq === this._reqSeq) {
@@ -259,17 +289,52 @@ Page({
   },
 
   formatItem(item) {
+    const isClock = item.recordType === 'clock_in' || item.recordType === 'clock_out' || item.status === 'clocked'
+    item.isClock = isClock
+    if (!item.recordType) {
+      item.recordType = isClock ? 'clock_in' : 'visit'
+    }
     const ar = item.aiReport
-    if (ar && typeof ar.score === 'number') {
+    if (!isClock && ar && typeof ar.score === 'number') {
       const info = formatScoreLevel(ar.score)
       item.score = ar.score
       item.scoreColor = info.color
       item.scoreLevel = info.level
     }
     item.timeText = formatDate(item.createdAt, 'HH:mm')
-    item.statusText = STATUS_TEXT[item.status] || ''
-    item.displayStore = item.storeName || '无门店（沿街巡检）'
+    item.statusText = isClock ? '已打卡' : (STATUS_TEXT[item.status] || '')
+    if (isClock) {
+      item.displayStore = item.recordType === 'clock_out' ? '下班打卡' : '上班打卡'
+    } else {
+      item.displayStore = item.storeName || '无门店（沿街巡检）'
+    }
     return item
+  },
+
+  // ---------- 上下班打卡 ----------
+
+  onTapClock(e) {
+    const type = e.currentTarget.dataset.type || 'clock_in'
+    if (this.data.needsApproval) {
+      wx.showToast({ title: '账号待管理员审批，批准前无法打卡', icon: 'none' })
+      return
+    }
+    const existing = type === 'clock_out' ? this.data.todayClockOut : this.data.todayClockIn
+    const label = type === 'clock_out' ? '下班打卡' : '上班打卡'
+    if (existing && existing._id) {
+      wx.showActionSheet({
+        itemList: [`查看今日${label}照片 (${existing.timeText})`, `重新拍照${label}`],
+        success: (res) => {
+          if (res.tapIndex === 0) {
+            wx.navigateTo({ url: `/pages/report/report?id=${existing._id}` })
+          } else if (res.tapIndex === 1) {
+            wx.navigateTo({ url: `/pages/camera/camera?recordType=${type}&noStore=1` })
+          }
+        }
+      })
+      return
+    }
+    wx.navigateTo({ url: `/pages/camera/camera?recordType=${type}&noStore=1` })
   },
 
   onTapItem(e) {

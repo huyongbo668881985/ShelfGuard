@@ -133,7 +133,6 @@ Page({
       if (attempts >= maxAttempts) {
         clearInterval(timer)
         if (this.data.refreshTimer === timer) this.setData({ refreshTimer: null })
-        wx.showToast({ title: '分析耗时较长，请稍后下拉刷新查看', icon: 'none', duration: 3000 })
         return
       }
 
@@ -155,7 +154,6 @@ Page({
           clearInterval(timer)
           if (this.data.refreshTimer === timer) this.setData({ refreshTimer: null })
           this.setData({ detail })
-          wx.showToast({ title: 'AI 分析未成功，可点击重试', icon: 'none' })
         }
       } catch (err) {
         console.error('轮询失败:', err)

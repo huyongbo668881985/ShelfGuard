@@ -30,11 +30,11 @@ function formatScoreLevel(score) {
  */
 function formatStatus(status) {
   const map = {
-    'pending': { text: '排队中', color: '#ff9800' },
-    'uploaded': { text: '待分析', color: '#ff9800' },
-    'analyzing': { text: '分析中', color: '#2196f3' },
+    'pending': { text: '已提交', color: '#4caf50' },
+    'uploaded': { text: '已提交', color: '#4caf50' },
+    'analyzing': { text: '已提交', color: '#4caf50' },
     'analyzed': { text: '已完成', color: '#4caf50' },
-    'analyze_failed': { text: '分析失败', color: '#f44336' }
+    'analyze_failed': { text: '已提交', color: '#4caf50' }
   }
   return map[status] || { text: '未知', color: '#999' }
 }

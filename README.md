@@ -2,7 +2,7 @@
 
 微信小程序，用于白酒终端门店陈列巡检，支持水印拍照、AI 智能分析、巡检记录管理。
 
-> **当前部署方式**：不再使用微信云开发。自建后端在 `server/`，部署、环境变量、nginx 和小程序合法域名见 [server/README.md](server/README.md)。新 AppID 为 `wxd60258ccfc36cb75`，API 根地址在 `miniprogram/utils/config.js`。`cloudfunctions/` 只留作对照，不要再上传部署。下文里关于云开发控制台的步骤是迁移前的记录。
+> **当前部署方式**：不再使用微信云开发。自建后端在 `server/`，部署、环境变量、nginx 和小程序合法域名见 [server/README.md](server/README.md)。新 AppID 为 `wxd60258ccfc36cb75`，API 根地址在 `miniprogram/utils/config.js`。旧的 `cloudfunctions/` 已删除。下文里关于云开发控制台的步骤是迁移前的记录。
 
 ## 功能特性
 
@@ -26,7 +26,7 @@
 - 自动触发 AI 分析
 
 #### 3. AI 分析云函数
-- 通义千问 Qwen3.7-Plus 多模态视觉模型（能直接识图，单一通道）
+- 通义千问 Qwen3.8-Flash 多模态视觉模型（能直接识图，单一通道）
 - 结构化分析：评分、总结、产品识别、问题、建议
 - 未配置 API Key 时返回模拟报告
 - 分析结果自动保存到数据库
@@ -56,7 +56,7 @@
 - 微信小程序原生开发
 - 微信云开发（CloudBase）
 - Canvas 2D 水印合成
-- AI 视觉模型（通义千问 Qwen3.7-Plus 多模态）
+- AI 视觉模型（通义千问 Qwen3.8-Flash 多模态）
 
 ## 目录结构
 
@@ -133,7 +133,7 @@ ShelfGuard/
 
 ### 4. 配置 AI 视觉 API（使用 Qwen3.7-Plus）
 
-识图模型默认已切换到**通义千问 Qwen3.7-Plus**（视觉-语言一体化多模态模型，能直接识图，`cloudfunctions/analyzeImage/index.js` 里 `CURRENT_MODEL = 'qwen'`、`AI_CONFIG.qwen.model = 'qwen3.7-plus'`）。
+识图模型默认已切换到**通义千问 Qwen3.8-Flash**（视觉-语言一体化多模态模型，能直接识图，`cloudfunctions/analyzeImage/index.js` 里 `CURRENT_MODEL = 'qwen'`、`AI_CONFIG.qwen.model = 'qwen3.8-flash'`）。
 
 **API Key 填在哪里（三选一，优先级从高到低）：**
 

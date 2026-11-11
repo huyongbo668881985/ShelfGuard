@@ -1,0 +1,471 @@
+/* pages/visit-map/visit-map.wxss */
+.visit-map-page {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: #F4F6F9;
+  overflow: hidden;
+}
+
+/* 顶部筛选面板 */
+.top-panel {
+  flex-shrink: 0;
+  background: #fff;
+  padding: 16rpx 24rpx 14rpx;
+  box-shadow: 0 4rpx 12rpx rgba(28, 61, 90, 0.06);
+  z-index: 10;
+}
+
+.date-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14rpx;
+}
+
+.date-nav-btn {
+  padding: 10rpx 20rpx;
+  font-size: 24rpx;
+  color: #1C3D5A;
+  background: #EEF2F7;
+  border-radius: 28rpx;
+  font-weight: 500;
+}
+
+.date-nav-btn.disabled {
+  color: #C7CBD1;
+  opacity: 0.6;
+}
+
+.date-picker-pill {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  padding: 10rpx 26rpx;
+  background: #1C3D5A;
+  color: #fff;
+  border-radius: 32rpx;
+  font-size: 26rpx;
+  font-weight: 600;
+}
+
+.date-picker-icon {
+  font-size: 24rpx;
+}
+
+.date-picker-caret {
+  font-size: 22rpx;
+  opacity: 0.8;
+}
+
+.date-today-pill {
+  padding: 10rpx 18rpx;
+  font-size: 22rpx;
+  background: #C2933B;
+  color: #fff;
+  border-radius: 24rpx;
+  font-weight: 600;
+}
+
+/* 管理者：业务员切换栏 */
+.user-scroll {
+  margin-top: 14rpx;
+  white-space: nowrap;
+  width: 100%;
+}
+
+.user-pill-list {
+  display: inline-flex;
+  gap: 14rpx;
+  padding: 2rpx 4rpx;
+}
+
+.user-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8rpx;
+  padding: 10rpx 22rpx;
+  background: #F0F4F8;
+  color: #486581;
+  border-radius: 30rpx;
+  font-size: 25rpx;
+  border: 2rpx solid transparent;
+}
+
+.user-pill.active {
+  background: #EBF4FF;
+  color: #1C3D5A;
+  border-color: #1C3D5A;
+  font-weight: 600;
+}
+
+.user-pill-count {
+  font-size: 20rpx;
+  padding: 2rpx 10rpx;
+  border-radius: 16rpx;
+  background: #D9E2EC;
+  color: #627D98;
+}
+
+.user-pill-count.has-data {
+  background: #C2933B;
+  color: #fff;
+}
+
+/* 概览栏 */
+.overview-strip {
+  margin-top: 14rpx;
+  padding-top: 12rpx;
+  border-top: 1rpx solid #EEF1F5;
+  display: flex;
+  align-items: center;
+  font-size: 23rpx;
+}
+
+.ov-item {
+  display: flex;
+  align-items: center;
+}
+
+.ov-dot {
+  width: 14rpx;
+  height: 14rpx;
+  border-radius: 50%;
+  margin-right: 8rpx;
+}
+
+.ov-dot.clock-in {
+  background: #059669;
+}
+
+.ov-dot.visit {
+  background: #1C3D5A;
+}
+
+.ov-dot.clock-out {
+  background: #D97706;
+}
+
+.ov-label {
+  color: #829AB1;
+}
+
+.ov-val {
+  color: #9AA0A6;
+}
+
+.ov-val.done {
+  color: #1F2933;
+  font-weight: 600;
+}
+
+.ov-divider {
+  width: 1rpx;
+  height: 24rpx;
+  background: #E4E7EB;
+  margin: 0 18rpx;
+}
+
+.ov-fit-btn {
+  margin-left: auto;
+  padding: 6rpx 18rpx;
+  font-size: 22rpx;
+  color: #1C3D5A;
+  background: #EEF2F7;
+  border-radius: 20rpx;
+  font-weight: 500;
+}
+
+/* 地图画布区域 */
+.map-wrapper {
+  position: relative;
+  flex: 1;
+  min-height: 360rpx;
+  width: 100%;
+}
+
+.map-canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.map-overlay-tip {
+  position: absolute;
+  top: 24rpx;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(28, 61, 90, 0.86);
+  color: #fff;
+  font-size: 24rpx;
+  padding: 14rpx 28rpx;
+  border-radius: 32rpx;
+  white-space: nowrap;
+  box-shadow: 0 4rpx 16rpx rgba(0, 0, 0, 0.15);
+}
+
+.map-overlay-tip.warn {
+  background: rgba(180, 83, 9, 0.9);
+}
+
+.map-coord-notice {
+  position: absolute;
+  bottom: 16rpx;
+  left: 24rpx;
+  right: 24rpx;
+  background: rgba(255, 244, 224, 0.94);
+  color: #B26A00;
+  font-size: 22rpx;
+  padding: 10rpx 20rpx;
+  border-radius: 12rpx;
+  text-align: center;
+}
+
+/* 底部时间轴与选中点位照片抽屉 */
+.bottom-sheet {
+  flex-shrink: 0;
+  background: #fff;
+  border-radius: 24rpx 24rpx 0 0;
+  box-shadow: 0 -4rpx 20rpx rgba(0, 0, 0, 0.08);
+  padding: 16rpx 24rpx 28rpx;
+  z-index: 10;
+}
+
+.timeline-scroll {
+  white-space: nowrap;
+  width: 100%;
+  padding-bottom: 14rpx;
+  border-bottom: 1rpx solid #EEF1F5;
+}
+
+.timeline-row {
+  display: inline-flex;
+  align-items: center;
+}
+
+.timeline-node {
+  display: inline-flex;
+  align-items: center;
+  gap: 8rpx;
+  padding: 10rpx 18rpx;
+  border-radius: 28rpx;
+  background: #F4F6F9;
+  color: #486581;
+  font-size: 23rpx;
+  border: 2rpx solid transparent;
+}
+
+.timeline-node.active {
+  background: #FFF8EB;
+  border-color: #C2933B;
+  color: #1F2933;
+  font-weight: 600;
+}
+
+.node-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34rpx;
+  height: 34rpx;
+  padding: 0 6rpx;
+  border-radius: 17rpx;
+  background: #1C3D5A;
+  color: #fff;
+  font-size: 20rpx;
+  font-weight: 600;
+}
+
+.timeline-node.type-clock_in .node-badge {
+  background: #059669;
+}
+
+.timeline-node.type-clock_out .node-badge {
+  background: #D97706;
+}
+
+.timeline-node.active .node-badge {
+  background: #C2933B;
+}
+
+.node-time {
+  font-size: 20rpx;
+  color: #829AB1;
+}
+
+.timeline-arrow {
+  margin: 0 10rpx;
+  color: #CBD2D9;
+  font-size: 22rpx;
+}
+
+/* 详情卡片 */
+.point-detail-card {
+  padding-top: 16rpx;
+}
+
+.detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+}
+
+.detail-title-wrap {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1;
+}
+
+.detail-type-tag {
+  flex-shrink: 0;
+  font-size: 20rpx;
+  padding: 4rpx 12rpx;
+  border-radius: 8rpx;
+  margin-right: 12rpx;
+  font-weight: 600;
+  background: #EBF4FF;
+  color: #1C3D5A;
+}
+
+.detail-type-tag.type-clock_in {
+  background: #E6F7F0;
+  color: #059669;
+}
+
+.detail-type-tag.type-clock_out {
+  background: #FEF3C7;
+  color: #D97706;
+}
+
+.detail-store-name {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #1F2933;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-step-btns {
+  display: flex;
+  gap: 10rpx;
+  flex-shrink: 0;
+}
+
+.step-btn {
+  padding: 6rpx 16rpx;
+  font-size: 22rpx;
+  background: #EEF2F7;
+  color: #1C3D5A;
+  border-radius: 20rpx;
+}
+
+.step-btn.disabled {
+  color: #C7CBD1;
+  opacity: 0.6;
+}
+
+.detail-meta-row {
+  margin-top: 10rpx;
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  font-size: 23rpx;
+  color: #627D98;
+}
+
+.detail-meta-score {
+  margin-left: auto;
+  font-weight: 600;
+}
+
+.detail-address-row {
+  margin-top: 8rpx;
+  display: flex;
+  align-items: flex-start;
+  font-size: 23rpx;
+  color: #829AB1;
+}
+
+.detail-address-icon {
+  margin-right: 6rpx;
+  flex-shrink: 0;
+}
+
+.detail-address-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 照片横向展示区 */
+.detail-photos-section {
+  margin-top: 16rpx;
+}
+
+.detail-photos-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12rpx;
+}
+
+.detail-photos-title {
+  font-size: 24rpx;
+  font-weight: 600;
+  color: #334E68;
+}
+
+.detail-report-link {
+  font-size: 24rpx;
+  color: #2E5A82;
+  font-weight: 500;
+}
+
+.detail-photo-scroll {
+  white-space: nowrap;
+  width: 100%;
+}
+
+.detail-photo-list {
+  display: inline-flex;
+  gap: 16rpx;
+}
+
+.detail-photo-item {
+  position: relative;
+  width: 156rpx;
+  height: 156rpx;
+  border-radius: 12rpx;
+  overflow: hidden;
+  background: #EEF2F7;
+  flex-shrink: 0;
+}
+
+.detail-photo-img {
+  width: 100%;
+  height: 100%;
+}
+
+.detail-photo-zoom {
+  position: absolute;
+  right: 8rpx;
+  bottom: 8rpx;
+  font-size: 20rpx;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  border-radius: 8rpx;
+  padding: 2rpx 8rpx;
+}
+
+.detail-photo-empty {
+  height: 100rpx;
+  line-height: 100rpx;
+  text-align: center;
+  font-size: 24rpx;
+  color: #9AA0A6;
+  background: #F8FAFC;
+  border-radius: 12rpx;
+}

@@ -1,0 +1,160 @@
+<!--pages/visit-map/visit-map.wxml-->
+<view class="visit-map-page">
+  <!-- 顶部控制面板：日期切换 + 人员选择 + 当日轨迹概览 -->
+  <view class="top-panel">
+    <!-- 日期选择行 -->
+    <view class="date-row">
+      <view class="date-nav-btn" data-delta="-1" bindtap="shiftDay">‹ 前一天</view>
+      <picker mode="date" value="{{selectedDate}}" end="{{todayStr}}" bindchange="onDateChange">
+        <view class="date-picker-pill">
+          <text class="date-picker-icon">📅</text>
+          <text class="date-picker-text">{{dateLabel}}</text>
+          <text class="date-picker-caret">▾</text>
+        </view>
+      </picker>
+      <view class="date-nav-btn {{isToday ? 'disabled' : ''}}" data-delta="1" bindtap="shiftDay">后一天 ›</view>
+      <view class="date-today-pill" wx:if="{{!isToday}}" bindtap="backToToday">今</view>
+    </view>
+
+    <!-- 管理者：业务员切换横向胶囊栏 -->
+    <scroll-view class="user-scroll" scroll-x wx:if="{{isManager && usersList.length > 0}}">
+      <view class="user-pill-list">
+        <view
+          class="user-pill {{selectedUserId === item.userId ? 'active' : ''}}"
+          wx:for="{{usersList}}"
+          wx:key="userId"
+          data-userid="{{item.userId}}"
+          bindtap="onSelectUser"
+        >
+          <text class="user-pill-name">{{item.name}}</text>
+          <text class="user-pill-count {{item.totalCount > 0 ? 'has-data' : ''}}">{{item.totalCount}}</text>
+        </view>
+      </view>
+    </scroll-view>
+
+    <!-- 当日打卡与拜访概览条 -->
+    <view class="overview-strip">
+      <view class="ov-item">
+        <text class="ov-dot clock-in"></text>
+        <text class="ov-label">上班：</text>
+        <text class="ov-val {{clockInPoint ? 'done' : ''}}" data-id="{{clockInPoint._id}}" bindtap="onQuickSelectById">{{clockInPoint ? clockInPoint.timeText : '未打卡'}}</text>
+      </view>
+      <view class="ov-divider"></view>
+      <view class="ov-item">
+        <text class="ov-dot visit"></text>
+        <text class="ov-label">拜访：</text>
+        <text class="ov-val done">{{visitCount}} 家</text>
+      </view>
+      <view class="ov-divider"></view>
+      <view class="ov-item">
+        <text class="ov-dot clock-out"></text>
+        <text class="ov-label">下班：</text>
+        <text class="ov-val {{clockOutPoint ? 'done' : ''}}" data-id="{{clockOutPoint._id}}" bindtap="onQuickSelectById">{{clockOutPoint ? clockOutPoint.timeText : '未打卡'}}</text>
+      </view>
+      <view class="ov-fit-btn" wx:if="{{hasValidCoords}}" bindtap="fitAllPoints">全览</view>
+    </view>
+  </view>
+
+  <!-- 地图主体区域 -->
+  <view class="map-wrapper">
+    <map
+      id="visitMap"
+      class="map-canvas"
+      latitude="{{mapCenter.latitude}}"
+      longitude="{{mapCenter.longitude}}"
+      scale="{{mapScale}}"
+      markers="{{markers}}"
+      polyline="{{polyline}}"
+      include-points="{{includePoints}}"
+      show-location="{{false}}"
+      bindmarkertap="onMarkerTap"
+      bindcallouttap="onMarkerTap"
+    ></map>
+
+    <!-- 无坐标或无记录时的浮层提示 -->
+    <view class="map-overlay-tip" wx:if="{{!loading && points.length === 0}}">
+      <text>{{selectedUserName ? selectedUserName + ' ' : ''}}当天暂无打卡或拜访记录</text>
+    </view>
+    <view class="map-overlay-tip warn" wx:elif="{{!loading && points.length > 0 && !hasValidCoords}}">
+      <text>当天 {{points.length}} 条记录未获取到 GPS 坐标，请点击下方节点查看照片</text>
+    </view>
+    <view class="map-coord-notice" wx:elif="{{!loading && noCoordCount > 0}}">
+      <text>注：有 {{noCoordCount}} 条记录无定位坐标，已在下方时间轴列出</text>
+    </view>
+  </view>
+
+  <!-- 底部：轨迹时间轴节点 + 当前选中点位照片与详情 -->
+  <view class="bottom-sheet" wx:if="{{points.length > 0}}">
+    <!-- 横向路线节点条：点选任意节点切换详情并移动地图中心 -->
+    <scroll-view class="timeline-scroll" scroll-x scroll-into-view="node-{{activeIndex}}">
+      <view class="timeline-row">
+        <block wx:for="{{points}}" wx:key="_id">
+          <view
+            id="node-{{index}}"
+            class="timeline-node {{index === activeIndex ? 'active' : ''}} type-{{item.recordType}}"
+            data-index="{{index}}"
+            bindtap="onSelectNode"
+          >
+            <text class="node-badge">{{item.badgeText}}</text>
+            <text class="node-title">{{item.shortTitle}}</text>
+            <text class="node-time">{{item.timeText}}</text>
+          </view>
+          <view class="timeline-arrow" wx:if="{{index < points.length - 1}}">→</view>
+        </block>
+      </view>
+    </scroll-view>
+
+    <!-- 当前点位详情与照片卡片 -->
+    <view class="point-detail-card" wx:if="{{activePoint}}">
+      <view class="detail-head">
+        <view class="detail-title-wrap">
+          <text class="detail-type-tag type-{{activePoint.recordType}}">{{activePoint.typeLabel}}</text>
+          <text class="detail-store-name">{{activePoint.displayTitle}}</text>
+        </view>
+        <view class="detail-step-btns">
+          <view class="step-btn {{activeIndex <= 0 ? 'disabled' : ''}}" data-delta="-1" bindtap="stepNode">‹ 上一点</view>
+          <view class="step-btn {{activeIndex >= points.length - 1 ? 'disabled' : ''}}" data-delta="1" bindtap="stepNode">下一点 ›</view>
+        </view>
+      </view>
+
+      <view class="detail-meta-row">
+        <text class="detail-meta-item">🕒 {{activePoint.timeText}}</text>
+        <text class="detail-meta-item" wx:if="{{activePoint.userName}}">👤 {{activePoint.userName}}</text>
+        <text class="detail-meta-score" wx:if="{{activePoint.score !== undefined}}" style="color: {{activePoint.scoreColor}}">AI评分 {{activePoint.score}}分</text>
+      </view>
+
+      <view class="detail-address-row">
+        <text class="detail-address-icon">📍</text>
+        <text class="detail-address-text">{{activePoint.addressText}}</text>
+      </view>
+
+      <!-- 该点位的现场照片（点击可全屏放大预览） -->
+      <view class="detail-photos-section">
+        <view class="detail-photos-header">
+          <text class="detail-photos-title">现场照片 ({{activePoint.photoURLs.length}}张 · 点击放大查看)</text>
+          <view class="detail-report-link" bindtap="goPointReport">
+            <text>{{activePoint.isClock ? '查看打卡详情 ›' : '查看完整报告 ›'}}</text>
+          </view>
+        </view>
+
+        <scroll-view class="detail-photo-scroll" scroll-x wx:if="{{activePoint.photoURLs.length > 0}}">
+          <view class="detail-photo-list">
+            <view
+              class="detail-photo-item"
+              wx:for="{{activePoint.photoURLs}}"
+              wx:key="*this"
+              data-url="{{item}}"
+              bindtap="previewPointPhoto"
+            >
+              <image class="detail-photo-img" src="{{item}}" mode="aspectFill" lazy-load></image>
+              <view class="detail-photo-zoom">🔍</view>
+            </view>
+          </view>
+        </scroll-view>
+        <view class="detail-photo-empty" wx:else>
+          <text>暂无可预览照片</text>
+        </view>
+      </view>
+    </view>
+  </view>
+</view>

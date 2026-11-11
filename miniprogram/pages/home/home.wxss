@@ -67,6 +67,67 @@
   opacity: 0.7;
 }
 
+.clock-bar {
+  margin-top: 32rpx;
+  display: flex;
+  gap: 20rpx;
+}
+
+.clock-card {
+  flex: 1;
+  min-width: 0;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1rpx solid rgba(255, 255, 255, 0.22);
+  border-radius: 20rpx;
+  padding: 20rpx 22rpx;
+  backdrop-filter: blur(6px);
+}
+
+.clock-card.clocked {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(110, 231, 183, 0.55);
+}
+
+.clock-card-head {
+  display: flex;
+  align-items: center;
+}
+
+.clock-icon {
+  font-size: 30rpx;
+  margin-right: 10rpx;
+}
+
+.clock-title {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #fff;
+}
+
+.clock-badge {
+  margin-left: auto;
+  font-size: 22rpx;
+  padding: 4rpx 12rpx;
+  border-radius: 20rpx;
+  background: rgba(255, 255, 255, 0.18);
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.clock-badge.done {
+  background: #10B981;
+  color: #fff;
+  font-weight: 600;
+}
+
+.clock-addr {
+  margin-top: 10rpx;
+  font-size: 22rpx;
+  color: rgba(255, 255, 255, 0.78);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .offline-banner {
   margin: 24rpx 30rpx 0;
   padding: 20rpx 24rpx;
@@ -203,6 +264,30 @@
   margin: 0 20rpx;
 }
 
+.record-store-row {
+  display: flex;
+  align-items: center;
+}
+
+.record-clock-tag {
+  flex-shrink: 0;
+  font-size: 20rpx;
+  padding: 2rpx 10rpx;
+  border-radius: 8rpx;
+  margin-right: 10rpx;
+  font-weight: 600;
+}
+
+.record-clock-tag.clock_in {
+  background: #E6F7F0;
+  color: #0D9488;
+}
+
+.record-clock-tag.clock_out {
+  background: #FEF3C7;
+  color: #D97706;
+}
+
 .record-store {
   font-size: 30rpx;
   color: #1F2933;
@@ -215,6 +300,9 @@
   margin-top: 8rpx;
   font-size: 24rpx;
   color: #9AA0A6;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .record-right {
@@ -229,6 +317,11 @@
 .record-status {
   font-size: 24rpx;
   color: #9AA0A6;
+}
+
+.record-status.clocked {
+  color: #10B981;
+  font-weight: 500;
 }
 
 .empty {

@@ -8,6 +8,7 @@ const multer = require('multer')
 const cloud = require('./cloud-shim')
 const files = require('./files')
 const auth = require('./auth')
+const internal = require('./internal')
 const { basePath } = require('./config')
 
 const uploadDir = path.join(os.tmpdir(), 'shelfguard-uploads')
@@ -29,6 +30,10 @@ function createApp() {
   router.get('/health', (_req, res) => {
     res.json({ ok: true, service: 'shelfguard' })
   })
+
+  // 供进销存 (jxc-app) 经营诊断助手调用的内部只读接口（使用 INTERNAL_API_KEY 鉴权）
+  router.get('/api/internal/customer-summary', internal.requireInternalKey, internal.customerSummaryHandler)
+  router.get('/api/internal/overview', internal.requireInternalKey, internal.overviewHandler)
 
   router.post('/api/auth/login', auth.loginHandler)
 

@@ -45,12 +45,12 @@ const AI_CONFIG = {
     // 注意：纯文本的 qwen-plus / qwen3.6-plus 不能放这里——它们不接收图片，
     // 会导致整条分析链路失败。要识图必须选多模态模型：qwen-vl-plus、qwen3-vl-plus、qwen3.7-plus 等。
     apiUrl: 'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
-    model: 'qwen3.7-plus',
+    model: 'qwen3.8-flash',
     apiKey: process.env.DASHSCOPE_API_KEY || ''
   }
 }
 
-// 当前只走 qwen3.7-plus 这一个多模态通道，不再保留 OpenAI 备用通道。
+// 当前只走 qwen3.8-flash 这一个多模态通道，不再保留 OpenAI 备用通道。
 const CURRENT_MODEL = 'qwen'
 
 // 采样参数：陈列评分要的是稳定复现，不是创意，所以温度压到很低。
@@ -545,7 +545,7 @@ async function callQwen(config, apiKey, imageUrls, userPrompt, systemPrompt = SY
 /**
  * 判断是否为 Qwen3.x 混合思考模型（需要显式关闭思考模式）
  *
- * 命中的模型：qwen3.5-* / qwen3.6-* / qwen3.7-* 全系（plus / max / flash）
+ * 命中的模型：qwen3.5-* / qwen3.6-* / qwen3.7-* / qwen3.8-* 全系（plus / max / flash）
  * 不命中的：qwen-vl-plus 等老 VL 系列（不认识 enable_thinking 参数，传了会报参数错误）
  */
 function isHybridThinkingModel(model) {

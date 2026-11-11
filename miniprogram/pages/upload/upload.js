@@ -48,10 +48,15 @@ Page({
     // 离线待上传（客户端未提交成功，与云端 pending 分析队列分开）
     offlineQueueCount: 0,
     savedToOffline: false,
-    flushingOffline: false
+    flushingOffline: false,
+    recordType: 'visit',
+    isClockRecord: false
   },
 
   onLoad(options) {
+    const rawRecordType = decodeURIComponent(options.recordType || 'visit')
+    const recordType = (rawRecordType === 'clock_in' || rawRecordType === 'clock_out') ? rawRecordType : 'visit'
+    const isClockRecord = recordType === 'clock_in' || recordType === 'clock_out'
     // 解析单张或多张照片
     const photoPath = decodeURIComponent(options.photoPath || '')
     const photoPaths = options.photoPaths
@@ -80,6 +85,8 @@ Page({
       storeName: decodeURIComponent(options.storeName || ''),
       userName: decodeURIComponent(options.userName || ''),
       customerId: decodeURIComponent(options.customerId || ''),
+      recordType,
+      isClockRecord,
       analyzeMode: cached.analyzeMode || 'batch',
       analyzeTime: cached.analyzeTime || '21:00'
     })
@@ -250,8 +257,8 @@ Page({
       const inspectionId = await this.createInspection()
       this.setData({ inspectionId })
 
-      // 4. 分流：集中分析模式到此为止，即时分析模式继续等 AI
-      if (this.data.analyzeMode === 'instant') {
+      // 4. 分流：集中分析模式或上下班打卡到此为止，仅门店拜访的即时分析模式继续等 AI
+      if (this.data.analyzeMode === 'instant' && !this.data.isClockRecord) {
         this.setData({ status: 'analyzing' })
         await this.triggerAnalysis(inspectionId)
         this.setData({ status: 'success' })
@@ -259,7 +266,7 @@ Page({
           wx.redirectTo({ url: `/pages/report/report?id=${inspectionId}` })
         }, 1200)
       } else {
-        // 集中分析：不调用 AI，直接告诉用户已提交
+        // 集中分析或考勤打卡：不调用 AI，直接告诉用户已提交
         this.setData({ status: 'submitted' })
         wx.vibrateShort({ type: 'light' })
       }
@@ -328,6 +335,7 @@ Page({
     await offlineQueue.enqueue({
       photoPaths,
       meta: {
+        recordType: this.data.recordType || 'visit',
         taskName: this.data.taskName,
         storeName: this.data.storeName,
         userName: this.data.userName,
@@ -463,11 +471,12 @@ Page({
   // 注：照片文件本身在 uploadAllPhotos 里已由客户端直传云存储拿到 fileID 数组，
   // 这里只把 fileID + 元数据交给云函数写一条记录，符合微信云开发常规做法。
   async createInspection() {
-    const { fileIDs, lat, lng, address, taskName, storeName, userName, customerId } = this.data
+    const { fileIDs, lat, lng, address, taskName, storeName, userName, customerId, recordType } = this.data
 
     const res = await api.callFunction({
       name: 'submitInspection',
       data: {
+        recordType: recordType || 'visit',
         taskName,
         storeName,
         userName,
@@ -539,9 +548,11 @@ Page({
   // ============================================================
 
   // 继续拜访下一家：回到首页（页面栈：首页 → 相机 → 上传，退 2 层），
-  // 首页 onShow 读到标记后直接进入选门店流程
+  // 首页 onShow 读到标记后直接进入选门店流程；若是上下班打卡则仅返回首页
   continueVisit() {
-    app.globalData.startNextVisit = true
+    if (!this.data.isClockRecord) {
+      app.globalData.startNextVisit = true
+    }
     wx.navigateBack({
       delta: 2,
       fail: () => {

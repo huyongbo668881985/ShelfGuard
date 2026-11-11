@@ -177,4 +177,4 @@ API 根地址在 `miniprogram/utils/config.js` 的 `apiBase`，目前是 `https:
 - 权限仍全部在服务端按 openid 判断，不信任小程序传来的角色。
 - 云函数 60 秒硬超时没有了。单次 AI 等待放到 90 秒；夜间统计和进销存同步允许跑完，不再卡在 45 秒。
 - 批量分析仍是每 2 分钟处理一批（默认先做一位业务员的当日汇总），避免一次堆太多图。
-- `cloudfunctions/` 目录还在仓库里，只作为对照，开发者工具不再把它当云函数目录。
+- 旧的 `cloudfunctions/` 目录已删除，后端逻辑全部在 `server/src/functions/`。

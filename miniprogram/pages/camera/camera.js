@@ -54,15 +54,23 @@ Page({
     showSettings: false,
 
     // traffic=拼图；quality=多图各自打水印后直传
-    imageMode: 'traffic'
+    imageMode: 'traffic',
+
+    // 记录类型：visit（门店拜访）| clock_in（上班打卡）| clock_out（下班打卡）
+    recordType: 'visit'
   },
 
   onLoad(options) {
+    const recordType = (options.recordType === 'clock_in' || options.recordType === 'clock_out')
+      ? options.recordType
+      : 'visit'
     // 从首页「开始拜访」带来的门店信息：storeName / customerId / storeAddress，
     // noStore=1 表示选了「无门店」。门店地址优先用于水印地址，定位只作兜底。
-    this.storeAddressFromHome = options.storeAddress || ''
+    this.storeAddressFromHome = options.storeAddress ? decodeURIComponent(options.storeAddress) : ''
     this.setData({
-      selectedCustomerId: options.customerId || '',
+      recordType,
+      maxPhotos: recordType === 'visit' ? 6 : 1,
+      selectedCustomerId: options.customerId ? decodeURIComponent(options.customerId) : '',
       address: this.storeAddressFromHome
     })
     this.loadUserInfo(options)
@@ -158,13 +166,28 @@ Page({
   loadUserInfo(options) {
     const globalData = app.globalData
     const userInfo = globalData.userInfo || {}
+    const recordType = (options && (options.recordType === 'clock_in' || options.recordType === 'clock_out'))
+      ? options.recordType
+      : (this.data.recordType || 'visit')
+
+    if (recordType === 'clock_in' || recordType === 'clock_out') {
+      const clockLabel = recordType === 'clock_in' ? '上班打卡' : '下班打卡'
+      this.setData({
+        userName: (options && options.userName ? decodeURIComponent(options.userName) : '') || userInfo.name || '',
+        storeName: clockLabel,
+        taskName: `考勤打卡：${clockLabel}`
+      })
+      wx.setNavigationBarTitle({ title: clockLabel })
+      return
+    }
+
     // 任务名称：上次填过的优先（本机记忆），否则用固定默认值，用户可随时更改
     const lastTaskName = wx.getStorageSync('shelfguard_lastTaskName') || ''
 
     this.setData({
-      userName: options.userName || userInfo.name || '',
-      storeName: options.storeName || '',
-      taskName: options.taskName || lastTaskName || TASK_NAME_DEFAULT
+      userName: (options && options.userName ? decodeURIComponent(options.userName) : '') || userInfo.name || '',
+      storeName: (options && options.storeName ? decodeURIComponent(options.storeName) : '') || '',
+      taskName: (options && options.taskName ? decodeURIComponent(options.taskName) : '') || lastTaskName || TASK_NAME_DEFAULT
     })
   },
 
@@ -679,7 +702,7 @@ Page({
 
   // 跳转到上传页
   navigateToUpload(location) {
-    const { watermarkedPath, watermarkedPaths, address, taskName, storeName, userName, selectedCustomerId } = this.data
+    const { watermarkedPath, watermarkedPaths, address, taskName, storeName, userName, selectedCustomerId, recordType } = this.data
     const multi = Array.isArray(watermarkedPaths) && watermarkedPaths.length > 1
     let url = `/pages/upload/upload?` +
       `lat=${location.latitude}` +
@@ -688,7 +711,8 @@ Page({
       `&taskName=${encodeURIComponent(taskName)}` +
       `&storeName=${encodeURIComponent(storeName)}` +
       `&userName=${encodeURIComponent(userName)}` +
-      `&customerId=${encodeURIComponent(selectedCustomerId || '')}`
+      `&customerId=${encodeURIComponent(selectedCustomerId || '')}` +
+      `&recordType=${encodeURIComponent(recordType || 'visit')}`
     if (multi) {
       url += `&photoPaths=${encodeURIComponent(JSON.stringify(watermarkedPaths))}`
     } else {
