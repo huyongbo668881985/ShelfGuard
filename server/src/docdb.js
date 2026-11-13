@@ -25,9 +25,21 @@ function getSqlite() {
       id TEXT NOT NULL,
       body TEXT NOT NULL,
       PRIMARY KEY (collection, id)
-    )
+    );
+    CREATE INDEX IF NOT EXISTS idx_docs_collection_openid
+      ON documents (collection, json_extract(body, '$._openid'));
+    CREATE INDEX IF NOT EXISTS idx_docs_collection_status
+      ON documents (collection, json_extract(body, '$.status'));
   `)
   return sqlite
+}
+
+function closeSqlite() {
+  if (!sqlite) return
+  try {
+    sqlite.close()
+  } catch (_) {}
+  sqlite = null
 }
 
 function assertCollection(name) {
@@ -204,10 +216,22 @@ function matchQuery(doc, query) {
   return keys.every(key => matchValue(getPath(doc, key), query[key]))
 }
 
-function loadAll(collection) {
-  const rows = getSqlite().prepare(
-    'SELECT id, body FROM documents WHERE collection = ?'
-  ).all(assertCollection(collection))
+function loadAll(collection, query) {
+  const col = assertCollection(collection)
+  const clauses = ['collection = ?']
+  const params = [col]
+  if (query && typeof query === 'object' && !Array.isArray(query) && !isCmd(query)) {
+    if (typeof query._openid === 'string' && !/^\d{4}-\d{2}-\d{2}T/.test(query._openid)) {
+      clauses.push("json_extract(body, '$._openid') = ?")
+      params.push(query._openid)
+    }
+    if (typeof query.status === 'string' && !/^\d{4}-\d{2}-\d{2}T/.test(query.status)) {
+      clauses.push("json_extract(body, '$.status') = ?")
+      params.push(query.status)
+    }
+  }
+  const sql = `SELECT id, body FROM documents WHERE ${clauses.join(' AND ')}`
+  const rows = getSqlite().prepare(sql).all(...params)
   return rows.map(row => {
     const doc = revive(JSON.parse(row.body))
     doc._id = row.id
@@ -306,7 +330,7 @@ class Query {
   }
 
   _matched() {
-    return loadAll(this.collection).filter(doc => matchQuery(doc, this.query))
+    return loadAll(this.collection, this.query).filter(doc => matchQuery(doc, this.query))
   }
 
   _ordered(rows) {
@@ -387,7 +411,7 @@ class Aggregate {
   }
 
   async end() {
-    let rows = loadAll(this.collection)
+    let rows = loadAll(this.collection, this._match)
     if (this._match) rows = rows.filter(doc => matchQuery(doc, this._match))
     if (!this._group) return { list: rows }
     const acc = { _id: this._group._id == null ? null : this._group._id }
@@ -471,4 +495,4 @@ const db = {
 }
 
 module.exports = db
-module.exports._internal = { matchQuery, dataDir, getSqlite }
+module.exports._internal = { matchQuery, dataDir, getSqlite, closeSqlite }

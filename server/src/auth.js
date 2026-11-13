@@ -104,7 +104,49 @@ function testOpenid(body) {
   return raw
 }
 
+const LOGIN_FAIL_WINDOW_MS = 5 * 60 * 1000
+const LOGIN_FAIL_MAX = 20
+const loginFailBuckets = new Map()
+
+function clientIpOf(req) {
+  const xff = req.headers['x-forwarded-for']
+  if (typeof xff === 'string' && xff.trim()) {
+    return xff.split(',')[0].trim()
+  }
+  return req.ip || (req.socket && req.socket.remoteAddress) || 'unknown'
+}
+
+function isLoginRateLimited(ip) {
+  const now = Date.now()
+  const entry = loginFailBuckets.get(ip)
+  if (!entry) return false
+  if (now > entry.resetAt) {
+    loginFailBuckets.delete(ip)
+    return false
+  }
+  return entry.count >= LOGIN_FAIL_MAX
+}
+
+function recordLoginFailure(ip) {
+  const now = Date.now()
+  if (loginFailBuckets.size > 1000) {
+    for (const [k, v] of loginFailBuckets.entries()) {
+      if (now > v.resetAt) loginFailBuckets.delete(k)
+    }
+  }
+  const cur = loginFailBuckets.get(ip)
+  if (!cur || now > cur.resetAt) {
+    loginFailBuckets.set(ip, { count: 1, resetAt: now + LOGIN_FAIL_WINDOW_MS })
+  } else {
+    cur.count += 1
+  }
+}
+
 async function loginHandler(req, res) {
+  const ip = clientIpOf(req)
+  if (isLoginRateLimited(ip)) {
+    return res.status(429).json({ success: false, error: '登录尝试过于频繁，请稍后再试' })
+  }
   try {
     const handlers = require('./handlers')
     let openid = testOpenid(req.body)
@@ -113,9 +155,11 @@ async function loginHandler(req, res) {
     delete event.code
     delete event.testOpenid
     const result = await cloud.runWithContext({ openid, source: 'client' }, () => handlers.login(event))
+    loginFailBuckets.delete(ip)
     const token = signToken(openid)
     return res.json(Object.assign({}, result, { token }))
   } catch (err) {
+    recordLoginFailure(ip)
     const status = err.status || 401
     console.error('登录失败:', err.message)
     return res.status(status).json({ success: false, error: err.message || '登录失败' })

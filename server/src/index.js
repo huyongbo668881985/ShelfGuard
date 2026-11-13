@@ -37,14 +37,17 @@ if (process.env.SHELFGUARD_TEST_LOGIN === '1') {
 const { createApp } = require('./app')
 const { createScheduler } = require('./scheduler')
 const { port, basePath } = require('./config')
+const db = require('./docdb')
 
 const app = createApp()
+let scheduler = null
 const server = app.listen(port(), '0.0.0.0', () => {
   console.log(`ShelfGuard API 已启动 http://127.0.0.1:${port()}${basePath()}`)
   if (process.env.DISABLE_CRON === '1') {
     console.log('定时任务已关闭（DISABLE_CRON=1）')
   } else {
-    createScheduler().start()
+    scheduler = createScheduler()
+    scheduler.start()
   }
 })
 
@@ -52,3 +55,26 @@ server.on('error', err => {
   console.error('监听端口失败:', err.message)
   process.exit(1)
 })
+
+let shuttingDown = false
+function shutdown(signal) {
+  if (shuttingDown) return
+  shuttingDown = true
+  console.log(`收到 ${signal}，正在优雅关闭服务...`)
+  if (scheduler) {
+    try { scheduler.stop() } catch (_) {}
+  }
+  const forceTimer = setTimeout(() => {
+    try { db._internal.closeSqlite() } catch (_) {}
+    process.exit(0)
+  }, 10000)
+  if (typeof forceTimer.unref === 'function') forceTimer.unref()
+
+  server.close(() => {
+    try { db._internal.closeSqlite() } catch (_) {}
+    process.exit(0)
+  })
+}
+
+process.on('SIGINT', () => shutdown('SIGINT'))
+process.on('SIGTERM', () => shutdown('SIGTERM'))

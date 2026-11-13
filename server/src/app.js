@@ -29,7 +29,13 @@ function createApp() {
   const handlers = require('./handlers')
 
   router.get('/health', (_req, res) => {
-    res.json({ ok: true, service: 'shelfguard' })
+    try {
+      const db = require('./docdb')
+      db._internal.getSqlite().prepare('SELECT 1 AS ok').get()
+      return res.json({ ok: true, service: 'shelfguard' })
+    } catch (err) {
+      return res.status(503).json({ ok: false, service: 'shelfguard', error: '数据库不可用' })
+    }
   })
 
   // 供进销存 (jxc-app) 经营诊断助手调用的内部只读接口（使用 INTERNAL_API_KEY 鉴权）

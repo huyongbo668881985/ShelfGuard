@@ -374,5 +374,21 @@ test('登录、审批、巡检、照片和看板主路径', async () => {
   assert.ok(csBody.summary.visitCount >= 1)
   assert.ok(csBody.recentInspections[0].thumbnailURL.includes('/files/'))
 
+  // 验证网页拜访地图接口：未配置 WEB_MAP_PASSWORD 时拒绝访问(503)，仅接受 x-map-key 请求头
+  delete process.env.WEB_MAP_PASSWORD
+  const mapNoPassRes = await fetch(`${base}/api/web/map-route`)
+  assert.equal(mapNoPassRes.status, 503)
+
+  process.env.WEB_MAP_PASSWORD = 'map-secret-pass-2026'
+  const mapQueryPassRes = await fetch(`${base}/api/web/map-route?key=map-secret-pass-2026`)
+  assert.equal(mapQueryPassRes.status, 401)
+
+  const mapOkRes = await fetch(`${base}/api/web/map-route`, {
+    headers: { 'x-map-key': 'map-secret-pass-2026' }
+  })
+  assert.equal(mapOkRes.status, 200)
+  const mapOkBody = await mapOkRes.json()
+  assert.equal(mapOkBody.success, true)
+
   assert.ok(salesRow || sales)
 })

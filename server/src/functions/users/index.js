@@ -32,6 +32,11 @@ exports.main = async (event, context) => {
   }
 
   try {
+    const caller = await getCaller(openid)
+    if (caller && caller.disabled) {
+      return { success: false, error: '账号已停用，请联系管理员' }
+    }
+
     switch (action) {
       case 'listUsers':
         return await handleListUsers(openid, event)

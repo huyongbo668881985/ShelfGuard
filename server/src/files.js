@@ -33,7 +33,9 @@ function absPath(rel) {
 }
 
 function sign(rel, exp) {
-  return crypto.createHmac('sha256', fileUrlSecret() || 'dev-insecure')
+  const secret = fileUrlSecret()
+  if (!secret) throw new Error('未配置 FILE_URL_SECRET / JWT_SECRET')
+  return crypto.createHmac('sha256', secret)
     .update(`${rel}|${exp}`)
     .digest('base64url')
 }
@@ -64,18 +66,25 @@ function fileIdOf(rel) {
   return `sg://${rel}`
 }
 
-async function isAdmin(openid) {
-  if (!openid) return false
+async function getCallerUser(openid) {
+  if (!openid) return null
   const res = await db.collection('users').where({ _openid: openid }).limit(1).get()
-  const user = res.data[0]
+  return res.data[0] || null
+}
+
+async function isAdmin(openid) {
+  const user = await getCallerUser(openid)
   return !!(user && user.role === 'admin' && !user.disabled)
 }
 
 async function isManager(openid) {
-  if (!openid) return false
-  const res = await db.collection('users').where({ _openid: openid }).limit(1).get()
-  const user = res.data[0]
+  const user = await getCallerUser(openid)
   return !!(user && (user.role === 'admin' || user.role === 'manager') && !user.disabled)
+}
+
+async function isDisabled(openid) {
+  const user = await getCallerUser(openid)
+  return !!(user && user.disabled)
 }
 
 function ownerOf(rel) {
@@ -121,13 +130,19 @@ async function readFilesAsDataUrls({ fileList } = {}) {
 
 async function deleteFile({ fileList } = {}, ctx = {}) {
   const openid = ctx.OPENID || ''
-  const admin = await isAdmin(openid)
+  const caller = await getCallerUser(openid)
+  const callerDisabled = !!(caller && caller.disabled)
+  const admin = !!(caller && caller.role === 'admin' && !caller.disabled)
   const out = []
   for (const fileID of (fileList || [])) {
     const rel = safeRel(fileID)
     const abs = rel && absPath(rel)
     if (!rel || !abs) {
       out.push({ fileID, status: -1, errMsg: '非法文件' })
+      continue
+    }
+    if (callerDisabled) {
+      out.push({ fileID, status: -1, errMsg: '账号已停用' })
       continue
     }
     const owner = ownerOf(rel)
@@ -161,6 +176,10 @@ async function handleUpload(req, res) {
     }
     if (!req.file) {
       return res.status(400).json({ success: false, error: '缺少文件' })
+    }
+    if (await isDisabled(openid)) {
+      cleanup()
+      return res.status(403).json({ success: false, error: '账号已停用，无法上传照片' })
     }
     const rel = safeRel(String((req.body && req.body.cloudPath) || ''))
     if (!rel) {
@@ -213,7 +232,10 @@ async function handleDownload(req, res, relRaw) {
   }
   if (!allowed && req.user && req.user.openid) {
     const openid = req.user.openid
-    if (ownerOf(rel) === openid || await isManager(openid)) allowed = true
+    const caller = await getCallerUser(openid)
+    const active = !(caller && caller.disabled)
+    const manager = !!(caller && (caller.role === 'admin' || caller.role === 'manager') && !caller.disabled)
+    if (active && (ownerOf(rel) === openid || manager)) allowed = true
   }
   if (!allowed) return res.status(401).json({ success: false, error: '无权访问该照片' })
 

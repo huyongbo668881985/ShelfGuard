@@ -14,11 +14,71 @@ function safeEqual(a, b) {
   return crypto.timingSafeEqual(left, right)
 }
 
+const MAP_FAIL_WINDOW_MS = 5 * 60 * 1000
+const MAP_FAIL_MAX = 10
+const mapFailBuckets = new Map()
+
+function clientIpOf(req) {
+  const xff = req.headers['x-forwarded-for']
+  if (typeof xff === 'string' && xff.trim()) {
+    return xff.split(',')[0].trim()
+  }
+  return req.ip || (req.socket && req.socket.remoteAddress) || 'unknown'
+}
+
+function isMapRateLimited(ip) {
+  const now = Date.now()
+  const entry = mapFailBuckets.get(ip)
+  if (!entry) return false
+  if (now > entry.resetAt) {
+    mapFailBuckets.delete(ip)
+    return false
+  }
+  return entry.count >= MAP_FAIL_MAX
+}
+
+function recordMapFailure(ip) {
+  const now = Date.now()
+  if (mapFailBuckets.size > 1000) {
+    for (const [k, v] of mapFailBuckets.entries()) {
+      if (now > v.resetAt) mapFailBuckets.delete(k)
+    }
+  }
+  const cur = mapFailBuckets.get(ip)
+  if (!cur || now > cur.resetAt) {
+    mapFailBuckets.set(ip, { count: 1, resetAt: now + MAP_FAIL_WINDOW_MS })
+  } else {
+    cur.count += 1
+  }
+}
+
+function clearMapFailure(ip) {
+  mapFailBuckets.delete(ip)
+}
+
 function checkWebMapPasscode(req, res) {
   const requiredPass = (process.env.WEB_MAP_PASSWORD || '').trim()
-  if (!requiredPass) return true
-  const provided = String(req.headers['x-map-key'] || req.query.key || '').trim()
+  if (!requiredPass) {
+    res.status(503).json({
+      success: false,
+      needPasscode: true,
+      error: '服务器尚未配置 WEB_MAP_PASSWORD 访问口令'
+    })
+    return false
+  }
+  const ip = clientIpOf(req)
+  if (isMapRateLimited(ip)) {
+    res.status(429).json({
+      success: false,
+      needPasscode: true,
+      error: '密码尝试次数过多，请 5 分钟后再试'
+    })
+    return false
+  }
+  // 仅从请求头读取口令，避免 URL query 泄露到访问日志或浏览器历史记录
+  const provided = String(req.headers['x-map-key'] || '').trim()
   if (!provided || !safeEqual(provided, requiredPass)) {
+    if (provided) recordMapFailure(ip)
     res.status(401).json({
       success: false,
       needPasscode: true,
@@ -26,6 +86,7 @@ function checkWebMapPasscode(req, res) {
     })
     return false
   }
+  clearMapFailure(ip)
   return true
 }
 
@@ -1162,8 +1223,13 @@ function renderHtml(prefix) {
           const res = await fetch(url, {
             headers: key ? { 'x-map-key': key } : {}
           });
-          if (res.status === 401) {
-            showAuthModal(key ? '密码不正确，请重新输入' : '');
+          if (res.status === 401 || res.status === 429 || res.status === 503) {
+            let errBody = {};
+            try { errBody = await res.json(); } catch (_) {}
+            const msg = res.status === 401
+              ? (key ? '密码不正确，请重新输入' : '')
+              : (errBody.error || '暂时无法访问');
+            showAuthModal(msg);
             return;
           }
           hideAuthModal();

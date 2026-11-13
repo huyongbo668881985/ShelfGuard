@@ -284,7 +284,7 @@ exports.main = async (event, context) => {
     const analysis = await withHardTimeout(
       analyzeWithVision(imageUrls, brandReferenceText),
       AI_HARD_TIMEOUT_MS,
-      `AI 分析超过 ${AI_HARD_TIMEOUT_MS / 1000} 秒未完成，已主动中止（云函数硬上限 60 秒）。常见原因：单次照片过多、图片分辨率过高`
+      `AI 分析超过 ${AI_HARD_TIMEOUT_MS / 1000} 秒未完成，已主动中止。常见原因：单次照片过多、图片分辨率过高`
     )
 
     // 未配置 API Key：不把模拟报告落库（否则统计/平均分会被假数据污染），

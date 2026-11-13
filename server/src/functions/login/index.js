@@ -48,6 +48,14 @@ exports.main = async (event, context) => {
       const safeUserInfo = pickUpdatableFields(userInfo)
       const userRes = await db.collection('users').where({ _openid: openid }).get()
       const existingUser = userRes.data[0] || null
+      if (existingUser && existingUser.disabled) {
+        return {
+          openid,
+          success: false,
+          error: '账号已停用，请联系管理员',
+          userInfo: existingUser
+        }
+      }
       let nameLocked = false
 
       // 业务员姓名决定进销存客户归属：
