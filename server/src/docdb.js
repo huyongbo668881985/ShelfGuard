@@ -320,7 +320,7 @@ class Query {
 
   limit(n) {
     const v = parseInt(n, 10)
-    this._limit = Number.isFinite(v) && v > 0 ? Math.min(v, 1000) : 0
+    this._limit = Number.isFinite(v) && v > 0 ? Math.min(v, 5000) : 0
     return this
   }
 

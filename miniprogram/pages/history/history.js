@@ -36,7 +36,8 @@ Page({
     // 管理者视角：isManager 为 true 时才会显示"按业务员筛选"，
     // 普通业务员看不到这个入口，且服务端也会强制忽略该参数只返回本人数据
     isManager: false,
-    filterUserName: '',   // 管理者填写，为空表示"看全部业务员"
+    filterUserName: '',   // 管理者选择/填写，为空表示"看全部业务员"
+    salesUsers: [],       // 在册业务员姓名列表（胶囊选择器数据源）
     
     // 统计信息
     stats: {
@@ -117,13 +118,19 @@ Page({
         // 格式化列表数据
         const formattedList = result.list.map(item => this.formatItem(item))
         const newList = this.data.list.concat(formattedList)
-        
-        this.setData({
+        const nextData = {
           list: newList,
           total: result.total,
           page: this.data.page + 1,
           hasMore: newList.length < result.total
-        })
+        }
+        if (result.isManager != null && result.isManager !== this.data.isManager) {
+          nextData.isManager = result.isManager
+        }
+        if (Array.isArray(result.salesUsers) && result.salesUsers.length > 0) {
+          nextData.salesUsers = result.salesUsers
+        }
+        this.setData(nextData)
       }
     } catch (err) {
       console.error('加载历史失败:', err)
@@ -200,8 +207,8 @@ Page({
     const STATUS_TEXT = {
       pending: '已提交',
       uploaded: '已提交',
-      analyzing: '已提交',
-      analyze_failed: '已提交',
+      analyzing: '分析中',
+      analyze_failed: '分析失败',
       clocked: '已打卡'
     }
     item.statusText = STATUS_TEXT[item.status] || ''
@@ -223,10 +230,17 @@ Page({
       })
 
       if (res.result && res.result.success) {
-        this.setData({
+        const nextData = {
           stats: res.result.stats,
           latestDailyReport: toVisitWording(res.result.latestDailyReport || null)
-        })
+        }
+        if (res.result.isManager != null) {
+          nextData.isManager = res.result.isManager
+        }
+        if (Array.isArray(res.result.salesUsers) && res.result.salesUsers.length > 0) {
+          nextData.salesUsers = res.result.salesUsers
+        }
+        this.setData(nextData)
       }
     } catch (err) {
       console.error('加载统计失败:', err)
@@ -326,6 +340,17 @@ Page({
     const value = e.currentTarget.dataset.value
     this.setData({ 
       filterScore: this.data.filterScore === value ? '' : value,
+      showFilter: false
+    })
+    this.refreshList()
+  },
+
+  // 管理者：点击业务员胶囊一键切换筛选
+  onSelectUserPill(e) {
+    const name = e.currentTarget.dataset.name || ''
+    const next = (name && this.data.filterUserName === name) ? '' : name
+    this.setData({
+      filterUserName: next,
       showFilter: false
     })
     this.refreshList()

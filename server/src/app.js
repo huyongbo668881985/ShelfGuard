@@ -45,6 +45,7 @@ function createApp() {
   // 电脑端 Chrome 拜访地图大屏页与数据接口
   router.get('/map', webMap.mapPageHandler)
   router.get('/api/web/map-route', webMap.mapRouteApiHandler)
+  router.get('/api/web/export-ledger', webMap.exportLedgerApiHandler)
 
   router.post('/api/auth/login', auth.loginHandler)
 

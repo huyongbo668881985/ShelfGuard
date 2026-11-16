@@ -66,9 +66,9 @@
       <text class="stat-num">{{overall.avgVisitsPerCustomer != null ? overall.avgVisitsPerCustomer : '—'}}</text>
       <text class="stat-lab">店均拜访</text>
     </view>
-    <view class="stat-chip" bindtap="onTapLowVisit">
+    <view class="stat-chip stat-chip--clickable" bindtap="onTapLowVisit">
       <text class="stat-num warn">{{overall.lowVisitCount}}</text>
-      <text class="stat-lab">拜访&lt;{{overall.lowVisitThreshold}}次</text>
+      <text class="stat-lab">拜访&lt;{{overall.lowVisitThreshold}}次 ›</text>
     </view>
   </view>
 
@@ -113,4 +113,88 @@
   </view>
 
   <view class="footnote">数据每天凌晨自动汇总一次；环比=上月，同比=去年同月。默认拜访不足阈值 N={{defaultN}}。</view>
+
+  <!-- 拜访不足 N 次门店可交互抽屉 -->
+  <view class="lv-mask" wx:if="{{showLowVisitModal}}" bindtap="closeLowVisitModal"></view>
+  <view class="lv-panel {{showLowVisitModal ? 'show' : ''}}" wx:if="{{showLowVisitModal}}">
+    <view class="lv-header">
+      <view>
+        <text class="lv-title">⚠️ 拜访不足 {{overall.lowVisitThreshold}} 次门店</text>
+        <text class="lv-sub">{{yearMonth}} · 当前筛选共 {{lowVisitFiltered.length}} / {{overall.lowVisitCustomers.length}} 家</text>
+      </view>
+      <text class="lv-close" bindtap="closeLowVisitModal">✕</text>
+    </view>
+
+    <!-- 业务员胶囊筛选 + 搜索框 -->
+    <view class="lv-filters">
+      <scroll-view class="lv-user-scroll" scroll-x="true" enable-flex="true" wx:if="{{isManager && lowVisitUserGroups.length > 0}}">
+        <view class="lv-user-row">
+          <view
+            class="lv-user-pill {{!lowVisitUserFilter ? 'active' : ''}}"
+            data-name=""
+            bindtap="onSelectLowVisitUser"
+          >全部 ({{overall.lowVisitCustomers.length}})</view>
+          <view
+            class="lv-user-pill {{lowVisitUserFilter === item.name ? 'active' : ''}}"
+            wx:for="{{lowVisitUserGroups}}"
+            wx:key="name"
+            data-name="{{item.name}}"
+            bindtap="onSelectLowVisitUser"
+          >{{item.name}} ({{item.count}})</view>
+        </view>
+      </scroll-view>
+
+      <view class="lv-search-box">
+        <text class="lv-search-icon">🔍</text>
+        <input
+          class="lv-search-input"
+          placeholder="搜索门店名称或业务员"
+          value="{{lowVisitKeyword}}"
+          bindinput="onLowVisitKeywordInput"
+        />
+        <text class="lv-search-clear" wx:if="{{lowVisitKeyword}}" bindtap="onClearLowVisitKeyword">✕</text>
+      </view>
+    </view>
+
+    <!-- 门店列表 -->
+    <scroll-view class="lv-list-scroll" scroll-y="true">
+      <view class="lv-item" wx:for="{{lowVisitFiltered}}" wx:key="customerId">
+        <view class="lv-item-main">
+          <view class="lv-item-top">
+            <text class="lv-store-name">{{index + 1}}. {{item.storeName || item.customerId}}</text>
+            <text class="lv-visit-badge">已访 {{item.visitCount}} 次 · 差 {{item.lackCount}} 次</text>
+          </view>
+          <view class="lv-item-meta">
+            <text wx:if="{{item.userName}}">👤 {{item.userName}}</text>
+            <text wx:if="{{item.avgSharePercent != null}}"> · 排面 {{item.avgSharePercent}}%</text>
+            <text wx:if="{{item.lastScore != null}}"> · 最近 {{item.lastScore}}分</text>
+            <text wx:if="{{item.lastVisitDate}}"> · 上次 {{item.lastVisitDate}}</text>
+          </view>
+        </view>
+        <view class="lv-item-actions">
+          <view
+            class="lv-act-btn"
+            data-id="{{item.customerId}}"
+            data-name="{{item.storeName || item.customerId}}"
+            bindtap="onInspectLowVisitTrend"
+          >📈 趋势</view>
+          <view
+            class="lv-act-btn primary"
+            data-id="{{item.customerId}}"
+            data-name="{{item.storeName || item.customerId}}"
+            bindtap="onInspectLowVisitPhotos"
+          >🖼️ 照片</view>
+        </view>
+      </view>
+
+      <view class="lv-empty" wx:if="{{lowVisitFiltered.length === 0}}">
+        <text>没有匹配的门店</text>
+      </view>
+    </scroll-view>
+
+    <view class="lv-footer">
+      <button class="btn-secondary lv-footer-btn" bindtap="closeLowVisitModal">关闭</button>
+      <button class="btn-primary lv-footer-btn" bindtap="copyLowVisitList">📋 复制未达标名单发群</button>
+    </view>
+  </view>
 </view>

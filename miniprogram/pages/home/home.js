@@ -14,7 +14,7 @@ const app = getApp()
 
 const PAGE_SIZE = 50
 const WEEK_NAMES = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
-const STATUS_TEXT = { pending: '已提交', uploaded: '已提交', analyzing: '已提交', analyze_failed: '已提交' }
+const STATUS_TEXT = { pending: '已提交', uploaded: '已提交', analyzing: '分析中', analyze_failed: '分析失败' }
 
 function pad(n) {
   return String(n).padStart(2, '0')
@@ -89,10 +89,11 @@ Page({
       this.showPrivacyAuthorize()
     }
 
-    // 选门店页返回：只在「正在开始拜访」时才消费选择结果
+    // 选门店页返回：只在「正在开始拜访」时才消费选择结果（优先消费页面事件通道，兼容 globalData 兜底）
     if (this._selecting) {
       this._selecting = false
-      const selected = app.globalData.selectedCustomer
+      const selected = this._pendingSelectedCustomer || app.globalData.selectedCustomer
+      this._pendingSelectedCustomer = null
       app.globalData.selectedCustomer = null
       if (selected) {
         this.openCamera(selected)
@@ -352,30 +353,29 @@ Page({
 
   // ---------- 开始拜访 ----------
 
-  async startVisit() {
+  startVisit() {
     if (this.data.starting) return
     if (this.data.needsApproval) {
       wx.showToast({ title: '账号待管理员审批，批准前无法提交', icon: 'none' })
     }
     this.setData({ starting: true })
 
-    // 带上当前定位让门店列表按距离排序；拿不到就算了，不阻塞流程
-    let query = ''
-    try {
-      const loc = await Promise.race([
-        getLocation(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 4000))
-      ])
-      this._location = loc
-      query = `&lat=${loc.latitude}&lng=${loc.longitude}`
-    } catch (err) {
-      console.warn('开始拜访时定位失败，门店列表将不按距离排序:', err)
-    }
+    // 秒开客户列表：不再阻塞等待定位，先带缓存坐标秒进，由 customers 页后台静默刷新距离
+    const cached = this._location || app.globalData.lastLocation || null
+    const query = (cached && cached.latitude != null && cached.longitude != null)
+      ? `&lat=${cached.latitude}&lng=${cached.longitude}`
+      : ''
 
     this._selecting = true
+    this._pendingSelectedCustomer = null
     app.globalData.selectedCustomer = null
     wx.navigateTo({
       url: `/pages/customers/customers?mode=select${query}`,
+      events: {
+        selectCustomer: (selected) => {
+          this._pendingSelectedCustomer = selected
+        }
+      },
       fail: () => { this._selecting = false },
       complete: () => this.setData({ starting: false })
     })

@@ -2,8 +2,11 @@
 // 水印相机页面
 
 const app = getApp()
+const api = require('../../utils/api')
 const { getLocation: fetchLocation } = require('../../utils/location')
 const { validateInspection } = require('../../utils/validator')
+const { smartCompress } = require('../../utils/compress')
+const offlineQueue = require('../../utils/offlineQueue')
 
 // 任务名称：统一固定为默认值，业务员不能改（拍照页没有任何修改入口）
 const TASK_NAME_DEFAULT = '永丰特8：常规拜访'
@@ -12,9 +15,9 @@ Page({
   data: {
     needsApproval: false,
     approvalBannerText: '',
-    // 相机配置
+    // 相机配置（默认关闭闪光灯）
     devicePosition: 'back',
-    flashMode: 'auto',
+    flashMode: 'off',
     cameraReady: false,
 
     // 水印信息（可编辑）
@@ -43,6 +46,7 @@ Page({
     confirmBtnText: '下一步',
     showPreview: false,
     composing: false,
+    clockStatusText: '',
 
     // 连拍/拼图：最多拍 maxPhotos 张，完成后如果超过1张就拼成一张网格大图，
     // 只有1张的话跳过拼图步骤，直接走原来的单图水印流程
@@ -110,10 +114,10 @@ Page({
       this.showPrivacyAuthorize()
     }
 
-    // 从"选择客户"页面（customers 页选择模式）返回时，globalData 里会带着
-    // 选中的客户资料，这里取一次就清空，避免下次进相机页误把上次的选择带进来
-    const selected = app.globalData.selectedCustomer
+    // 从"选择客户"页面（customers 页选择模式）返回时，优先消费页面事件通道，兼容 globalData 兜底
+    const selected = this._pendingSelectedCustomer || app.globalData.selectedCustomer
     if (selected) {
+      this._pendingSelectedCustomer = null
       app.globalData.selectedCustomer = null
       // 在相机页内改了门店：不再沿用首页带来的门店地址
       this.storeAddressFromHome = ''
@@ -186,33 +190,43 @@ Page({
   },
 
   // 获取位置（复用 utils/location.js：失败时会自动引导用户去设置里开权限）
-  async getLocation() {
-    try {
-      const location = await fetchLocation()
-      this.setData({
-        location,
-        // 优先显示逆地理编码得到的路名/地标，失败则退回坐标
-        // 首页选了有地址的门店时，水印保持用门店地址，不被当前定位覆盖
-        address: this.storeAddressFromHome || location.address || `${location.latitude.toFixed(6)}, ${location.longitude.toFixed(6)}`
-      })
-      // 临时诊断：逆地理编码失败时把原因弹到手机上，方便定位问题（确认修复后可删）
-      if (location.geoReason) {
-        const reasonText = {
-          NO_KEY: '服务器未配置地图 Key',
-          API_ERROR: '地图服务返回错误',
-          DEP_OR_API_ERROR: '地图服务暂时不可用',
-          CALL_FAIL: '逆地理编码调用失败',
-          GEOCODE_FAIL: '逆地理编码失败'
+  getLocation() {
+    const p = (async () => {
+      try {
+        const location = await fetchLocation()
+        app.globalData.lastLocation = {
+          latitude: location.latitude,
+          longitude: location.longitude,
+          address: location.address || '',
+          updatedAt: Date.now()
         }
-        const msg = reasonText[location.geoReason.split('(')[0]] || '逆地理编码未生效'
-        console.warn('[逆地理编码诊断]', location.geoReason)
-        wx.showToast({ title: `定位地址: ${msg}`, icon: 'none', duration: 2500 })
+        this.setData({
+          location,
+          // 优先显示逆地理编码得到的路名/地标，失败则退回坐标
+          // 首页选了有地址的门店时，水印保持用门店地址，不被当前定位覆盖
+          address: this.storeAddressFromHome || location.address || `${location.latitude.toFixed(6)}, ${location.longitude.toFixed(6)}`
+        })
+        // 临时诊断：逆地理编码失败时把原因弹到手机上，方便定位问题（确认修复后可删）
+        if (location.geoReason) {
+          const reasonText = {
+            NO_KEY: '服务器未配置地图 Key',
+            API_ERROR: '地图服务返回错误',
+            DEP_OR_API_ERROR: '地图服务暂时不可用',
+            CALL_FAIL: '逆地理编码调用失败',
+            GEOCODE_FAIL: '逆地理编码失败'
+          }
+          const msg = reasonText[location.geoReason.split('(')[0]] || '逆地理编码未生效'
+          console.warn('[逆地理编码诊断]', location.geoReason)
+          wx.showToast({ title: `定位地址: ${msg}`, icon: 'none', duration: 2500 })
+        }
+      } catch (err) {
+        console.error('获取位置失败:', err)
+        wx.showToast({ title: '位置获取失败', icon: 'none' })
+        // location 保持为 null，confirmPhoto 里会做兜底处理，不会导致崩溃
       }
-    } catch (err) {
-      console.error('获取位置失败:', err)
-      wx.showToast({ title: '位置获取失败', icon: 'none' })
-      // location 保持为 null，confirmPhoto 里会做兜底处理，不会导致崩溃
-    }
+    })()
+    this._locationPromise = p
+    return p
   },
 
   // 切换前后摄像头
@@ -222,36 +236,34 @@ Page({
     })
   },
 
-  // 切换闪光灯
+  // 切换闪光灯（默认关 -> 开 -> 自动）
   switchFlash() {
-    const modes = ['auto', 'on', 'off']
+    const modes = ['off', 'on', 'auto']
     const current = modes.indexOf(this.data.flashMode)
     this.setData({ flashMode: modes[(current + 1) % modes.length] })
   },
 
-  // 选客户：带上当前定位，customers 页会按距离由近到远排好序
-  async chooseCustomer() {
-    let lat = this.data.location && this.data.location.latitude
-    let lng = this.data.location && this.data.location.longitude
-
-    if (lat == null || lng == null) {
-      // 相机页 onLoad 时定位可能还没成功，这里补一次，拿不到也不阻塞——
-      // 无非是列表没法按距离排序，客户还是能正常选
-      try {
-        const loc = await fetchLocation()
-        lat = loc.latitude
-        lng = loc.longitude
-      } catch (err) {
-        console.warn('选客户时定位失败，列表将不按距离排序:', err)
-      }
-    }
-
+  // 选客户：秒开客户列表（先带已有缓存定位，customers 页内后台静默刷新最新距离）
+  chooseCustomer() {
+    const loc = this.data.location || app.globalData.lastLocation || null
+    const lat = loc && loc.latitude
+    const lng = loc && loc.longitude
     const query = (lat != null && lng != null) ? `&lat=${lat}&lng=${lng}` : ''
-    wx.navigateTo({ url: `/pages/customers/customers?mode=select${query}` })
+
+    this._pendingSelectedCustomer = null
+    wx.navigateTo({
+      url: `/pages/customers/customers?mode=select${query}`,
+      events: {
+        selectCustomer: (selected) => {
+          this._pendingSelectedCustomer = selected
+        }
+      }
+    })
   },
 
-  // 拍照：每次拍一张加入 capturedPhotos 数组，不立即预览，方便连续拍多张
+  // 拍照：门店拜访支持连拍多张；上下班打卡拍完 1 张直接走一键极速打卡
   takePhoto() {
+    if (this.data.composing) return
     if (this.data.capturedPhotos.length >= this.data.maxPhotos) {
       wx.showToast({ title: `最多拍 ${this.data.maxPhotos} 张`, icon: 'none' })
       return
@@ -271,9 +283,14 @@ Page({
       camera.takePhoto({
         quality: 'high',
         success: (res) => {
+          wx.vibrateShort({ type: 'light' })
+          const isClock = this.data.recordType === 'clock_in' || this.data.recordType === 'clock_out'
+          if (isClock) {
+            this.submitClockExpress(res.tempImagePath, false)
+            return
+          }
           const capturedPhotos = [...this.data.capturedPhotos, res.tempImagePath]
           this.setData({ capturedPhotos })
-          wx.vibrateShort({ type: 'light' })
         },
         fail: (err) => {
           console.error('拍照失败:', err)
@@ -486,8 +503,173 @@ Page({
       previewIndex: 0,
       confirmBtnText: '下一步',
       showPreview: false,
+      composing: false,
+      clockStatusText: '',
       capturedPhotos: []
     })
+  },
+
+  // 上下班打卡：一键极速模式（拍完即合成水印 → 压缩上传 → 提交打卡 → 自动回首页）
+  async submitClockExpress(rawPath, isRetry = false) {
+    if (this.data.composing) return
+    const clockLabel = this.data.recordType === 'clock_out' ? '下班打卡' : '上班打卡'
+    this.setData({
+      showPreview: true,
+      composing: true,
+      clockStatusText: `正在合成${clockLabel}水印...`,
+      photoTempPath: rawPath || this.data.photoTempPath,
+      capturedPhotos: rawPath ? [rawPath] : this.data.capturedPhotos,
+      confirmBtnText: `重试${clockLabel}`
+    })
+
+    let uploadedFileID = ''
+    try {
+      // 1. 确保已登录且账号已审批
+      let me = app.globalData.userInfo
+      if (!me && typeof app.login === 'function') {
+        await app.login()
+        me = app.globalData.userInfo
+      }
+      if (!me) throw new Error('登录状态失效，请重试')
+      if (me.disabled) throw new Error('账号已停用，无法打卡')
+      const role = me.role || app.globalData.userRole || 'sales'
+      const approvedOk = (
+        me.approved === true ||
+        ((me.approved === undefined || me.approved === null) && (role === 'admin' || role === 'manager'))
+      )
+      if (!approvedOk) {
+        const err = new Error('等待管理员审批，暂时无法打卡')
+        err.code = 'NOT_APPROVED'
+        throw err
+      }
+
+      // 2. 若进页面极速拍照时定位尚在进行中，最多等 2 秒让水印和记录尽量带上真实地址
+      if (!this.data.location && this._locationPromise) {
+        await Promise.race([
+          this._locationPromise,
+          new Promise(resolve => setTimeout(resolve, 2000))
+        ])
+      }
+
+      // 3. 合成水印（重试时若已有水印图则直接复用）
+      let wmPath = isRetry && this.data.watermarkedPath ? this.data.watermarkedPath : ''
+      if (!wmPath) {
+        try {
+          wmPath = await this.composeWatermarkPath(rawPath || this.data.photoTempPath)
+        } catch (wmErr) {
+          console.warn('极速打卡水印合成失败，降级使用原图:', wmErr)
+          wmPath = rawPath || this.data.photoTempPath
+        }
+        this.setData({ watermarkedPath: wmPath })
+        // 后台静默存入系统相册，不阻塞打卡上传
+        wx.saveImageToPhotosAlbum({ filePath: wmPath, fail: () => {} })
+      }
+
+      // 4. 压缩与上传
+      this.setData({ clockStatusText: `正在提交${clockLabel}...` })
+      let uploadSourcePath = wmPath
+      try {
+        const compRes = await smartCompress(wmPath, {
+          targetSize: 700,
+          minSize: 600,
+          maxSize: 800
+        })
+        if (compRes && compRes.tempFilePath) {
+          uploadSourcePath = compRes.tempFilePath
+        }
+      } catch (_) {}
+
+      const owner = app.globalData.openid
+      if (!owner) throw new Error('登录状态已失效，请重新进入小程序')
+      const fileName = `inspections/${owner}/${Date.now()}-clock-${Math.random().toString(36).substr(2, 6)}.jpg`
+      const uploadRes = await api.uploadFile({
+        cloudPath: fileName,
+        filePath: uploadSourcePath
+      })
+      uploadedFileID = uploadRes.fileID
+
+      // 5. 写入打卡记录
+      const loc = this.data.location || app.globalData.lastLocation || { latitude: 0, longitude: 0 }
+      const subRes = await api.callFunction({
+        name: 'submitInspection',
+        data: {
+          recordType: this.data.recordType,
+          taskName: this.data.taskName || `考勤打卡：${clockLabel}`,
+          storeName: this.data.storeName || clockLabel,
+          userName: this.data.userName || (me && me.name) || '',
+          customerId: '',
+          fileIDs: [uploadedFileID],
+          location: {
+            latitude: Number(loc.latitude) || 0,
+            longitude: Number(loc.longitude) || 0,
+            address: this.data.address || loc.address || ''
+          }
+        }
+      })
+
+      if (!subRes.result || !subRes.result.success) {
+        const err = new Error((subRes.result && subRes.result.error) || `${clockLabel}提交失败`)
+        err.code = (subRes.result && subRes.result.code) || ''
+        throw err
+      }
+
+      this.setData({ composing: false, clockStatusText: '' })
+      wx.vibrateShort({ type: 'medium' })
+      wx.showToast({ title: `${clockLabel}成功`, icon: 'success', duration: 1500 })
+
+      setTimeout(() => {
+        wx.navigateBack({
+          fail: () => wx.switchTab({ url: '/pages/home/home' })
+        })
+      }, 600)
+    } catch (err) {
+      console.error('极速打卡失败:', err)
+      if (uploadedFileID) {
+        await offlineQueue.safeDeleteCloudFiles([uploadedFileID])
+      }
+      const msg = (err && err.message) || '打卡失败'
+      const code = (err && err.code) || ''
+      const online = await offlineQueue.isOnline()
+      const isNetErr = !online || /网络|fail|timeout|超时|ENOENT|uploadFile/i.test(String(msg + ((err && err.errMsg) || '')))
+
+      if (code !== 'NOT_APPROVED' && isNetErr) {
+        try {
+          const loc = this.data.location || app.globalData.lastLocation || { latitude: 0, longitude: 0 }
+          const finalPath = this.data.watermarkedPath || rawPath || this.data.photoTempPath
+          await offlineQueue.enqueue({
+            photoPaths: [finalPath].filter(Boolean),
+            meta: {
+              recordType: this.data.recordType,
+              taskName: this.data.taskName || `考勤打卡：${clockLabel}`,
+              storeName: this.data.storeName || clockLabel,
+              userName: this.data.userName || '',
+              customerId: '',
+              lat: Number(loc.latitude) || 0,
+              lng: Number(loc.longitude) || 0,
+              address: this.data.address || loc.address || '',
+              analyzeMode: 'batch'
+            }
+          })
+          this.setData({ composing: false, clockStatusText: '' })
+          wx.showToast({ title: '无网络，已存入待上传队列', icon: 'none', duration: 2200 })
+          setTimeout(() => {
+            wx.navigateBack({
+              fail: () => wx.switchTab({ url: '/pages/home/home' })
+            })
+          }, 1200)
+          return
+        } catch (qErr) {
+          console.warn('打卡入离线队列失败:', qErr)
+        }
+      }
+
+      this.setData({
+        composing: false,
+        clockStatusText: '',
+        confirmBtnText: `重试${clockLabel}`
+      })
+      wx.showToast({ title: msg, icon: 'none', duration: 2500 })
+    }
   },
 
   onPreviewSwiperChange(e) {
@@ -568,8 +750,12 @@ Page({
     }
   },
 
-  // 确认照片，跳转上传页
+  // 确认照片，跳转上传页（上下班打卡模式下若首次提交失败，点击此按钮直接重试极速打卡）
   confirmPhoto() {
+    if (this.data.recordType === 'clock_in' || this.data.recordType === 'clock_out') {
+      this.submitClockExpress(this.data.photoTempPath || this.data.watermarkedPath, true)
+      return
+    }
     const { watermarkedPath, location, taskName } = this.data
 
     if (!watermarkedPath) {

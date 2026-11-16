@@ -1,9 +1,26 @@
 <!--pages/photo-detail/photo-detail.wxml-->
 <view class="pd-page">
   <view class="filter-card">
-    <view class="filter-row" wx:if="{{isManager}}">
+    <view class="filter-row filter-row--users" wx:if="{{isManager}}">
       <text class="filter-lab">业务员</text>
+      <scroll-view class="pd-user-scroll" scroll-x="true" enable-flex="true" wx:if="{{salesUsers.length > 0}}">
+        <view class="pd-user-pills">
+          <view
+            class="pd-user-pill {{!filterUserName ? 'active' : ''}}"
+            data-name=""
+            bindtap="onSelectUserPill"
+          >全部</view>
+          <view
+            class="pd-user-pill {{filterUserName === item ? 'active' : ''}}"
+            wx:for="{{salesUsers}}"
+            wx:key="*this"
+            data-name="{{item}}"
+            bindtap="onSelectUserPill"
+          >{{item}}</view>
+        </view>
+      </scroll-view>
       <input
+        wx:else
         class="filter-input"
         placeholder="姓名，空=全部"
         value="{{filterUserName}}"
@@ -65,9 +82,9 @@
           <text class="item-dot">·</text>
           <text class="item-time">{{item.fullDate}}</text>
         </view>
-        <view class="item-bottom" wx:if="{{item.aiReport && item.aiReport.score != null}}">
-          <text class="item-score">评分 {{item.aiReport.score}}</text>
-          <text class="item-status" wx:if="{{item.statusText}}">{{item.statusText}}</text>
+        <view class="item-bottom" wx:if="{{(item.aiReport && item.aiReport.score != null) || item.statusText}}">
+          <text class="item-score" wx:if="{{item.aiReport && item.aiReport.score != null}}">评分 {{item.aiReport.score}}</text>
+          <text class="item-status {{item.status === 'analyze_failed' ? 'failed' : ''}}" wx:if="{{item.statusText}}">{{item.statusText}}</text>
         </view>
       </view>
     </view>

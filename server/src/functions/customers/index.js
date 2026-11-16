@@ -21,6 +21,29 @@ const DEFAULT_PAGE_SIZE = 50
 const MAX_PAGE_SIZE = 100
 const MANAGER_ROLES = ['admin', 'manager']
 
+function distanceInKm(lat1, lng1, lat2, lng2) {
+  const toRad = deg => (deg * Math.PI) / 180
+  const R = 6371
+  const dLat = toRad(lat2 - lat1)
+  const dLng = toRad(lng2 - lng1)
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+    Math.sin(dLng / 2) * Math.sin(dLng / 2)
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+  return R * c
+}
+
+function isValidCoord(lat, lng) {
+  return (
+    Number.isFinite(lat) &&
+    Number.isFinite(lng) &&
+    (Math.abs(lat) > 0.0001 || Math.abs(lng) > 0.0001) &&
+    Math.abs(lat) <= 90 &&
+    Math.abs(lng) <= 180
+  )
+}
+
 function pickEditableFields(customer) {
   const picked = {}
   EDITABLE_FIELDS.forEach(key => {
@@ -131,6 +154,45 @@ exports.main = async (event, context) => {
           : (andConditions.length === 1 ? andConditions[0] : _.and(andConditions))
 
         const { limit, page, skip } = parsePaging(event)
+        const refLat = event && event.lat != null ? Number(event.lat) : NaN
+        const refLng = event && event.lng != null ? Number(event.lng) : NaN
+        const sortByDistance = isValidCoord(refLat, refLng)
+
+        if (sortByDistance) {
+          const allRes = await db.collection('customers')
+            .where(query)
+            .orderBy('createdAt', 'desc')
+            .limit(5000)
+            .get()
+          const allDocs = (allRes.data || []).map(item => {
+            const loc = item && item.location
+            const cLat = loc ? Number(loc.latitude) : NaN
+            const cLng = loc ? Number(loc.longitude) : NaN
+            if (isValidCoord(cLat, cLng)) {
+              const km = distanceInKm(refLat, refLng, cLat, cLng)
+              return {
+                ...item,
+                distanceKm: km,
+                distanceText: km < 1 ? `${Math.round(km * 1000)}米` : `${km.toFixed(1)}公里`
+              }
+            }
+            return { ...item, distanceKm: 999999, distanceText: '' }
+          })
+          allDocs.sort((a, b) => a.distanceKm - b.distanceKm)
+          const total = allDocs.length
+          const list = allDocs.slice(skip, skip + limit)
+          return {
+            success: true,
+            list,
+            total,
+            page,
+            limit,
+            skip,
+            hasMore: skip + list.length < total,
+            scope: caller.canSeeAll ? 'all' : 'self',
+            role: caller.role
+          }
+        }
 
         const countRes = await db.collection('customers').where(query).count()
         const total = countRes.total || 0

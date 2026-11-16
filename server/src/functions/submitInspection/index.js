@@ -157,17 +157,24 @@ exports.main = async (event, context) => {
     })
 
     // 策略 B 闭环：关联客户且有有效定位、客户尚无坐标时，回填门店坐标。
-    // 必须校验客户归属：仅允许回填本人名下客户，防止拿别人的 customerId 改坐标。
-    // 归属不匹配则丢弃关联（不写客户表），巡检记录本身已落库不受影响。
+    // 校验客户归属：sales 仅允许关联/回填本人名下客户；admin/manager 可拜访全部客户并回填坐标。
+    // 归属不匹配或客户不存在则丢弃关联（不写客户表），巡检记录本身已落库不受影响。
     let boundCustomerId = isClockRecord ? '' : safeCustomerId
     if (boundCustomerId) {
       try {
-        const custDoc = await db.collection('customers').doc(safeCustomerId).get()
-        const cust = custDoc && custDoc.data
-        if (!cust || cust._openid !== openid) {
+        let cust = null
+        try {
+          const custDoc = await db.collection('customers').doc(safeCustomerId).get()
+          cust = custDoc && custDoc.data
+        } catch (_) {
+          cust = null
+        }
+        const isManager = !!(user && (user.role === 'admin' || user.role === 'manager'))
+        const canAccessCust = cust && (cust._openid === openid || isManager)
+        if (!canAccessCust) {
           console.warn(`跳过客户定位回填：customerId=${safeCustomerId} 不存在或不属于当前用户`)
           boundCustomerId = ''
-          // 巡检已写入的 customerId 若越权则清空，避免脏关联
+          // 巡检已写入的 customerId 若越权或不存在则清空，避免脏关联
           if (addRes && addRes._id) {
             await db.collection('inspections').doc(addRes._id).update({
               data: { customerId: '' }

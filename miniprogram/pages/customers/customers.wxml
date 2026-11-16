@@ -2,7 +2,8 @@
 <view class="customers-page">
 
   <view class="page-hint">
-    <text wx:if="{{selectMode}}">点一个客户直接带入水印信息，按距离由近到远排好序了（没填过位置的排最后）</text>
+    <text wx:if="{{selectMode && locatingDistance && currentLat === null}}">📍 正在后台获取位置并更新距离排序，您可直接点选或搜索客户...</text>
+    <text wx:elif="{{selectMode}}">点一个客户直接带入水印信息，已按距离由近到远排序{{locatingDistance ? '（后台刷新位置中…）' : '（没填过位置的排最后）'}}</text>
     <text wx:elif="{{listScope === 'all'}}">全部客户（管理员/经理可见）。填了位置的客户，拍照时可按距离排序选择。</text>
     <text wx:else>我的客户。填了位置的客户，拍照时可按距离由近到远排序选择。</text>
   </view>

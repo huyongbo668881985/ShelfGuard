@@ -43,6 +43,7 @@ function daysAgoStr(days) {
 Page({
   data: {
     isManager: false,
+    salesUsers: [],
     filterUserName: '',
     filterCustomerId: '',
     filterStoreName: '',
@@ -69,8 +70,9 @@ Page({
 
   onShow() {
     this.syncManagerFlag()
-    const selected = app.globalData.selectedCustomer
+    const selected = this._pendingSelectedCustomer || app.globalData.selectedCustomer
     if (selected) {
+      this._pendingSelectedCustomer = null
       app.globalData.selectedCustomer = null
       if (selected.isNoStore) {
         this.setData({ filterCustomerId: '', filterStoreName: '' })
@@ -106,8 +108,31 @@ Page({
     this.setData({ filterUserName: e.detail.value })
   },
 
+  onSelectUserPill(e) {
+    const name = e.currentTarget.dataset.name || ''
+    const next = (name && this.data.filterUserName === name) ? '' : name
+    this.setData({ filterUserName: next })
+    this.refreshList()
+  },
+
+  onUserPickerChange(e) {
+    const idx = Number(e.detail.value)
+    const options = [''].concat(this.data.salesUsers || [])
+    const chosen = options[idx] != null ? options[idx] : ''
+    this.setData({ filterUserName: chosen })
+    this.refreshList()
+  },
+
   onPickCustomer() {
-    wx.navigateTo({ url: '/pages/customers/customers?mode=select' })
+    this._pendingSelectedCustomer = null
+    wx.navigateTo({
+      url: '/pages/customers/customers?mode=select',
+      events: {
+        selectCustomer: (selected) => {
+          this._pendingSelectedCustomer = selected
+        }
+      }
+    })
   },
 
   onClearCustomer() {
@@ -178,8 +203,9 @@ Page({
     const STATUS_TEXT = {
       pending: '已提交',
       uploaded: '已提交',
-      analyzing: '已提交',
-      analyze_failed: '已提交'
+      analyzing: '分析中',
+      analyze_failed: '分析失败',
+      clocked: '已打卡'
     }
     item.statusText = STATUS_TEXT[item.status] || ''
     return item
@@ -209,12 +235,16 @@ Page({
       }
       const formatted = (result.list || []).map(item => this.formatItem(item))
       const newList = this.data.list.concat(formatted)
-      this.setData({
+      const nextData = {
         list: newList,
         total: result.total || 0,
         page: this.data.page + 1,
         hasMore: newList.length < (result.total || 0)
-      })
+      }
+      if (Array.isArray(result.salesUsers) && result.salesUsers.length > 0) {
+        nextData.salesUsers = result.salesUsers
+      }
+      this.setData(nextData)
     } catch (err) {
       console.error('加载照片明细失败:', err)
       wx.showToast({ title: '加载失败', icon: 'none' })

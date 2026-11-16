@@ -324,6 +324,11 @@
   font-weight: 500;
 }
 
+.record-status.failed {
+  color: #D32F2F;
+  font-weight: 500;
+}
+
 .empty {
   padding: 60rpx 0 40rpx;
   text-align: center;

@@ -91,6 +91,24 @@
     </view>
   </view>
 
+  <!-- 管理者：业务员快捷胶囊选择器 -->
+  <scroll-view class="user-pills-scroll" scroll-x="true" enable-flex="true" wx:if="{{isManager && salesUsers.length > 0}}">
+    <view class="user-pills-row">
+      <view
+        class="user-pill {{!filterUserName ? 'active' : ''}}"
+        data-name=""
+        bindtap="onSelectUserPill"
+      >全部人员</view>
+      <view
+        class="user-pill {{filterUserName === item ? 'active' : ''}}"
+        wx:for="{{salesUsers}}"
+        wx:key="*this"
+        data-name="{{item}}"
+        bindtap="onSelectUserPill"
+      >{{item}}</view>
+    </view>
+  </scroll-view>
+
   <!-- 当前筛选标签 -->
   <view class="filter-tags" wx:if="{{filterDate || filterScore || filterUserName}}">
     <view class="filter-tag" wx:if="{{filterUserName}}">
@@ -220,11 +238,25 @@
       </view>
     </view>
     <view class="filter-section" wx:if="{{isManager}}">
-      <text class="filter-section-title">业务员（管理者视角，留空看全部）</text>
+      <text class="filter-section-title">业务员筛选（点击直接切换）</text>
+      <view class="filter-options" wx:if="{{salesUsers.length > 0}}" style="margin-bottom: 20rpx;">
+        <view
+          class="filter-option {{!filterUserName ? 'active' : ''}}"
+          data-name=""
+          bindtap="onSelectUserPill"
+        >全部人员</view>
+        <view
+          class="filter-option {{filterUserName === item ? 'active' : ''}}"
+          wx:for="{{salesUsers}}"
+          wx:key="*this"
+          data-name="{{item}}"
+          bindtap="onSelectUserPill"
+        >{{item}}</view>
+      </view>
       <view class="filter-username-row">
         <input
           class="filter-username-input"
-          placeholder="输入业务员姓名"
+          placeholder="或手动输入业务员姓名"
           value="{{filterUserName}}"
           bindinput="onFilterUserNameInput"
           bindconfirm="onApplyUserNameFilter"

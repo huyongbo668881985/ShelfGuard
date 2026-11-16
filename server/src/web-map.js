@@ -331,6 +331,318 @@ async function mapRouteApiHandler(req, res) {
   }
 }
 
+function csvCell(val) {
+  if (val === null || val === undefined) return ''
+  let str = String(val).replace(/\r?\n/g, ' ')
+  // 防止 Excel 公式注入（以 =, +, -, @ 开头的文本加上单引号前缀）
+  if (/^[=+\-@]/.test(str)) {
+    str = "'" + str
+  }
+  if (/[",]/.test(str)) {
+    return '"' + str.replace(/"/g, '""') + '"'
+  }
+  return str
+}
+
+function toCsvRow(arr) {
+  return arr.map(csvCell).join(',')
+}
+
+function formatDateYMD(dt) {
+  const d = dt instanceof Date ? dt : new Date(dt)
+  if (isNaN(d.getTime())) return ''
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+function formatTimeHM(dt) {
+  const d = dt instanceof Date ? dt : new Date(dt)
+  if (isNaN(d.getTime())) return ''
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+async function exportLedgerApiHandler(req, res) {
+  if (!checkWebMapPasscode(req, res)) return
+
+  try {
+    const scope = req.query.scope === 'month' ? 'month' : 'day'
+    const dateStr = typeof req.query.date === 'string' ? req.query.date.trim() : ''
+    const monthStr = typeof req.query.month === 'string' ? req.query.month.trim() : ''
+    const reqUserId = typeof req.query.userId === 'string' ? req.query.userId.trim() : ''
+
+    const now = new Date()
+    let startDate
+    let endDate
+    let filePeriodLabel = ''
+
+    if (scope === 'month') {
+      let ym = monthStr
+      if (!/^\d{4}-\d{2}$/.test(ym) && /^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+        ym = dateStr.slice(0, 7)
+      }
+      if (!/^\d{4}-\d{2}$/.test(ym)) {
+        ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+      }
+      const [y, m] = ym.split('-').map(Number)
+      startDate = new Date(y, m - 1, 1, 0, 0, 0, 0)
+      endDate = new Date(y, m, 0, 23, 59, 59, 999)
+      filePeriodLabel = ym
+    } else {
+      let dStr = dateStr
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dStr)) {
+        dStr = formatDateYMD(now)
+      }
+      const [y, m, d] = dStr.split('-').map(Number)
+      startDate = new Date(y, m - 1, d, 0, 0, 0, 0)
+      endDate = new Date(y, m - 1, d, 23, 59, 59, 999)
+      filePeriodLabel = dStr
+    }
+
+    // 加载在册用户信息（映射 openid / userId -> 姓名与部门）
+    const userByOpenid = new Map()
+    const userById = new Map()
+    try {
+      const uRes = await db.collection('users').orderBy('createdAt', 'asc').limit(500).get()
+      ;(uRes.data || []).forEach(u => {
+        if (!u) return
+        const info = {
+          userId: u._id || u._openid || '',
+          _openid: u._openid || '',
+          name: (u.name && u.name.trim()) ? u.name.trim() : '未命名业务员',
+          department: u.department || '',
+          disabled: !!u.disabled
+        }
+        if (u._openid) userByOpenid.set(u._openid, info)
+        if (u._id) userById.set(u._id, info)
+      })
+    } catch (_) {}
+
+    const cond = {
+      createdAt: _.and(_.gte(startDate), _.lte(endDate)),
+      'aiReport.metadata.isMock': _.neq(true)
+    }
+
+    const recRes = await db.collection('inspections')
+      .where(cond)
+      .orderBy('createdAt', 'asc')
+      .limit(5000)
+      .get()
+    let records = recRes.data || []
+
+    // 若指定了单人且不是 __ALL__，按人员过滤
+    if (reqUserId && reqUserId !== '__ALL__') {
+      const targetUser = userById.get(reqUserId) || userByOpenid.get(reqUserId)
+      records = records.filter(r => {
+        if (targetUser && targetUser._openid && r._openid) {
+          return r._openid === targetUser._openid
+        }
+        if (reqUserId.startsWith('name:')) {
+          return (r.userName || '未命名业务员') === reqUserId.slice(5)
+        }
+        if (targetUser && targetUser.name) {
+          return (r.userName || '') === targetUser.name
+        }
+        return r._openid === reqUserId
+      })
+    }
+
+    const csvLines = []
+
+    if (scope === 'month') {
+      // 一、按业务员聚合月度考勤与拜访汇总
+      const staffAgg = new Map()
+      records.forEach(r => {
+        const uInfo = (r._openid && userByOpenid.get(r._openid)) || null
+        const uName = (r.userName && r.userName.trim()) || (uInfo && uInfo.name) || '未命名业务员'
+        const dept = (uInfo && uInfo.department) || ''
+        const key = (r._openid || `name:${uName}`)
+        if (!staffAgg.has(key)) {
+          staffAgg.set(key, {
+            name: uName,
+            department: dept,
+            activeDays: new Set(),
+            clockInDays: new Set(),
+            clockOutDays: new Set(),
+            visitCount: 0,
+            uniqueStores: new Set(),
+            scoreSum: 0,
+            scoreCount: 0,
+            shareSum: 0,
+            shareCount: 0
+          })
+        }
+        const st = staffAgg.get(key)
+        if ((!st.name || st.name === '未命名业务员') && uName) st.name = uName
+        const dayKey = formatDateYMD(r.createdAt)
+        if (dayKey) st.activeDays.add(dayKey)
+
+        const recType = (r.recordType === 'clock_in' || r.recordType === 'clock_out')
+          ? r.recordType
+          : (r.status === 'clocked' ? 'clock_in' : 'visit')
+
+        if (recType === 'clock_in') {
+          if (dayKey) st.clockInDays.add(dayKey)
+        } else if (recType === 'clock_out') {
+          if (dayKey) st.clockOutDays.add(dayKey)
+        } else {
+          st.visitCount += 1
+          const storeKey = r.customerId || (r.storeName && r.storeName.trim()) || ''
+          if (storeKey) st.uniqueStores.add(storeKey)
+          if (r.aiReport && typeof r.aiReport.score === 'number') {
+            st.scoreSum += r.aiReport.score
+            st.scoreCount += 1
+          }
+          const sp = extractSharePercent(r.aiReport)
+          if (sp != null) {
+            st.shareSum += sp
+            st.shareCount += 1
+          }
+        }
+      })
+
+      csvLines.push(toCsvRow([`【一、${filePeriodLabel} 月度人员考勤与拜访汇总表】`]))
+      csvLines.push(toCsvRow([
+        '统计月份',
+        '业务员',
+        '部门',
+        '出勤天数',
+        '上班打卡天数',
+        '下班打卡天数',
+        '门店拜访总次数',
+        '覆盖门店数(去重)',
+        'AI已评次数',
+        '平均AI得分',
+        '平均我方排面占比(%)'
+      ]))
+
+      const staffList = Array.from(staffAgg.values()).sort((a, b) => b.visitCount - a.visitCount)
+      staffList.forEach(s => {
+        const avgScore = s.scoreCount > 0 ? Math.round(s.scoreSum / s.scoreCount) : ''
+        const avgShare = s.shareCount > 0 ? (Math.round((s.shareSum / s.shareCount) * 10) / 10) : ''
+        csvLines.push(toCsvRow([
+          filePeriodLabel,
+          s.name,
+          s.department,
+          s.activeDays.size,
+          s.clockInDays.size,
+          s.clockOutDays.size,
+          s.visitCount,
+          s.uniqueStores.size,
+          s.scoreCount,
+          avgScore,
+          avgShare
+        ]))
+      })
+
+      csvLines.push('')
+      csvLines.push(toCsvRow([`【二、${filePeriodLabel} 每日考勤与拜访明细台账（共 ${records.length} 条）】`]))
+    }
+
+    // 明细表头（当日 / 当月通用）
+    csvLines.push(toCsvRow([
+      '日期',
+      '时间',
+      '业务员',
+      '部门',
+      '记录类型',
+      '当日站点序号',
+      '门店名称',
+      '任务名称',
+      '定位地址',
+      '纬度',
+      '经度',
+      '照片张数',
+      'AI评分',
+      '评分等级',
+      '我方排面占比(%)',
+      'AI诊断摘要',
+      '主要问题'
+    ]))
+
+    const perUserDaySeq = new Map()
+    records.forEach(r => {
+      const uInfo = (r._openid && userByOpenid.get(r._openid)) || null
+      const uName = (r.userName && r.userName.trim()) || (uInfo && uInfo.name) || '未命名业务员'
+      const dept = (uInfo && uInfo.department) || ''
+      const ymd = formatDateYMD(r.createdAt)
+      const hm = formatTimeHM(r.createdAt)
+      const recType = (r.recordType === 'clock_in' || r.recordType === 'clock_out')
+        ? r.recordType
+        : (r.status === 'clocked' ? 'clock_in' : 'visit')
+
+      let typeText = '门店拜访'
+      let seqLabel = ''
+      if (recType === 'clock_in') {
+        typeText = '上班打卡'
+        seqLabel = '起·上班'
+      } else if (recType === 'clock_out') {
+        typeText = '下班打卡'
+        seqLabel = '终·下班'
+      } else {
+        const seqKey = `${r._openid || uName}||${ymd}`
+        const n = (perUserDaySeq.get(seqKey) || 0) + 1
+        perUserDaySeq.set(seqKey, n)
+        seqLabel = `第${n}站`
+      }
+
+      const loc = r.location || {}
+      const lat = Number.isFinite(Number(loc.latitude)) && Number(loc.latitude) !== 0 ? Number(loc.latitude) : ''
+      const lng = Number.isFinite(Number(loc.longitude)) && Number(loc.longitude) !== 0 ? Number(loc.longitude) : ''
+      const addr = loc.address || ''
+      const photoCount = r.photoCount || (Array.isArray(r.photoFileIDs) ? r.photoFileIDs.length : 0)
+
+      const ar = (! (recType === 'clock_in' || recType === 'clock_out') && r.aiReport && typeof r.aiReport === 'object')
+        ? r.aiReport
+        : null
+      const score = (ar && typeof ar.score === 'number') ? ar.score : ''
+      const scoreLevel = (ar && ar.scoreLevel) || ''
+      const share = ar ? (extractSharePercent(ar) ?? '') : ''
+      const summary = (ar && ar.summary) || ''
+      const issues = (ar && Array.isArray(ar.issues))
+        ? ar.issues.map(iss => `[${iss.category || '问题'}]${iss.description || ''}`).join('；')
+        : ''
+
+      csvLines.push(toCsvRow([
+        ymd,
+        hm,
+        uName,
+        dept,
+        typeText,
+        seqLabel,
+        r.storeName || (recType === 'visit' ? '无门店（常规拜访）' : typeText),
+        r.taskName || '',
+        addr,
+        lat,
+        lng,
+        photoCount,
+        score,
+        scoreLevel,
+        share,
+        summary,
+        issues
+      ]))
+    })
+
+    // 冠以 UTF-8 BOM (\uFEFF)，Windows / macOS Excel 与 WPS 双击直开不乱码
+    const csvContent = '\uFEFF' + csvLines.join('\r\n')
+    const filename = scope === 'month'
+      ? `特8水印_月度考勤与拜访汇总_${filePeriodLabel}.csv`
+      : `特8水印_当日拜访与考勤台账_${filePeriodLabel}.csv`
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8')
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="shelfguard-${scope}-${filePeriodLabel}.csv"; filename*=UTF-8''${encodeURIComponent(filename)}`
+    )
+    return res.send(csvContent)
+  } catch (err) {
+    console.error('[web-map] 导出台账失败:', err)
+    return res.status(500).json({
+      success: false,
+      error: err.message || '导出失败'
+    })
+  }
+}
+
 function mapPageHandler(_req, res) {
   const prefix = basePath() || '/shelfguard'
   res.setHeader('Content-Type', 'text/html; charset=utf-8')
@@ -420,6 +732,8 @@ function renderHtml(prefix) {
     .btn:hover { background: rgba(255,255,255,0.24); }
     .btn-gold { background: var(--gold); font-weight: 600; }
     .btn-gold:hover { background: #b0832f; }
+    .btn-export { background: rgba(5, 150, 105, 0.88); font-weight: 600; }
+    .btn-export:hover { background: #047857; }
     .date-input {
       background: #fff;
       color: var(--text);
@@ -1024,6 +1338,8 @@ function renderHtml(prefix) {
       <button class="btn" id="nextDayBtn">后一天 ›</button>
       <button class="btn btn-gold" id="todayBtn">回到今天</button>
       <button class="btn" id="refreshBtn">↻ 刷新</button>
+      <button class="btn btn-export" id="exportDayBtn" title="导出所选日期的考勤与拜访明细台账 (Excel可直接打开)">📥 导出当日台账</button>
+      <button class="btn btn-export" id="exportMonthBtn" title="导出所选月份全员考勤汇总与拜访明细 (Excel可直接打开)">📊 导出当月汇总</button>
       <button class="btn" id="lockBtn" title="清除本机保存的密码并重新锁屏">🔒 锁屏</button>
     </div>
   </header>
@@ -1672,7 +1988,57 @@ function renderHtml(prefix) {
         loadRoute();
       });
 
+      async function downloadLedger(scope) {
+        const key = localStorage.getItem('sg_web_map_key') || '';
+        const btn = document.getElementById(scope === 'month' ? 'exportMonthBtn' : 'exportDayBtn');
+        const origText = btn ? btn.textContent : '';
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = '⏳ 导出中...';
+        }
+        try {
+          const url = API_BASE + '/api/web/export-ledger?scope=' + encodeURIComponent(scope) +
+            '&date=' + encodeURIComponent(selectedDate) +
+            '&userId=' + encodeURIComponent(selectedUserId || '__ALL__');
+          const res = await fetch(url, {
+            headers: key ? { 'x-map-key': key } : {}
+          });
+          if (res.status === 401 || res.status === 429 || res.status === 503) {
+            let errBody = {};
+            try { errBody = await res.json(); } catch (_) {}
+            showAuthModal(errBody.error || '请先输入查看密码');
+            return;
+          }
+          if (!res.ok) {
+            alert('导出失败，请稍后重试');
+            return;
+          }
+          const blob = await res.blob();
+          const dlUrl = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          const period = scope === 'month' ? selectedDate.slice(0, 7) : selectedDate;
+          a.href = dlUrl;
+          a.download = scope === 'month'
+            ? ('特8水印_月度考勤与拜访汇总_' + period + '.csv')
+            : ('特8水印_当日拜访与考勤台账_' + period + '.csv');
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          setTimeout(() => URL.revokeObjectURL(dlUrl), 3000);
+        } catch (err) {
+          console.error('导出台账出错:', err);
+          alert('导出失败：' + (err.message || '网络错误'));
+        } finally {
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = origText;
+          }
+        }
+      }
+
       document.getElementById('refreshBtn').addEventListener('click', () => loadRoute());
+      document.getElementById('exportDayBtn').addEventListener('click', () => downloadLedger('day'));
+      document.getElementById('exportMonthBtn').addEventListener('click', () => downloadLedger('month'));
       document.getElementById('lockBtn').addEventListener('click', () => {
         localStorage.removeItem('sg_web_map_key');
         document.getElementById('authInput').value = '';
@@ -1743,5 +2109,6 @@ function renderHtml(prefix) {
 
 module.exports = {
   mapPageHandler,
-  mapRouteApiHandler
+  mapRouteApiHandler,
+  exportLedgerApiHandler
 }

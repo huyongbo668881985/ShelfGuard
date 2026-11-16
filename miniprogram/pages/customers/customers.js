@@ -48,6 +48,7 @@ Page({
     selectMode: false,
     currentLat: null,
     currentLng: null,
+    locatingDistance: false,
 
     showEditor: false,
     editingId: '',
@@ -64,16 +65,55 @@ Page({
 
   onLoad(options) {
     if (options.mode === 'select') {
+      const cachedLoc = app.globalData.lastLocation || null
+      const initLat = options.lat ? Number(options.lat) : (cachedLoc && cachedLoc.latitude != null ? Number(cachedLoc.latitude) : null)
+      const initLng = options.lng ? Number(options.lng) : (cachedLoc && cachedLoc.longitude != null ? Number(cachedLoc.longitude) : null)
       this.setData({
         selectMode: true,
-        currentLat: options.lat ? Number(options.lat) : null,
-        currentLng: options.lng ? Number(options.lng) : null
+        currentLat: Number.isFinite(initLat) ? initLat : null,
+        currentLng: Number.isFinite(initLng) ? initLng : null
       })
       wx.setNavigationBarTitle({ title: '选择客户' })
+      this.loadCustomers({ reset: true })
+      this.silentRefreshLocation()
     } else {
       this.applyScopeTitle(this.resolveLocalScope())
+      this.loadCustomers({ reset: true })
     }
-    this.loadCustomers()
+  },
+
+  // 后台静默更新定位并刷新距离排序（不阻塞客户列表秒开）
+  async silentRefreshLocation() {
+    this.setData({ locatingDistance: true })
+    try {
+      const loc = await getLocation()
+      if (!loc || loc.latitude == null || loc.longitude == null) return
+      app.globalData.lastLocation = {
+        latitude: loc.latitude,
+        longitude: loc.longitude,
+        address: loc.address || '',
+        updatedAt: Date.now()
+      }
+      const prevLat = this.data.currentLat
+      const prevLng = this.data.currentLng
+      const movedKm = (prevLat != null && prevLng != null)
+        ? distanceInKm(prevLat, prevLng, loc.latitude, loc.longitude)
+        : 999
+      this.setData({
+        currentLat: loc.latitude,
+        currentLng: loc.longitude
+      })
+      // 首次拿到定位或移动超过 20 米时，静默刷新服务端距离排序
+      if (movedKm > 0.02) {
+        await this.loadCustomers({ reset: true, silent: true })
+      } else if (this.data.list && this.data.list.length > 0) {
+        this.setData({ list: this.decorateList(this.data.list) })
+      }
+    } catch (err) {
+      console.warn('后台静默定位未获取到新坐标，保持当前列表:', err)
+    } finally {
+      this.setData({ locatingDistance: false })
+    }
   },
 
   resolveLocalScope() {
@@ -140,33 +180,38 @@ Page({
     this.loadCustomers({ reset: true })
   },
 
-  async loadCustomers({ reset = true, append = false } = {}) {
+  async loadCustomers({ reset = true, append = false, silent = false } = {}) {
     if (append) {
       if (!this.data.hasMore || this.data.loadingMore) return
       this.setData({ loadingMore: true })
-    } else {
+    } else if (!silent) {
       this.setData({ loading: true, page: 1 })
+    } else {
+      this.setData({ page: 1 })
     }
 
     const page = append ? (this.data.page + 1) : 1
     const limit = this.data.limit
+    const reqData = {
+      action: 'list',
+      page,
+      limit,
+      filterTag: this.data.filterTag,
+      keyword: this.data.searchKeyword
+    }
+    if (this.data.selectMode && this.data.currentLat != null && this.data.currentLng != null) {
+      reqData.lat = this.data.currentLat
+      reqData.lng = this.data.currentLng
+    }
 
     try {
       const res = await api.callFunction({
         name: 'customers',
-        data: {
-          action: 'list',
-          page,
-          limit,
-          filterTag: this.data.filterTag,
-          keyword: this.data.searchKeyword
-        }
+        data: reqData
       })
       if (res.result && res.result.success) {
         let list = this.decorateList(res.result.list || [])
         if (append) {
-          // 合并后再按距离重排整表，避免第 2 页近店排在第 1 页远店后面
-          // TODO: 云端按距离分页（geo）后可去掉前端全量重排
           list = this.decorateList((this.data.list || []).concat(res.result.list || []))
         }
         const scope = res.result.scope || this.resolveLocalScope()
@@ -185,33 +230,48 @@ Page({
           wx.setNavigationBarTitle({ title: listTitle })
         }
       } else {
-        wx.showToast({ title: (res.result && res.result.error) || '加载失败', icon: 'none' })
+        if (!silent) {
+          wx.showToast({ title: (res.result && res.result.error) || '加载失败', icon: 'none' })
+        }
         this.setData({ loading: false, loadingMore: false })
       }
     } catch (err) {
       console.error('加载客户列表失败:', err)
-      wx.showToast({ title: '加载失败，请重试', icon: 'none' })
+      if (!silent) {
+        wx.showToast({ title: '加载失败，请重试', icon: 'none' })
+      }
       this.setData({ loading: false, loadingMore: false })
     }
   },
 
-  // 选择模式下点卡片：直接选中，带着资料返回相机页
+  emitSelectedCustomer(item) {
+    const channel = typeof this.getOpenerEventChannel === 'function'
+      ? this.getOpenerEventChannel()
+      : null
+    if (channel && typeof channel.emit === 'function') {
+      channel.emit('selectCustomer', item)
+    } else {
+      app.globalData.selectedCustomer = item
+    }
+  },
+
+  // 选择模式下点卡片：直接选中，带着资料返回调用页
   onSelectCustomer(e) {
     if (!this.data.selectMode) return
     const item = e.currentTarget.dataset.item
-    app.globalData.selectedCustomer = item
+    this.emitSelectedCustomer(item)
     wx.navigateBack()
   },
 
   // 选择模式下选择"不关联门店"
   onSelectNoStore() {
     if (!this.data.selectMode) return
-    app.globalData.selectedCustomer = {
+    this.emitSelectedCustomer({
       isNoStore: true,
       storeName: '',
       address: '',
       _id: ''
-    }
+    })
     wx.navigateBack()
   },
 

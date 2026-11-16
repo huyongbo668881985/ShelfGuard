@@ -25,7 +25,14 @@ Page({
     defaultN: 2,
     customerId: '',
     storeName: '',
-    storeTrend: null
+    storeTrend: null,
+
+    // 拜访不足 N 次门店交互抽屉
+    showLowVisitModal: false,
+    lowVisitUserFilter: '',
+    lowVisitKeyword: '',
+    lowVisitUserGroups: [],
+    lowVisitFiltered: []
   },
 
   onLoad() {
@@ -35,8 +42,9 @@ Page({
 
   onShow() {
     this.syncManagerFlag()
-    const selected = app.globalData.selectedCustomer
+    const selected = this._pendingSelectedCustomer || app.globalData.selectedCustomer
     if (selected) {
+      this._pendingSelectedCustomer = null
       app.globalData.selectedCustomer = null
       if (selected.isNoStore) {
         this.setData({ customerId: '', storeName: '', storeTrend: null })
@@ -109,14 +117,56 @@ Page({
         yoy: result.yoy || {},
         vsMonth: result.vsMonth || null,
         defaultN: (overall && overall.lowVisitThreshold) || 2,
-        isManager: result.isManager != null ? result.isManager : this.data.isManager
+        isManager: result.isManager != null ? result.isManager : this.data.isManager,
+        lowVisitUserFilter: '',
+        lowVisitKeyword: ''
       })
+      this.computeLowVisitView()
     } catch (err) {
       console.error('加载看板失败:', err)
       wx.showToast({ title: '加载失败', icon: 'none' })
     } finally {
       this.setData({ loading: false })
     }
+  },
+
+  computeLowVisitView() {
+    const overall = this.data.overall
+    const rawList = (overall && Array.isArray(overall.lowVisitCustomers)) ? overall.lowVisitCustomers : []
+    const threshold = (overall && overall.lowVisitThreshold) || this.data.defaultN || 2
+
+    // 按业务员统计拜访不足门店数
+    const countMap = new Map()
+    rawList.forEach(c => {
+      const uName = (c && c.userName && String(c.userName).trim()) || ''
+      if (uName) {
+        countMap.set(uName, (countMap.get(uName) || 0) + 1)
+      }
+    })
+    const lowVisitUserGroups = Array.from(countMap.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'zh-CN'))
+
+    const uFilter = (this.data.lowVisitUserFilter || '').trim()
+    const kw = (this.data.lowVisitKeyword || '').trim().toLowerCase()
+
+    const lowVisitFiltered = rawList
+      .filter(c => {
+        if (!c) return false
+        if (uFilter && (c.userName || '') !== uFilter) return false
+        if (kw) {
+          const sName = String(c.storeName || c.customerId || '').toLowerCase()
+          const uName = String(c.userName || '').toLowerCase()
+          if (!sName.includes(kw) && !uName.includes(kw)) return false
+        }
+        return true
+      })
+      .map(c => ({
+        ...c,
+        lackCount: Math.max(1, threshold - (Number(c.visitCount) || 0))
+      }))
+
+    this.setData({ lowVisitUserGroups, lowVisitFiltered })
   },
 
   onTapLowVisit() {
@@ -127,19 +177,102 @@ Page({
       wx.showToast({ title: '本月无拜访不足门店', icon: 'none' })
       return
     }
-    const lines = list.slice(0, 15).map((c, i) =>
-      `${i + 1}. ${c.storeName || c.customerId}（${c.visitCount}次）`
-    )
-    const more = list.length > 15 ? `\n…共 ${list.length} 家` : ''
-    wx.showModal({
-      title: `拜访不足 ${overall.lowVisitThreshold} 次`,
-      content: lines.join('\n') + more,
-      showCancel: false
+    this.computeLowVisitView()
+    this.setData({ showLowVisitModal: true })
+  },
+
+  closeLowVisitModal() {
+    this.setData({ showLowVisitModal: false })
+  },
+
+  onSelectLowVisitUser(e) {
+    const name = e.currentTarget.dataset.name || ''
+    const next = (name && this.data.lowVisitUserFilter === name) ? '' : name
+    this.setData({ lowVisitUserFilter: next })
+    this.computeLowVisitView()
+  },
+
+  onLowVisitKeywordInput(e) {
+    this.setData({ lowVisitKeyword: e.detail.value || '' })
+    this.computeLowVisitView()
+  },
+
+  onClearLowVisitKeyword() {
+    this.setData({ lowVisitKeyword: '' })
+    this.computeLowVisitView()
+  },
+
+  onInspectLowVisitTrend(e) {
+    const cid = e.currentTarget.dataset.id || ''
+    const sName = e.currentTarget.dataset.name || ''
+    if (!cid) return
+    this.setData({
+      showLowVisitModal: false,
+      customerId: cid,
+      storeName: sName
+    })
+    this.loadStoreTrend()
+  },
+
+  onInspectLowVisitPhotos(e) {
+    const cid = e.currentTarget.dataset.id || ''
+    const sName = e.currentTarget.dataset.name || ''
+    if (!cid) return
+    wx.navigateTo({
+      url: `/pages/photo-detail/photo-detail?customerId=${encodeURIComponent(cid)}&storeName=${encodeURIComponent(sName)}`
+    })
+  },
+
+  copyLowVisitList() {
+    const overall = this.data.overall
+    const list = this.data.lowVisitFiltered || []
+    if (!overall || !list.length) {
+      wx.showToast({ title: '当前筛选下无门店', icon: 'none' })
+      return
+    }
+    const threshold = overall.lowVisitThreshold || this.data.defaultN || 2
+    const header = `⚠️【${this.data.yearMonth} 拜访不足 ${threshold} 次门店督办单】`
+    const sub = this.data.lowVisitUserFilter
+      ? `👤 业务员：${this.data.lowVisitUserFilter}（共 ${list.length} 家）`
+      : `📊 共计 ${list.length} 家门店待补访`
+
+    // 按业务员分组输出，方便直接发微信群@对应负责人
+    const grouped = new Map()
+    list.forEach(item => {
+      const key = (item.userName && item.userName.trim()) || '未标注负责人'
+      if (!grouped.has(key)) grouped.set(key, [])
+      grouped.get(key).push(item)
+    })
+
+    const lines = [header, sub, '']
+    for (const [uName, items] of grouped.entries()) {
+      if (grouped.size > 1 || uName !== '未标注负责人') {
+        lines.push(`▸ ${uName}（${items.length}家）：`)
+      }
+      items.forEach((c, idx) => {
+        const shareStr = c.avgSharePercent != null ? ` · 排面${c.avgSharePercent}%` : ''
+        lines.push(`  ${idx + 1}. ${c.storeName || c.customerId}（已拜访${c.visitCount}次，差${c.lackCount || (threshold - c.visitCount)}次${shareStr}）`)
+      })
+    }
+
+    wx.setClipboardData({
+      data: lines.join('\n'),
+      success: () => {
+        wx.showToast({ title: '督办名单已复制，可发微信群', icon: 'none', duration: 2500 })
+      }
     })
   },
 
   onPickStore() {
-    wx.navigateTo({ url: '/pages/customers/customers?mode=select' })
+    this._pendingSelectedCustomer = null
+    wx.navigateTo({
+      url: '/pages/customers/customers?mode=select',
+      events: {
+        selectCustomer: (selected) => {
+          this._pendingSelectedCustomer = selected
+        }
+      }
+    })
   },
 
   onClearStore() {

@@ -66,6 +66,31 @@ async function getCaller(openid) {
   }
 }
 
+// 供管理者端胶囊/下拉筛选业务员：汇总在册已审批人员 + 历史记录中出现过的姓名
+async function loadManagerUserNames(extraList = []) {
+  const nameSet = new Set()
+  try {
+    const uRes = await db.collection('users').orderBy('createdAt', 'asc').limit(300).get()
+    ;(uRes.data || []).forEach(u => {
+      if (!u || u.disabled) return
+      const isApproved = u.approved === true || (
+        (u.approved === undefined || u.approved === null) &&
+        (u.role === 'admin' || u.role === 'manager')
+      )
+      if (!isApproved) return
+      const n = (u.name && String(u.name).trim()) || ''
+      if (n) nameSet.add(n)
+    })
+  } catch (e) {
+    console.warn('读取在册业务员姓名列表失败:', e.message)
+  }
+  ;(extraList || []).forEach(item => {
+    const n = item && item.userName && String(item.userName).trim()
+    if (n) nameSet.add(n)
+  })
+  return Array.from(nameSet).sort((a, b) => a.localeCompare(b, 'zh-CN'))
+}
+
 // 构建通用查询条件（列表和统计共用）
 function buildBaseConditions({ isManager, openid, targetUserName, where }) {
   const ninetyDaysAgo = new Date()
@@ -227,9 +252,12 @@ exports.main = async (event, context) => {
         } catch (se) {}
       }
 
+      const salesUsers = isManager ? await loadManagerUserNames() : []
+
       return {
         success: true,
         isManager,
+        salesUsers,
         stats: { total: totalRes.total, thisWeek: weekRes.total, avgScore },
         latestDailyReport
       }
@@ -502,9 +530,12 @@ exports.main = async (event, context) => {
       return item
     })
 
+    const salesUsers = (isManager && safePage === 1) ? await loadManagerUserNames(list) : undefined
+
     return {
       success: true,
       isManager,
+      salesUsers,
       total,
       page: safePage,
       pageSize: safePageSize,

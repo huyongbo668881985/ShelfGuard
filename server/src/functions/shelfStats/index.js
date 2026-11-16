@@ -388,8 +388,11 @@ async function rebuildAll({ startedAt, lowVisitThreshold }) {
     const storeRow = {
       customerId: agg.customerId,
       storeName: agg.storeName,
+      userName: agg.userName || '',
       visitCount: agg.visitCount,
-      avgSharePercent: avgShare
+      avgSharePercent: avgShare,
+      lastScore: agg.lastScore,
+      lastCreatedAt: agg.lastCreatedAt || 0
     }
     if (!userMonthStores.has(agg.ownerOpenid)) userMonthStores.set(agg.ownerOpenid, new Map())
     const um = userMonthStores.get(agg.ownerOpenid)
@@ -410,11 +413,24 @@ async function rebuildAll({ startedAt, lowVisitThreshold }) {
     const avgVisitsPerCustomer = customerCount > 0 ? round1(totalVisits / customerCount) : 0
     const lowList = stores
       .filter(s => (s.visitCount || 0) < lowVisitThreshold)
-      .map(s => ({
-        customerId: s.customerId,
-        storeName: s.storeName,
-        visitCount: s.visitCount
-      }))
+      .map(s => {
+        let lastVisitDate = ''
+        if (s.lastCreatedAt) {
+          const dt = new Date(s.lastCreatedAt)
+          if (!isNaN(dt.getTime())) {
+            lastVisitDate = `${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}`
+          }
+        }
+        return {
+          customerId: s.customerId,
+          storeName: s.storeName,
+          userName: s.userName || '',
+          visitCount: s.visitCount,
+          avgSharePercent: s.avgSharePercent != null ? round1(s.avgSharePercent) : null,
+          lastScore: s.lastScore != null ? s.lastScore : null,
+          lastVisitDate
+        }
+      })
 
     const docId = overallDocId(scope, ownerOpenid, yearMonth)
     await upsertDoc(COL_OVERALL, docId, {
@@ -514,6 +530,30 @@ async function handleDashboard({ isManager, openid, yearMonth, compareYearMonth 
   const yoyShare = yoy && yoy.avgSharePercent != null ? yoy.avgSharePercent : null
   const cmpShare = compare && compare.avgSharePercent != null ? compare.avgSharePercent : null
 
+  // 兼容旧版未写 userName 的预计算快照：在打开看板时自动从店月汇总补全业务员姓名和排面占比
+  let enrichedLowVisit = (current && Array.isArray(current.lowVisitCustomers))
+    ? current.lowVisitCustomers
+    : []
+  if (enrichedLowVisit.length > 0 && enrichedLowVisit.some(c => !c.userName)) {
+    try {
+      const storeQuery = isManager ? { yearMonth: ym } : { yearMonth: ym, ownerOpenid: openid }
+      const sRes = await db.collection(COL_BY_STORE).where(storeQuery).limit(500).get()
+      const byCust = new Map()
+      ;(sRes.data || []).forEach(r => {
+        if (r && r.customerId) byCust.set(r.customerId, r)
+      })
+      enrichedLowVisit = enrichedLowVisit.map(c => {
+        const hit = byCust.get(c.customerId)
+        if (!hit) return c
+        return Object.assign({}, c, {
+          userName: c.userName || hit.userName || '',
+          avgSharePercent: c.avgSharePercent != null ? c.avgSharePercent : (hit.avgSharePercent != null ? hit.avgSharePercent : null),
+          lastScore: c.lastScore != null ? c.lastScore : (hit.lastScore != null ? hit.lastScore : null)
+        })
+      })
+    } catch (_) {}
+  }
+
   return {
     success: true,
     isManager,
@@ -527,7 +567,7 @@ async function handleDashboard({ isManager, openid, yearMonth, compareYearMonth 
       avgVisitsPerCustomer: current.avgVisitsPerCustomer != null ? current.avgVisitsPerCustomer : null,
       lowVisitThreshold: current.lowVisitThreshold != null ? current.lowVisitThreshold : DEFAULT_LOW_VISIT_THRESHOLD,
       lowVisitCount: current.lowVisitCount || 0,
-      lowVisitCustomers: current.lowVisitCustomers || [],
+      lowVisitCustomers: enrichedLowVisit,
       updatedAt: current.updatedAt || null
     } : null,
     mom: {

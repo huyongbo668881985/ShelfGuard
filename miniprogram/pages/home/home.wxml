@@ -94,7 +94,7 @@
       <view class="record-right">
         <text class="record-score" wx:if="{{item.score !== undefined}}" style="color: {{item.scoreColor}}">{{item.score}}</text>
         <text class="record-status clocked" wx:elif="{{item.isClock}}">已打卡</text>
-        <text class="record-status" wx:elif="{{item.statusText}}">{{item.statusText}}</text>
+        <text class="record-status {{item.status === 'analyze_failed' ? 'failed' : ''}}" wx:elif="{{item.statusText}}">{{item.statusText}}</text>
         <text class="record-status" wx:else>已提交</text>
       </view>
     </view>

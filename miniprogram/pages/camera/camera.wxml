@@ -38,8 +38,8 @@
         <cover-view>🏬 选择门店</cover-view>
       </cover-view>
 
-      <!-- 连拍缩略图 + 完成按钮：拍1张时不强制拼图，多于1张才会在点"完成"后拼成一张大图 -->
-      <cover-view class="capture-strip" wx:if="{{!showPreview}}">
+      <!-- 连拍缩略图 + 完成按钮：仅门店拜访模式显示；上下班打卡拍 1 张即自动极速提交 -->
+      <cover-view class="capture-strip" wx:if="{{!showPreview && recordType === 'visit'}}">
         <cover-view class="capture-thumbs" wx:if="{{capturedPhotos.length > 0}}">
           <cover-view
             class="capture-thumb"
@@ -122,9 +122,9 @@
       ></image>
     </block>
 
-    <!-- 合成中提示 -->
+    <!-- 合成/极速打卡中提示 -->
     <view class="composing-mask" wx:if="{{composing}}">
-      <text class="composing-text">正在添加水印...</text>
+      <text class="composing-text">{{clockStatusText || '正在添加水印...'}}</text>
     </view>
 
     <!-- 操作按钮 -->

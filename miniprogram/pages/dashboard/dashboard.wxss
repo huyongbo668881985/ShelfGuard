@@ -302,3 +302,219 @@
   text-align: center;
   padding: 0 12rpx;
 }
+
+.stat-chip--clickable:active {
+  background: var(--color-bg-hover, #F0F4F8);
+}
+
+/* 拜访不足 N 次门店交互抽屉 */
+.lv-mask {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 900;
+}
+
+.lv-panel {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #fff;
+  border-radius: 32rpx 32rpx 0 0;
+  max-height: 82vh;
+  z-index: 901;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 -8rpx 32rpx rgba(0, 0, 0, 0.15);
+}
+
+.lv-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 28rpx 34rpx 20rpx;
+  border-bottom: 1rpx solid #EEF1F5;
+}
+
+.lv-title {
+  display: block;
+  font-size: 32rpx;
+  font-weight: 700;
+  color: #1C3D5A;
+}
+
+.lv-sub {
+  display: block;
+  margin-top: 6rpx;
+  font-size: 24rpx;
+  color: #829AB1;
+}
+
+.lv-close {
+  font-size: 36rpx;
+  color: #9AA0A6;
+  padding: 10rpx;
+}
+
+.lv-filters {
+  padding: 20rpx 30rpx 16rpx;
+  border-bottom: 1rpx solid #EEF1F5;
+  background: #F8FAFC;
+}
+
+.lv-user-scroll {
+  white-space: nowrap;
+  margin-bottom: 16rpx;
+}
+
+.lv-user-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.lv-user-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 8rpx 22rpx;
+  border-radius: 999rpx;
+  background: #fff;
+  color: #486581;
+  font-size: 24rpx;
+  border: 1rpx solid #D9E2EC;
+  flex-shrink: 0;
+}
+
+.lv-user-pill.active {
+  background: #1C3D5A;
+  color: #fff;
+  border-color: #1C3D5A;
+  font-weight: 600;
+}
+
+.lv-search-box {
+  display: flex;
+  align-items: center;
+  background: #fff;
+  border-radius: 16rpx;
+  padding: 12rpx 20rpx;
+  border: 1rpx solid #E4E7EB;
+}
+
+.lv-search-icon {
+  font-size: 26rpx;
+  margin-right: 12rpx;
+  color: #9AA0A6;
+}
+
+.lv-search-input {
+  flex: 1;
+  font-size: 26rpx;
+  color: #1F2933;
+}
+
+.lv-search-clear {
+  font-size: 26rpx;
+  color: #9AA0A6;
+  padding: 0 8rpx;
+}
+
+.lv-list-scroll {
+  flex: 1;
+  max-height: 50vh;
+  padding: 16rpx 30rpx;
+  box-sizing: border-box;
+}
+
+.lv-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+  padding: 22rpx 0;
+  border-bottom: 1rpx solid #EEF1F5;
+}
+
+.lv-item:last-child {
+  border-bottom: none;
+}
+
+.lv-item-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.lv-item-top {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  flex-wrap: wrap;
+}
+
+.lv-store-name {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #1F2933;
+}
+
+.lv-visit-badge {
+  font-size: 20rpx;
+  padding: 4rpx 12rpx;
+  border-radius: 8rpx;
+  background: #FFF4E0;
+  color: #B26A00;
+  font-weight: 600;
+}
+
+.lv-item-meta {
+  margin-top: 8rpx;
+  font-size: 24rpx;
+  color: #627D98;
+}
+
+.lv-item-actions {
+  display: flex;
+  gap: 12rpx;
+  flex-shrink: 0;
+}
+
+.lv-act-btn {
+  font-size: 22rpx;
+  padding: 10rpx 18rpx;
+  border-radius: 12rpx;
+  background: #EEF2F7;
+  color: #1C3D5A;
+  font-weight: 500;
+}
+
+.lv-act-btn.primary {
+  background: #EBF4FF;
+  color: #1D4ED8;
+}
+
+.lv-empty {
+  padding: 60rpx 0;
+  text-align: center;
+  color: #9AA0A6;
+  font-size: 26rpx;
+}
+
+.lv-footer {
+  display: flex;
+  gap: 20rpx;
+  padding: 20rpx 30rpx 44rpx;
+  border-top: 1rpx solid #EEF1F5;
+  background: #fff;
+}
+
+.lv-footer-btn {
+  flex: 1;
+  margin: 0 !important;
+  font-size: 28rpx;
+  height: 80rpx;
+  line-height: 80rpx;
+}

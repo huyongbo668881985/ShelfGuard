@@ -294,6 +294,37 @@ test('登录、审批、巡检、照片和看板主路径', async () => {
     customer: { storeName: '沿街小店', address: '学校门口' }
   })
   assert.equal(own.body.success, true)
+  const salesCustomerId = own.body._id
+
+  // 管理员协访业务员名下门店：保留 customerId 关联并自动回填门店坐标
+  const adminVisitSalesCust = await call(adminLogin.token, 'submitInspection', {
+    taskName: '主管协访',
+    storeName: '沿街小店',
+    userName: '张三',
+    customerId: salesCustomerId,
+    fileIDs: [uploadedBody.fileID],
+    location: { latitude: 30.28, longitude: 120.18, address: '学校门口 88 号' }
+  })
+  assert.equal(adminVisitSalesCust.body.success, true)
+  const adminVisitRep = await call(adminLogin.token, 'getReport', {
+    inspectionId: adminVisitSalesCust.body.inspectionId
+  })
+  assert.equal(adminVisitRep.body.detail.customerId, salesCustomerId)
+  const salesCustAfter = await call(salesLogin.token, 'customers', {
+    action: 'get',
+    customerId: salesCustomerId
+  })
+  assert.equal(salesCustAfter.body.customer.location.latitude, 30.28)
+
+  // 服务端按距离排序：离 (30.28, 120.18) 更近的「沿街小店」排在「特8烟酒店」(30.25, 120.16) 前面
+  const nearSorted = await call(adminLogin.token, 'customers', {
+    action: 'list',
+    lat: 30.2801,
+    lng: 120.1801
+  })
+  assert.equal(nearSorted.body.success, true)
+  assert.equal(nearSorted.body.list[0]._id, salesCustomerId)
+  assert.ok(nearSorted.body.list[0].distanceText)
 
   const product = await call(adminLogin.token, 'products', {
     action: 'add',
@@ -389,6 +420,34 @@ test('登录、审批、巡检、照片和看板主路径', async () => {
   assert.equal(mapOkRes.status, 200)
   const mapOkBody = await mapOkRes.json()
   assert.equal(mapOkBody.success, true)
+
+  // 验证网页端导出 Excel/CSV 台账接口（当日明细 + 当月汇总）
+  const exportUnauth = await fetch(`${base}/api/web/export-ledger?scope=day`)
+  assert.equal(exportUnauth.status, 401)
+
+  const exportDayRes = await fetch(`${base}/api/web/export-ledger?scope=day`, {
+    headers: { 'x-map-key': 'map-secret-pass-2026' }
+  })
+  assert.equal(exportDayRes.status, 200)
+  assert.match(exportDayRes.headers.get('content-type') || '', /text\/csv/)
+  const exportDayCsv = await exportDayRes.text()
+  assert.ok(exportDayCsv.startsWith('\uFEFF'))
+  assert.ok(exportDayCsv.includes('特8烟酒店'))
+
+  const exportMonthRes = await fetch(`${base}/api/web/export-ledger?scope=month`, {
+    headers: { 'x-map-key': 'map-secret-pass-2026' }
+  })
+  assert.equal(exportMonthRes.status, 200)
+  const exportMonthCsv = await exportMonthRes.text()
+  assert.ok(exportMonthCsv.includes('月度人员考勤与拜访汇总表'))
+  assert.ok(exportMonthCsv.includes('每日考勤与拜访明细台账'))
+
+  // 验证管理者 getHistory 返回 salesUsers 供胶囊选择器使用，以及排面看板 lowVisitCustomers 携带 userName
+  const mgrStats = await call(adminLogin.token, 'getHistory', { action: 'stats' })
+  assert.equal(mgrStats.body.success, true)
+  assert.ok(Array.isArray(mgrStats.body.salesUsers))
+  assert.ok(mgrStats.body.salesUsers.includes('张三'))
+  assert.ok(dash.body.overall.lowVisitCustomers.some(c => c.userName === '张三'))
 
   assert.ok(salesRow || sales)
 })

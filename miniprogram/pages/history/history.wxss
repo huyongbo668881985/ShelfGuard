@@ -94,6 +94,39 @@
   font-size: 32rpx;
 }
 
+/* 业务员快捷胶囊条 */
+.user-pills-scroll {
+  white-space: nowrap;
+  padding: 0 30rpx 18rpx;
+  box-sizing: border-box;
+}
+
+.user-pills-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 14rpx;
+}
+
+.user-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 10rpx 24rpx;
+  border-radius: 999rpx;
+  background: #fff;
+  color: #486581;
+  font-size: 24rpx;
+  font-weight: 500;
+  box-shadow: 0 2rpx 6rpx rgba(0, 0, 0, 0.04);
+  border: 2rpx solid transparent;
+  flex-shrink: 0;
+}
+
+.user-pill.active {
+  background: var(--color-primary, #1C3D5A);
+  color: #fff;
+  font-weight: 600;
+}
+
 /* 筛选标签 */
 .filter-tags {
   display: flex;
