@@ -54,8 +54,8 @@
     </view>
     <view class="card admin-entry" bindtap="goProducts">
       <view class="entry-left">
-        <text class="entry-title">产品库</text>
-        <text class="entry-sub">管理品牌产品资料</text>
+        <text class="entry-title">产品与物料库</text>
+        <text class="entry-sub">管理本品牌产品与终端广告物料资料</text>
       </view>
       <text class="entry-arrow">›</text>
     </view>
@@ -154,7 +154,7 @@
           <text class="mode-name">识别精度优先</text>
           <text class="mode-check" wx:if="{{imageMode === 'quality'}}">✓</text>
         </view>
-        <text class="mode-desc">跳过拼图，多张原图各自全分辨率上传后合并分析，价签/品牌更清晰，流量与费用更高。</text>
+        <text class="mode-desc">自动拼合 1 张大图方便存相册与发微信，同时后台将多张高清原图分别上传供 AI 识别（自动区分门头/陈列/物料），识别更准。</text>
       </view>
       <text class="form-tip" style="padding: 0 8rpx;">由管理员统一设置，点「保存设置」后对全员生效，业务员下次打开拍照页自动使用。</text>
     </view>

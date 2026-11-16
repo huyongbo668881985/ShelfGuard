@@ -11,12 +11,28 @@
   <!-- 顶部信息栏 -->
   <view class="header-bar">
     <text class="header-title">确认上传</text>
-    <text class="header-count">共 {{totalPhotos}} 张照片</text>
+    <text class="header-count" wx:if="{{sharePhotoPath && totalPhotos > 1}}">已拼合 1 张大图 · 传 {{totalPhotos}} 张原图供 AI</text>
+    <text class="header-count" wx:else>共 {{totalPhotos}} 张照片</text>
   </view>
 
   <!-- 照片预览区域 -->
   <scroll-view class="photo-scroll" scroll-x wx:if="{{photos.length > 0}}">
     <view class="photo-list">
+      <!-- 精度模式下优先展示拼好的 1 张大图（用于发微信/相册） -->
+      <view
+        class="photo-item"
+        wx:if="{{sharePhotoPath && totalPhotos > 1}}"
+        bindtap="previewStitchedPhoto"
+      >
+        <image
+          class="photo-img"
+          src="{{sharePhotoPath}}"
+          mode="aspectFill"
+        ></image>
+        <view class="photo-size">
+          <text>转发拼图</text>
+        </view>
+      </view>
       <view
         class="photo-item {{item.status}}"
         wx:for="{{photos}}"

@@ -58,7 +58,6 @@
 
         <cover-view class="capture-finish-btn" wx:if="{{capturedPhotos.length > 0}}" bindtap="finishCapture">
           <cover-view wx:if="{{capturedPhotos.length <= 1}}">完成</cover-view>
-          <cover-view wx:elif="{{imageMode === 'quality'}}">完成上传（精度）</cover-view>
           <cover-view wx:else>完成拼图</cover-view>
         </cover-view>
       </cover-view>

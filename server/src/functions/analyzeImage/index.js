@@ -271,18 +271,19 @@ exports.main = async (event, context) => {
       .map(f => f.tempFileURL)
     console.log('[1/5] 图片链接获取成功')
 
-    // 2. 查询产品库（本品牌/别名/系列），拼成一段文字提示给 AI 做识别参考，
-    //    这样品牌一多、一换，不用改 Prompt 代码，直接在"产品库管理"页里维护就行。
-    console.log('[2/5] 查询产品库...')
+    // 2. 查询产品库与广告物料库，拼成一段文字提示给 AI 做识别参考，
+    //    这样品牌或物料一多、一换，不用改 Prompt 代码，直接在"产品与物料库"页里维护就行。
+    console.log('[2/5] 查询产品与物料库...')
+    const activeMaterials = await loadActiveMaterials()
     const brandReferenceText = await getBrandReferenceText()
-    console.log('[2/5] 产品库查询完成')
+    console.log('[2/5] 产品与物料库查询完成')
 
     // 3. 调用 AI 视觉模型分析（同一次巡检的多张照片合并为一次调用，输出一份综合报告）
     //    套一层自己的倒计时：宁可主动判失败，也不能让云函数被硬杀导致状态卡在 analyzing。
     //    详见文件顶部 AI_HARD_TIMEOUT_MS 的注释。
     console.log(`[3/5] 调用 ${CURRENT_MODEL}/${AI_CONFIG[CURRENT_MODEL].model} 视觉分析...`)
     const analysis = await withHardTimeout(
-      analyzeWithVision(imageUrls, brandReferenceText),
+      analyzeWithVision(imageUrls, brandReferenceText, activeMaterials),
       AI_HARD_TIMEOUT_MS,
       `AI 分析超过 ${AI_HARD_TIMEOUT_MS / 1000} 秒未完成，已主动中止。常见原因：单次照片过多、图片分辨率过高`
     )
@@ -320,6 +321,9 @@ exports.main = async (event, context) => {
         aiDebug: analysis.debug            // 诊断快照，方便排查"有调用无输出"
       }
     })
+    if (inspectionDoc.customerId && Array.isArray(aiReport.adMaterials) && aiReport.adMaterials.length > 0) {
+      await syncCustomerMaterials(inspectionDoc.customerId, aiReport.adMaterials, inspectionId)
+    }
     console.log('[4/5] 数据库更新成功')
 
     console.log('[5/5] 分析完成')
@@ -381,35 +385,145 @@ async function resolveApiKey(config) {
 }
 
 // ============================================================
-// 产品库：查询本品牌资料，拼装成 AI 识别时的参考文本
+// 产品库 & 广告物料库：查询本品牌资料，拼装成 AI 识别时的参考文本
 // ============================================================
+async function loadActiveMaterials() {
+  try {
+    const res = await db.collection('adMaterials').where({ isActive: true }).get()
+    return res.data || []
+  } catch (err) {
+    console.warn('查询广告物料库失败:', err.message || err)
+    return []
+  }
+}
+
+function normalizeAdMaterials(rawList, activeMaterials = []) {
+  if (!Array.isArray(rawList)) return []
+  const byAlias = new Map()
+  ;(activeMaterials || []).forEach(m => {
+    if (!m || !m.materialName) return
+    const std = String(m.materialName).trim()
+    if (!std) return
+    byAlias.set(std.toLowerCase(), m)
+    if (Array.isArray(m.aliases)) {
+      m.aliases.forEach(a => {
+        const k = String(a || '').trim().toLowerCase()
+        if (k) byAlias.set(k, m)
+      })
+    }
+  })
+
+  const merged = new Map()
+  rawList.forEach(item => {
+    if (!item) return
+    const rawName = String(item.name || item.materialName || '').trim()
+    if (!rawName) return
+    const matched = byAlias.get(rawName.toLowerCase())
+    const canonicalName = matched ? String(matched.materialName).trim() : rawName
+    const category = (matched && matched.category) || String(item.category || '其他').trim() || '其他'
+    const count = Math.max(1, parseInt(item.count, 10) || 1)
+    const condition = String(item.condition || '完好').trim() || '完好'
+    const isOwn = matched ? true : (item.isOwn !== false)
+
+    const existing = merged.get(canonicalName)
+    if (existing) {
+      existing.count = Math.max(existing.count, count)
+    } else {
+      merged.set(canonicalName, {
+        name: canonicalName,
+        category,
+        isOwn,
+        count,
+        condition,
+        position: String(item.position || '').trim(),
+        confidence: typeof item.confidence === 'number' ? item.confidence : 0.9
+      })
+    }
+  })
+
+  return Array.from(merged.values())
+}
+
+async function syncCustomerMaterials(customerId, adMaterials, inspectionId) {
+  const cid = String(customerId || '').trim()
+  if (!cid || !Array.isArray(adMaterials) || adMaterials.length === 0) return
+  try {
+    const custRes = await db.collection('customers').doc(cid).get()
+    const cust = custRes && custRes.data
+    if (!cust) return
+    const prevList = Array.isArray(cust.adMaterials) ? cust.adMaterials : []
+    const matMap = new Map()
+    prevList.forEach(m => {
+      if (m && m.name) matMap.set(m.name, m)
+    })
+    const nowIso = new Date().toISOString()
+    adMaterials.forEach(m => {
+      if (!m || !m.name || m.isOwn === false) return
+      matMap.set(m.name, {
+        name: m.name,
+        category: m.category || '其他',
+        count: m.count || 1,
+        condition: m.condition || '完好',
+        lastSeenAt: nowIso,
+        lastInspectionId: inspectionId || ''
+      })
+    })
+    await db.collection('customers').doc(cid).update({
+      data: {
+        adMaterials: Array.from(matMap.values()),
+        updatedAt: db.serverDate()
+      }
+    })
+  } catch (err) {
+    console.warn('同步客户广告物料台账失败:', err.message || err)
+  }
+}
+
 async function getBrandReferenceText() {
+  let out = ''
   try {
     const res = await db.collection('products').where({ isActive: true }).get()
     const products = res.data || []
-    if (products.length === 0) return ''
-
-    const lines = products.map(p => {
-      const parts = [`品牌：${p.brandName}`]
-      if (p.productLine) parts.push(`产品线：${p.productLine}`)
-      if (Array.isArray(p.aliases) && p.aliases.length > 0) {
-        parts.push(`别名/简称：${p.aliases.join('、')}`)
-      }
-      return `- ${parts.join('，')}`
-    })
-
-    return `\n\n## 本品牌产品资料（识别时优先参考，遇到下列品牌/别名要统一按标准品牌名归类，不要因为叫法不同而拆成两个品牌）\n${lines.join('\n')}`
+    if (products.length > 0) {
+      const lines = products.map(p => {
+        const parts = [`品牌：${p.brandName}`]
+        if (p.productLine) parts.push(`产品线：${p.productLine}`)
+        if (Array.isArray(p.aliases) && p.aliases.length > 0) {
+          parts.push(`别名/简称：${p.aliases.join('、')}`)
+        }
+        return `- ${parts.join('，')}`
+      })
+      out += `\n\n## 本品牌产品资料（识别时优先参考，遇到下列品牌/别名要统一按标准品牌名归类，不要因为叫法不同而拆成两个品牌）\n${lines.join('\n')}`
+    }
   } catch (err) {
-    // 产品库查询失败不应该阻断整个分析流程，退化为"不带品牌参考"继续跑
     console.error('查询产品库失败，本次分析不带品牌参考:', err)
-    return ''
   }
+
+  try {
+    const materials = await loadActiveMaterials()
+    if (materials.length > 0) {
+      const mLines = materials.map(m => {
+        const parts = [`标准名称：${m.materialName}`]
+        if (m.category) parts.push(`分类：${m.category}`)
+        if (Array.isArray(m.aliases) && m.aliases.length > 0) {
+          parts.push(`别名：${m.aliases.join('、')}`)
+        }
+        if (m.visualFeatures) parts.push(`视觉特征：${m.visualFeatures}`)
+        return `- ${parts.join('，')}`
+      })
+      out += `\n\n## 本品牌广告物料库（识别画面中的广告物料时必须优先比对下列物料，并在 adMaterials[].name 中严格输出对应的「标准名称」）\n${mLines.join('\n')}`
+    }
+  } catch (err) {
+    console.error('查询物料库失败:', err)
+  }
+
+  return out
 }
 
 // ============================================================
 // AI 调用逻辑
 // ============================================================
-async function analyzeWithVision(imageUrls, brandReferenceText) {
+async function analyzeWithVision(imageUrls, brandReferenceText, activeMaterials = []) {
   const config = AI_CONFIG[CURRENT_MODEL]
   const apiKey = await resolveApiKey(config)
 
@@ -425,7 +539,7 @@ async function analyzeWithVision(imageUrls, brandReferenceText) {
   const userPrompt = buildUserPrompt(imageUrls.length, brandReferenceText)
 
   const { text, debug } = await callQwen(config, apiKey, imageUrls, userPrompt)
-  const parsed = parseAIResponse(text)
+  const parsed = parseAIResponse(text, activeMaterials)
   // 把"前端最终拿到的是不是有效报告"也记进诊断，区分"模型回了但解析失败"
   // 和"模型根本没回正文"这两种不同的"没输出"表现。
   debug.parsedOk = !(parsed.metadata && parsed.metadata.parseError)
@@ -596,7 +710,7 @@ function extractQwenText(data) {
 // ============================================================
 // 响应解析
 // ============================================================
-function parseAIResponse(responseText) {
+function parseAIResponse(responseText, activeMaterials = []) {
   try {
     let jsonStr = (responseText || '').trim()
 
@@ -619,7 +733,7 @@ function parseAIResponse(responseText) {
     const result = JSON.parse(jsonStr)
 
     // 验证并补全必要字段
-    return validateAndNormalize(result, responseText)
+    return validateAndNormalize(result, responseText, activeMaterials)
   } catch (err) {
     console.error('解析 AI 返回结果失败:', err)
     return {
@@ -627,6 +741,7 @@ function parseAIResponse(responseText) {
       scoreLevel: '解析失败',
       summary: 'AI 返回结果解析失败，请重试',
       productIdentification: [],
+      adMaterials: [],
       displayCompliance: {},
       competitiveAnalysis: {},
       issues: [],
@@ -640,7 +755,7 @@ function parseAIResponse(responseText) {
 /**
  * 验证并规范化 AI 返回结果
  */
-function validateAndNormalize(result, rawResponse) {
+function validateAndNormalize(result, rawResponse, activeMaterials = []) {
   // 确保对象字段存在
   if (!result.displayCompliance || typeof result.displayCompliance !== 'object') {
     result.displayCompliance = {}
@@ -678,6 +793,7 @@ function validateAndNormalize(result, rawResponse) {
 
   // 确保数组字段存在
   if (!Array.isArray(result.productIdentification)) result.productIdentification = []
+  result.adMaterials = normalizeAdMaterials(result.adMaterials, activeMaterials)
   if (!Array.isArray(result.issues)) result.issues = []
   if (!Array.isArray(result.suggestions)) result.suggestions = []
   if (!result.competitiveAnalysis || typeof result.competitiveAnalysis !== 'object') {
@@ -690,6 +806,9 @@ function validateAndNormalize(result, rawResponse) {
   }
   if (!result.metadata || typeof result.metadata !== 'object') {
     result.metadata = {}
+  }
+  if (!Array.isArray(result.metadata.photoRoles)) {
+    result.metadata.photoRoles = []
   }
 
   // 保留原始响应
@@ -831,14 +950,20 @@ async function handleDailySummary(event, wxContext) {
 
   const inspectionIds = inspections.map(i => i._id)
 
-  // 2. 抽取代表性照片（每条记录优先取第一张，最多8张）
+  // 2. 抽取照片（每家门店最多取 3 张原图以涵盖门头+货架+广告物料，单批次總计最多 16 张）
   const allFileIDs = []
   inspections.forEach(item => {
     if (Array.isArray(item.photoFileIDs) && item.photoFileIDs.length > 0) {
-      allFileIDs.push(item.photoFileIDs[0])
+      const slice = item.photoFileIDs.slice(0, 3)
+      const room = Math.max(0, 16 - allFileIDs.length)
+      const taken = slice.slice(0, room)
+      item._fedPhotoCount = taken.length
+      allFileIDs.push(...taken)
+    } else {
+      item._fedPhotoCount = 0
     }
   })
-  const targetFileIDs = allFileIDs.slice(0, 8)
+  const targetFileIDs = allFileIDs.slice(0, 16)
   if (targetFileIDs.length === 0) {
     await db.collection('inspections').where({ _id: db.command.in(inspectionIds) }).update({
       data: { status: 'analyze_failed', analyzeError: '拜访记录中未找到有效照片', analyzedAt: db.serverDate() }
@@ -887,6 +1012,7 @@ async function handleDailySummary(event, wxContext) {
     if (imageUrls.length === 0) {
       throw new Error('获取图片临时链接失败')
     }
+    const activeMaterials = await loadActiveMaterials()
     const brandReferenceText = await getBrandReferenceText()
     const userPrompt = buildDailySummaryUserPrompt(inspections, brandReferenceText)
 
@@ -981,7 +1107,7 @@ async function handleDailySummary(event, wxContext) {
     // 6. 将所涉巡检记录更新为 analyzed，并同步写入兼容的 aiReport 结构，
     //    确保历史列表评分圆圈、顶部平均分统计、评分筛选以及点进单条报告页均能完整渲染
     for (const item of inspections) {
-      const itemAiReport = buildInspectionReportFromDaily(summaryReport, item, todayStr)
+      const itemAiReport = buildInspectionReportFromDaily(summaryReport, item, todayStr, activeMaterials)
       await db.collection('inspections').doc(item._id).update({
         data: {
           status: 'analyzed',
@@ -992,6 +1118,9 @@ async function handleDailySummary(event, wxContext) {
           analyzedAt: db.serverDate()
         }
       }).catch(err => console.error(`回写巡检 ${item._id} 报告失败:`, err))
+      if (item.customerId && Array.isArray(itemAiReport.adMaterials) && itemAiReport.adMaterials.length > 0) {
+        await syncCustomerMaterials(item.customerId, itemAiReport.adMaterials, item._id)
+      }
     }
 
     return { success: true, dailyReport: summaryReport, date: todayStr, savedId }
@@ -1011,7 +1140,7 @@ async function handleDailySummary(event, wxContext) {
 /**
  * 将当日汇总结论转化为单条巡检可渲染的标准 aiReport 结构
  */
-function buildInspectionReportFromDaily(summaryReport, inspection, todayStr) {
+function buildInspectionReportFromDaily(summaryReport, inspection, todayStr, activeMaterials = []) {
   const rankings = Array.isArray(summaryReport.storeRankings) ? summaryReport.storeRankings : []
   const matchedStore = rankings.find(r => r && r.storeName && r.storeName === inspection.storeName)
 
@@ -1043,12 +1172,15 @@ function buildInspectionReportFromDaily(summaryReport, inspection, todayStr) {
     deadline: '明日拜访'
   }))
 
+  const adMaterials = normalizeAdMaterials(matchedStore && matchedStore.adMaterials, activeMaterials)
+
   const ov = summaryReport.ownBrandOverview || {}
   return {
     score,
     scoreLevel,
     summary,
     productIdentification: [],
+    adMaterials,
     displayCompliance: {},
     competitiveAnalysis: {
       totalBrands: 0,

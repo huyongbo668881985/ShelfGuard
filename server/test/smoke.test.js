@@ -340,6 +340,41 @@ test('登录、审批、巡检、照片和看板主路径', async () => {
   })
   assert.equal(productDenied.body.success, false)
 
+  // 验证广告物料库与门店物料覆盖统计
+  const matAdded = await call(adminLogin.token, 'products', {
+    action: 'addMaterial',
+    material: {
+      materialName: '永丰特8方形红灯箱',
+      category: '灯箱',
+      aliases: ['特8红灯箱'],
+      visualFeatures: '红底金字方形亚克力发光灯箱'
+    }
+  })
+  assert.equal(matAdded.body.success, true)
+  const matList = await call(salesLogin.token, 'products', { action: 'listMaterials' })
+  assert.equal(matList.body.success, true)
+  assert.equal(matList.body.list.length, 1)
+  assert.equal(matList.body.list[0].materialName, '永丰特8方形红灯箱')
+
+  // 模拟门店巡检报告中识别到广告物料，校验 materialStats 覆盖统计
+  await db.collection('inspections').doc(inspectionId).update({
+    data: {
+      aiReport: {
+        score: 86,
+        scoreLevel: '优秀',
+        summary: '陈列良好',
+        adMaterials: [{ name: '特8红灯箱', category: '灯箱', count: 1, condition: '完好' }]
+      }
+    }
+  })
+  const matStats = await call(adminLogin.token, 'shelfStats', { action: 'materialStats' })
+  assert.equal(matStats.body.success, true)
+  assert.equal(matStats.body.totalStores, 2)
+  assert.equal(matStats.body.coveredStores, 1)
+  assert.equal(matStats.body.materials[0].materialName, '永丰特8方形红灯箱')
+  assert.equal(matStats.body.materials[0].storeCount, 1)
+  assert.equal(matStats.body.materials[0].missingStoreCount, 1)
+
   const geo = await call(salesLogin.token, 'geocode', { lat: 30.25, lng: 120.16 })
   assert.equal(geo.body.success, false)
   assert.equal(geo.body.reason, 'NO_KEY')

@@ -21,6 +21,8 @@ Page({
   data: {
     // 照片列表（支持多张）
     photos: [],
+    // 精度模式下用于预览/微信转发的合成拼图（1张大图），后台仍上传 photos 多张原图给 AI
+    sharePhotoPath: '',
     // 基本信息
     lat: 0,
     lng: 0,
@@ -59,6 +61,7 @@ Page({
     const isClockRecord = recordType === 'clock_in' || recordType === 'clock_out'
     // 解析单张或多张照片
     const photoPath = decodeURIComponent(options.photoPath || '')
+    const sharePhotoPath = decodeURIComponent(options.sharePhotoPath || '')
     const photoPaths = options.photoPaths
       ? JSON.parse(decodeURIComponent(options.photoPaths))
       : (photoPath ? [photoPath] : [])
@@ -77,6 +80,7 @@ Page({
 
     this.setData({
       photos,
+      sharePhotoPath,
       totalPhotos: photos.length,
       lat: parseFloat(options.lat) || 0,
       lng: parseFloat(options.lng) || 0,
@@ -187,6 +191,16 @@ Page({
     wx.previewImage({
       current: urls[index],
       urls: urls
+    })
+  },
+
+  previewStitchedPhoto() {
+    const { sharePhotoPath, photos } = this.data
+    if (!sharePhotoPath) return
+    const urls = [sharePhotoPath].concat((photos || []).map(p => p.compressedPath || p.originalPath).filter(Boolean))
+    wx.previewImage({
+      current: sharePhotoPath,
+      urls
     })
   },
 
@@ -518,28 +532,29 @@ Page({
     }
   },
 
-  // 把本地水印图发给微信好友（与原先相机预览页同款能力）
+  // 把本地水印图发给微信好友（精度模式下优先转发拼合后的 1 张大图）
   shareToWechat() {
     const photos = this.data.photos || []
-    const urls = photos
+    const photoUrls = photos
       .map(p => p.compressedPath || p.originalPath)
       .filter(Boolean)
-    if (!urls.length) {
+    const sharePath = this.data.sharePhotoPath || photoUrls[0] || ''
+    if (!sharePath) {
       wx.showToast({ title: '暂无照片', icon: 'none' })
       return
     }
-    const path = urls[0]
+    const urls = this.data.sharePhotoPath ? [this.data.sharePhotoPath, ...photoUrls] : photoUrls
     if (typeof wx.showShareImageMenu === 'function') {
       wx.showShareImageMenu({
-        path,
+        path: sharePath,
         fail: (err) => {
           if (err && err.errMsg && !err.errMsg.includes('cancel')) {
-            wx.previewImage({ current: path, urls })
+            wx.previewImage({ current: sharePath, urls })
           }
         }
       })
     } else {
-      wx.previewImage({ current: path, urls })
+      wx.previewImage({ current: sharePath, urls })
     }
   },
 

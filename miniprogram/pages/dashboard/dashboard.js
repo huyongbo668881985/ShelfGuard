@@ -32,16 +32,27 @@ Page({
     lowVisitUserFilter: '',
     lowVisitKeyword: '',
     lowVisitUserGroups: [],
-    lowVisitFiltered: []
+    lowVisitFiltered: [],
+
+    // 终端广告物料覆盖统计与明细抽屉
+    materialStats: null,
+    materialUserFilter: '',
+    showMaterialModal: false,
+    activeMaterial: null,
+    materialModalTab: 'with', // 'with' | 'without'
+    materialModalKeyword: '',
+    materialModalList: []
   },
 
   onLoad() {
     this.syncManagerFlag()
     this.loadDashboard()
+    this.loadMaterialStats()
   },
 
   onShow() {
     this.syncManagerFlag()
+    this.loadMaterialStats()
     const selected = this._pendingSelectedCustomer || app.globalData.selectedCustomer
     if (selected) {
       this._pendingSelectedCustomer = null
@@ -59,8 +70,11 @@ Page({
   },
 
   onPullDownRefresh() {
-    Promise.all([this.loadDashboard(), this.data.customerId ? this.loadStoreTrend() : Promise.resolve()])
-      .finally(() => wx.stopPullDownRefresh())
+    Promise.all([
+      this.loadDashboard(),
+      this.loadMaterialStats(),
+      this.data.customerId ? this.loadStoreTrend() : Promise.resolve()
+    ]).finally(() => wx.stopPullDownRefresh())
   },
 
   syncManagerFlag() {
@@ -329,6 +343,7 @@ Page({
         : `重建完成：店月 ${result.storeDocs} · 整体 ${result.overallDocs}`
       wx.showToast({ title: tip, icon: 'none', duration: 2500 })
       await this.loadDashboard()
+      await this.loadMaterialStats()
       if (this.data.customerId) await this.loadStoreTrend()
     } catch (err) {
       wx.hideLoading()
@@ -337,5 +352,127 @@ Page({
     } finally {
       this.setData({ rebuilding: false })
     }
+  },
+
+  // ============================================================
+  // 终端广告物料覆盖统计与明细抽屉
+  // ============================================================
+  async loadMaterialStats() {
+    try {
+      const res = await api.callFunction({
+        name: 'shelfStats',
+        data: {
+          action: 'materialStats',
+          userNameFilter: this.data.materialUserFilter || undefined
+        }
+      })
+      const result = res.result || {}
+      if (!result.success) return
+      this.setData({
+        materialStats: result,
+        isManager: result.isManager != null ? result.isManager : this.data.isManager
+      })
+    } catch (err) {
+      console.warn('加载广告物料统计失败:', err)
+    }
+  },
+
+  onSelectMaterialUser(e) {
+    const name = e.currentTarget.dataset.name || ''
+    const next = (name && this.data.materialUserFilter === name) ? '' : name
+    this.setData({ materialUserFilter: next })
+    this.loadMaterialStats()
+  },
+
+  goMaterialLibrary() {
+    wx.navigateTo({ url: '/pages/products/products?tab=materials' })
+  },
+
+  onTapMaterialItem(e) {
+    const idx = Number(e.currentTarget.dataset.index)
+    const materials = (this.data.materialStats && this.data.materialStats.materials) || []
+    const item = materials[idx]
+    if (!item) return
+    const defaultTab = item.storeCount > 0 ? 'with' : 'without'
+    this.setData({
+      activeMaterial: item,
+      materialModalTab: defaultTab,
+      materialModalKeyword: '',
+      showMaterialModal: true
+    })
+    this.computeMaterialModalList()
+  },
+
+  closeMaterialModal() {
+    this.setData({ showMaterialModal: false })
+  },
+
+  onSwitchMaterialModalTab(e) {
+    const tab = e.currentTarget.dataset.tab
+    if (!tab || tab === this.data.materialModalTab) return
+    this.setData({ materialModalTab: tab })
+    this.computeMaterialModalList()
+  },
+
+  onMaterialModalKeywordInput(e) {
+    this.setData({ materialModalKeyword: e.detail.value || '' })
+    this.computeMaterialModalList()
+  },
+
+  computeMaterialModalList() {
+    const active = this.data.activeMaterial
+    if (!active) {
+      this.setData({ materialModalList: [] })
+      return
+    }
+    const raw = this.data.materialModalTab === 'with'
+      ? (active.storesWith || [])
+      : (active.storesWithout || [])
+    const kw = (this.data.materialModalKeyword || '').trim().toLowerCase()
+    const filtered = kw
+      ? raw.filter(s => {
+          const sName = String(s.storeName || '').toLowerCase()
+          const uName = String(s.userName || '').toLowerCase()
+          return sName.includes(kw) || uName.includes(kw)
+        })
+      : raw
+    this.setData({ materialModalList: filtered })
+  },
+
+  onInspectMaterialStorePhotos(e) {
+    const cid = e.currentTarget.dataset.id || ''
+    const sName = e.currentTarget.dataset.name || ''
+    if (!cid) return
+    wx.navigateTo({
+      url: `/pages/photo-detail/photo-detail?customerId=${encodeURIComponent(cid)}&storeName=${encodeURIComponent(sName)}`
+    })
+  },
+
+  copyMaterialStoreList() {
+    const active = this.data.activeMaterial
+    const list = this.data.materialModalList || []
+    if (!active || !list.length) {
+      wx.showToast({ title: '当前无门店可复制', icon: 'none' })
+      return
+    }
+    const isWith = this.data.materialModalTab === 'with'
+    const header = `🪧【${active.materialName} · ${isWith ? '已铺设' : '未铺设'}门店名单】`
+    const sub = this.data.materialUserFilter
+      ? `👤 业务员：${this.data.materialUserFilter}（共 ${list.length} 家）`
+      : `📊 共计 ${list.length} 家门店（总覆盖 ${active.storeCount}/${active.totalStores} 家，${active.coveragePercent}%）`
+
+    const lines = [header, sub, '']
+    list.forEach((s, idx) => {
+      const uStr = s.userName ? `（${s.userName}）` : ''
+      const condStr = isWith && s.condition ? ` · ${s.condition}` : ''
+      lines.push(`${idx + 1}. ${s.storeName}${uStr}${condStr}`)
+    })
+
+    wx.setClipboardData({
+      data: lines.join('\n'),
+      success: () => {
+        wx.showToast({ title: '门店名单已复制，可发微信群', icon: 'none', duration: 2500 })
+      }
+    })
   }
 })

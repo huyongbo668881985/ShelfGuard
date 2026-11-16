@@ -179,6 +179,24 @@
         </view>
       </view>
 
+      <!-- 识别到的广告物料 -->
+      <view class="card products-card" wx:if="{{detail.aiReport.adMaterials && detail.aiReport.adMaterials.length > 0}}">
+        <view class="section-title">识别广告物料 ({{detail.aiReport.adMaterials.length}})</view>
+        <view class="product-list">
+          <view class="product-item" wx:for="{{detail.aiReport.adMaterials}}" wx:key="index">
+            <view class="product-main">
+              <text class="product-brand">{{item.name}}</text>
+              <text class="product-line" wx:if="{{item.position}}">{{item.position}}</text>
+            </view>
+            <view class="product-meta">
+              <text class="product-tag" wx:if="{{item.category}}">{{item.category}}</text>
+              <text class="product-tag" wx:if="{{item.condition}}">{{item.condition}}</text>
+              <text class="product-facing" wx:if="{{item.count}}">{{item.count}}处</text>
+            </view>
+          </view>
+        </view>
+      </view>
+
       <!-- 竞品分析 -->
       <view class="card competitive-card" wx:if="{{detail.aiReport.competitiveAnalysis && detail.aiReport.competitiveAnalysis.brands.length > 0}}">
         <view class="section-title">竞品分析</view>

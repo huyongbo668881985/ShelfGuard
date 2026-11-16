@@ -127,6 +127,321 @@ async function saveLowVisitThreshold(n) {
   }
 }
 
+/**
+ * 终端广告物料门店覆盖统计
+ * 口径：以客户库（customers）门店为分母（如业务员名下 200 家店），
+ * 合并客户档案沉淀的 adMaterials 与近 N 天（默认 180 天）已分析拜访记录中的 aiReport.adMaterials，
+ * 按物料库标准名称统计每一种广告物料在多少家门店存在、覆盖率及已铺设/未铺设门店清单。
+ */
+async function handleMaterialStats({ isManager, caller, openid, userNameFilter, days }) {
+  const windowDays = Math.min(365, Math.max(7, parseInt(days, 10) || 180))
+  const cutoffDate = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000)
+
+  // 1. 加载启用中的广告物料库
+  let activeMaterials = []
+  try {
+    const mRes = await db.collection('adMaterials').where({ isActive: true }).limit(200).get()
+    activeMaterials = mRes.data || []
+  } catch (_) {}
+
+  const aliasToMaterial = new Map()
+  activeMaterials.forEach(m => {
+    if (!m || !m.materialName) return
+    const std = String(m.materialName).trim()
+    if (!std) return
+    aliasToMaterial.set(std.toLowerCase(), m)
+    if (Array.isArray(m.aliases)) {
+      m.aliases.forEach(a => {
+        const k = String(a || '').trim().toLowerCase()
+        if (k) aliasToMaterial.set(k, m)
+      })
+    }
+  })
+
+  function resolveCanonicalMaterial(rawName, rawCategory) {
+    const clean = String(rawName || '').trim()
+    if (!clean) return null
+    const matched = aliasToMaterial.get(clean.toLowerCase())
+    if (matched) {
+      return {
+        name: String(matched.materialName).trim(),
+        category: matched.category || rawCategory || '其他'
+      }
+    }
+    return {
+      name: clean,
+      category: String(rawCategory || '其他').trim() || '其他'
+    }
+  }
+
+  // 2. 加载用户列表（用于映射业务员姓名，以及 manager 角色隔离 admin 记录）
+  const userByOpenid = new Map()
+  const adminOpenids = new Set()
+  try {
+    const uRes = await db.collection('users').limit(500).get()
+    ;(uRes.data || []).forEach(u => {
+      if (!u || !u._openid) return
+      userByOpenid.set(u._openid, u)
+      if (u.role === 'admin') adminOpenids.add(u._openid)
+    })
+  } catch (_) {}
+
+  const callerRole = (caller && caller.role) || 'sales'
+
+  // 3. 加载职责范围内的全部客户门店（分母，例如业务员名下 200 家店）
+  const storeMap = new Map() // key: customerId -> store entry
+  const storeNameToId = new Map()
+  let custSkip = 0
+  const custQuery = isManager ? {} : { _openid: openid }
+  while (custSkip < 3000) {
+    const cRes = await db.collection('customers')
+      .where(custQuery)
+      .skip(custSkip)
+      .limit(100)
+      .get()
+    const batch = cRes.data || []
+    if (batch.length === 0) break
+
+    for (const c of batch) {
+      if (!c || !c._id) continue
+      // manager 角色默认不混入无进销存归属的纯 admin 测试门店
+      if (callerRole === 'manager' && adminOpenids.has(c._openid) && !c.jxcOperatorName) {
+        continue
+      }
+      const ownerUser = userByOpenid.get(c._openid)
+      const userName = (ownerUser && ownerUser.name && String(ownerUser.name).trim())
+        || (c.jxcOperatorName && String(c.jxcOperatorName).trim())
+        || '未分配'
+      const sName = String(c.storeName || '未命名门店').trim()
+      const matMap = new Map()
+
+      if (Array.isArray(c.adMaterials)) {
+        c.adMaterials.forEach(item => {
+          if (!item) return
+          const resolved = resolveCanonicalMaterial(item.name || item.materialName, item.category)
+          if (!resolved) return
+          matMap.set(resolved.name, {
+            name: resolved.name,
+            category: resolved.category,
+            count: Math.max(1, parseInt(item.count, 10) || 1),
+            condition: item.condition || '完好'
+          })
+        })
+      }
+
+      storeMap.set(c._id, {
+        customerId: c._id,
+        storeName: sName,
+        ownerOpenid: c._openid || '',
+        userName,
+        visited: false,
+        materials: matMap
+      })
+      if (sName) {
+        storeNameToId.set(`${c._openid || ''}||${sName}`, c._id)
+        if (!storeNameToId.has(`*||${sName}`)) {
+          storeNameToId.set(`*||${sName}`, c._id)
+        }
+      }
+    }
+
+    custSkip += batch.length
+    if (batch.length < 100) break
+  }
+
+  // 4. 扫描时间窗口内的拜访记录，合并 AI 识别到的 adMaterials
+  let inspSkip = 0
+  const inspQuery = isManager
+    ? { createdAt: _.gte(cutoffDate) }
+    : { _openid: openid, createdAt: _.gte(cutoffDate) }
+
+  while (inspSkip < 3000) {
+    const iRes = await db.collection('inspections')
+      .where(inspQuery)
+      .orderBy('createdAt', 'desc')
+      .skip(inspSkip)
+      .limit(100)
+      .field({
+        _id: true,
+        _openid: true,
+        customerId: true,
+        storeName: true,
+        userName: true,
+        recordType: true,
+        aiReport: true,
+        createdAt: true
+      })
+      .get()
+    const rows = iRes.data || []
+    if (rows.length === 0) break
+
+    for (const row of rows) {
+      if (!row || row.recordType === 'clock_in' || row.recordType === 'clock_out') continue
+      if (callerRole === 'manager' && adminOpenids.has(row._openid)) continue
+
+      let cid = row.customerId && String(row.customerId).trim()
+      const sName = String(row.storeName || '').trim()
+      if (!cid && sName) {
+        cid = storeNameToId.get(`${row._openid || ''}||${sName}`) || storeNameToId.get(`*||${sName}`) || ''
+      }
+
+      let storeEntry = cid ? storeMap.get(cid) : null
+      if (!storeEntry && sName) {
+        const fallbackKey = `virtual_${row._openid || ''}_${sName}`
+        storeEntry = storeMap.get(fallbackKey)
+        if (!storeEntry) {
+          const ownerUser = userByOpenid.get(row._openid)
+          const uName = (row.userName && String(row.userName).trim())
+            || (ownerUser && ownerUser.name && String(ownerUser.name).trim())
+            || '未分配'
+          storeEntry = {
+            customerId: cid || '',
+            storeName: sName,
+            ownerOpenid: row._openid || '',
+            userName: uName,
+            visited: true,
+            materials: new Map()
+          }
+          storeMap.set(fallbackKey, storeEntry)
+        }
+      }
+
+      if (!storeEntry) continue
+      storeEntry.visited = true
+
+      const rawMats = row.aiReport && Array.isArray(row.aiReport.adMaterials)
+        ? row.aiReport.adMaterials
+        : []
+      rawMats.forEach(item => {
+        if (!item || item.isOwn === false) return
+        const resolved = resolveCanonicalMaterial(item.name || item.materialName, item.category)
+        if (!resolved) return
+        if (!storeEntry.materials.has(resolved.name)) {
+          storeEntry.materials.set(resolved.name, {
+            name: resolved.name,
+            category: resolved.category,
+            count: Math.max(1, parseInt(item.count, 10) || 1),
+            condition: item.condition || '完好'
+          })
+        }
+      })
+    }
+
+    inspSkip += rows.length
+    if (rows.length < 100) break
+  }
+
+  const allStores = Array.from(storeMap.values())
+
+  // 5. 统计各业务员门店数与覆盖数（供胶囊筛选）
+  const salesMap = new Map()
+  allStores.forEach(s => {
+    const uName = s.userName || '未分配'
+    if (!salesMap.has(uName)) {
+      salesMap.set(uName, { name: uName, totalStores: 0, coveredStores: 0 })
+    }
+    const g = salesMap.get(uName)
+    g.totalStores += 1
+    if (s.materials.size > 0) g.coveredStores += 1
+  })
+  const salesGroups = Array.from(salesMap.values())
+    .sort((a, b) => b.totalStores - a.totalStores || a.name.localeCompare(b.name, 'zh-CN'))
+
+  const targetUser = String(userNameFilter || '').trim()
+  const filteredStores = targetUser
+    ? allStores.filter(s => s.userName === targetUser)
+    : allStores
+
+  const totalStores = filteredStores.length
+  const visitedStores = filteredStores.filter(s => s.visited).length
+  const coveredStores = filteredStores.filter(s => s.materials.size > 0).length
+  const uncoveredStores = Math.max(0, totalStores - coveredStores)
+  const overallCoveragePercent = totalStores > 0 ? round1((coveredStores / totalStores) * 100) : 0
+
+  // 6. 构建物料维度汇总列表（先放物料库中启用的标准物料，再补齐巡检中识别到的其他物料）
+  const materialOrder = []
+  const materialMeta = new Map()
+  activeMaterials.forEach(m => {
+    const name = String(m.materialName || '').trim()
+    if (!name || materialMeta.has(name)) return
+    materialOrder.push(name)
+    materialMeta.set(name, {
+      materialId: m._id || '',
+      materialName: name,
+      category: m.category || '其他',
+      visualFeatures: m.visualFeatures || ''
+    })
+  })
+  filteredStores.forEach(s => {
+    for (const [mName, mVal] of s.materials.entries()) {
+      if (!materialMeta.has(mName)) {
+        materialOrder.push(mName)
+        materialMeta.set(mName, {
+          materialId: '',
+          materialName: mName,
+          category: mVal.category || '其他',
+          visualFeatures: ''
+        })
+      }
+    }
+  })
+
+  const materialBreakdown = materialOrder.map(mName => {
+    const meta = materialMeta.get(mName)
+    const storesWith = []
+    const storesWithout = []
+
+    filteredStores.forEach(s => {
+      const hit = s.materials.get(mName)
+      if (hit) {
+        storesWith.push({
+          customerId: s.customerId,
+          storeName: s.storeName,
+          userName: s.userName,
+          count: hit.count || 1,
+          condition: hit.condition || '完好'
+        })
+      } else {
+        storesWithout.push({
+          customerId: s.customerId,
+          storeName: s.storeName,
+          userName: s.userName
+        })
+      }
+    })
+
+    const storeCount = storesWith.length
+    const missingStoreCount = storesWithout.length
+    const coveragePercent = totalStores > 0 ? round1((storeCount / totalStores) * 100) : 0
+
+    return {
+      materialId: meta.materialId,
+      materialName: meta.materialName,
+      category: meta.category,
+      storeCount,
+      missingStoreCount,
+      totalStores,
+      coveragePercent,
+      storesWith: storesWith.slice(0, 250),
+      storesWithout: storesWithout.slice(0, 250)
+    }
+  })
+
+  return {
+    success: true,
+    isManager,
+    windowDays,
+    userNameFilter: targetUser,
+    totalStores,
+    visitedStores,
+    coveredStores,
+    uncoveredStores,
+    overallCoveragePercent,
+    salesGroups,
+    materials: materialBreakdown
+  }
+}
+
 // 加载产品库品牌名，用于从 competitiveAnalysis / productIdentification 识别「我方」排面
 async function loadOwnBrandNames() {
   const names = new Set()
@@ -736,6 +1051,16 @@ exports.main = async (event, context) => {
         openid,
         yearMonth: event.yearMonth,
         compareYearMonth: event.compareYearMonth
+      })
+    }
+
+    if (action === 'materialStats') {
+      return await handleMaterialStats({
+        isManager,
+        caller,
+        openid,
+        userNameFilter: event.userNameFilter,
+        days: event.days
       })
     }
 

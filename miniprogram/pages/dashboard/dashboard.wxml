@@ -107,6 +107,79 @@
     </block>
   </view>
 
+  <!-- 终端广告物料覆盖统计（如：业务员名下 200 家店，各有什么物料的有多少家） -->
+  <view class="section-card" wx:if="{{materialStats}}">
+    <view class="section-head">
+      <text class="section-title">终端广告物料覆盖</text>
+      <text class="section-action" wx:if="{{isManager}}" bindtap="goMaterialLibrary">管理物料库 ›</text>
+    </view>
+
+    <!-- 管理者可按业务员胶囊筛选（查看某业务员名下全部门店的物料覆盖） -->
+    <scroll-view
+      class="lv-user-scroll mat-user-scroll"
+      scroll-x="true"
+      enable-flex="true"
+      wx:if="{{isManager && materialStats.salesGroups && materialStats.salesGroups.length > 0}}"
+    >
+      <view class="lv-user-row">
+        <view
+          class="lv-user-pill {{!materialUserFilter ? 'active' : ''}}"
+          data-name=""
+          bindtap="onSelectMaterialUser"
+        >全部</view>
+        <view
+          class="lv-user-pill {{materialUserFilter === item.name ? 'active' : ''}}"
+          wx:for="{{materialStats.salesGroups}}"
+          wx:key="name"
+          data-name="{{item.name}}"
+          bindtap="onSelectMaterialUser"
+        >{{item.name}} ({{item.totalStores}}家)</view>
+      </view>
+    </scroll-view>
+
+    <!-- 核心覆盖指标：总客户数 / 已铺物料门店 / 未铺物料门店 -->
+    <view class="mat-summary-row">
+      <view class="mat-stat-box">
+        <text class="mat-stat-num">{{materialStats.totalStores}}</text>
+        <text class="mat-stat-lab">名下总门店</text>
+      </view>
+      <view class="mat-stat-box">
+        <text class="mat-stat-num ok">{{materialStats.coveredStores}} <text class="mat-stat-pct">({{materialStats.overallCoveragePercent}}%)</text></text>
+        <text class="mat-stat-lab">已有物料门店</text>
+      </view>
+      <view class="mat-stat-box">
+        <text class="mat-stat-num warn">{{materialStats.uncoveredStores}}</text>
+        <text class="mat-stat-lab">无物料空白店</text>
+      </view>
+    </view>
+
+    <!-- 各物料覆盖明细列表 -->
+    <view class="mat-list" wx:if="{{materialStats.materials && materialStats.materials.length > 0}}">
+      <view
+        class="mat-item"
+        wx:for="{{materialStats.materials}}"
+        wx:key="materialName"
+        data-index="{{index}}"
+        bindtap="onTapMaterialItem"
+      >
+        <view class="mat-item-head">
+          <view class="mat-item-title-wrap">
+            <text class="mat-item-name">{{item.materialName}}</text>
+            <text class="mat-item-cat" wx:if="{{item.category}}">{{item.category}}</text>
+          </view>
+          <text class="mat-item-count">{{item.storeCount}} / {{materialStats.totalStores}} 家 ({{item.coveragePercent}}%) ›</text>
+        </view>
+        <view class="mat-bar-bg">
+          <view class="mat-bar-fill" style="width: {{item.coveragePercent}}%;"></view>
+        </view>
+      </view>
+    </view>
+
+    <view class="store-empty" wx:else>
+      <text>暂未录入或识别到广告物料。管理员可点右上角「管理物料库」新增标准物料名称。</text>
+    </view>
+  </view>
+
   <view class="action-row">
     <button class="btn-primary action-btn" bindtap="goPhotoDetail">照片明细</button>
     <button class="btn-secondary action-btn" wx:if="{{isManager}}" bindtap="onRebuild" loading="{{rebuilding}}">立即重建统计</button>
@@ -195,6 +268,76 @@
     <view class="lv-footer">
       <button class="btn-secondary lv-footer-btn" bindtap="closeLowVisitModal">关闭</button>
       <button class="btn-primary lv-footer-btn" bindtap="copyLowVisitList">📋 复制未达标名单发群</button>
+    </view>
+  </view>
+
+  <!-- 广告物料门店明细抽屉（已铺设 vs 未铺设门店） -->
+  <view class="lv-mask" wx:if="{{showMaterialModal}}" bindtap="closeMaterialModal"></view>
+  <view class="lv-panel {{showMaterialModal ? 'show' : ''}}" wx:if="{{showMaterialModal && activeMaterial}}">
+    <view class="lv-header">
+      <view>
+        <text class="lv-title">🪧 {{activeMaterial.materialName}}</text>
+        <text class="lv-sub">覆盖 {{activeMaterial.storeCount}} / {{activeMaterial.totalStores}} 家门店（{{activeMaterial.coveragePercent}}%）</text>
+      </view>
+      <text class="lv-close" bindtap="closeMaterialModal">✕</text>
+    </view>
+
+    <view class="lv-filters">
+      <view class="mat-tab-row">
+        <view
+          class="mat-tab-btn {{materialModalTab === 'with' ? 'active' : ''}}"
+          data-tab="with"
+          bindtap="onSwitchMaterialModalTab"
+        >已铺设 ({{activeMaterial.storeCount}}家)</view>
+        <view
+          class="mat-tab-btn {{materialModalTab === 'without' ? 'active' : ''}}"
+          data-tab="without"
+          bindtap="onSwitchMaterialModalTab"
+        >未铺设 ({{activeMaterial.missingStoreCount}}家)</view>
+      </view>
+
+      <view class="lv-search-box">
+        <text class="lv-search-icon">🔍</text>
+        <input
+          class="lv-search-input"
+          placeholder="搜索门店名称或业务员"
+          value="{{materialModalKeyword}}"
+          bindinput="onMaterialModalKeywordInput"
+        />
+      </view>
+    </view>
+
+    <scroll-view class="lv-list-scroll" scroll-y="true">
+      <view class="lv-item" wx:for="{{materialModalList}}" wx:key="index">
+        <view class="lv-item-main">
+          <view class="lv-item-top">
+            <text class="lv-store-name">{{index + 1}}. {{item.storeName}}</text>
+            <text class="lv-visit-badge" wx:if="{{materialModalTab === 'with'}}">{{item.condition || '完好'}} · {{item.count || 1}}处</text>
+          </view>
+          <view class="lv-item-meta">
+            <text wx:if="{{item.userName}}">👤 {{item.userName}}</text>
+          </view>
+        </view>
+        <view class="lv-item-actions" wx:if="{{item.customerId}}">
+          <view
+            class="lv-act-btn primary"
+            data-id="{{item.customerId}}"
+            data-name="{{item.storeName}}"
+            bindtap="onInspectMaterialStorePhotos"
+          >🖼️ 照片</view>
+        </view>
+      </view>
+
+      <view class="lv-empty" wx:if="{{materialModalList.length === 0}}">
+        <text>没有匹配的门店</text>
+      </view>
+    </scroll-view>
+
+    <view class="lv-footer">
+      <button class="btn-secondary lv-footer-btn" bindtap="closeMaterialModal">关闭</button>
+      <button class="btn-primary lv-footer-btn" bindtap="copyMaterialStoreList">
+        📋 复制{{materialModalTab === 'with' ? '已铺设' : '未铺设'}}名单
+      </button>
     </view>
   </view>
 </view>

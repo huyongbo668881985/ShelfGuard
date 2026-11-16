@@ -16,9 +16,40 @@ const DEFAULT_PAGE_SIZE = 50
 const MAX_PAGE_SIZE = 100
 
 const EDITABLE_FIELDS = ['brandName', 'productLine', 'aliases', 'photos', 'isActive']
+const MATERIAL_EDITABLE_FIELDS = ['materialName', 'category', 'aliases', 'visualFeatures', 'photo', 'isActive']
+const MATERIAL_CATEGORIES = [
+  '灯箱',
+  'POP海报',
+  '台卡/桌贴',
+  '门头店招',
+  '冰柜贴/玻璃贴',
+  '堆头围挡',
+  '展示架/陈列架',
+  '条幅/吊旗',
+  '价签/跳跳卡',
+  '其他'
+]
 
 function isCloudFileId(v) {
   return typeof v === 'string' && v.indexOf('sg://') === 0
+}
+
+function sanitizeMaterialPhoto(photo) {
+  if (photo === '' || photo === null || photo === undefined) return ''
+  if (!isCloudFileId(photo)) {
+    throw new Error('物料参考照片必须是已上传的文件 ID')
+  }
+  return photo
+}
+
+function pickMaterialEditableFields(material) {
+  const picked = {}
+  MATERIAL_EDITABLE_FIELDS.forEach(key => {
+    if (material && material[key] !== undefined) {
+      picked[key] = material[key]
+    }
+  })
+  return picked
 }
 
 function sanitizePhotos(photos) {
@@ -103,10 +134,32 @@ async function buildPhotoUrlMap(list) {
   return urlMap
 }
 
+async function buildMaterialPhotoUrlMap(list) {
+  const photoIDs = []
+  for (const m of list) {
+    if (m && m.photo && isCloudFileId(m.photo)) {
+      photoIDs.push(m.photo)
+    }
+  }
+  const urlMap = {}
+  for (let i = 0; i < photoIDs.length; i += 50) {
+    const chunk = photoIDs.slice(i, i + 50)
+    try {
+      const fileRes = await cloud.getTempFileURL({ fileList: chunk })
+      fileRes.fileList.forEach(f => {
+        if (f.tempFileURL) urlMap[f.fileID] = f.tempFileURL
+      })
+    } catch (err) {
+      console.error('获取物料参考照临时链接失败:', err)
+    }
+  }
+  return urlMap
+}
+
 exports.main = async (event, context) => {
   const wxContext = cloud.getWXContext()
   const openid = wxContext.OPENID
-  const { action, product, productId } = event
+  const { action, product, productId, material, materialId } = event
 
   if (!openid) {
     return { success: false, error: '未获取到用户身份' }
@@ -235,6 +288,141 @@ exports.main = async (event, context) => {
           return { success: false, error: '缺少 productId' }
         }
         await db.collection('products').doc(productId).update({
+          data: { isActive: false, updatedAt: db.serverDate() }
+        })
+        return { success: true }
+      }
+
+      // 获取广告物料列表（默认只返回未下架的）
+      case 'listMaterials': {
+        const includeInactive = !!(event && event.includeInactive)
+        const query = includeInactive ? {} : { isActive: true }
+        const { limit, page, skip } = parsePaging(event)
+
+        const countRes = await db.collection('adMaterials').where(query).count()
+        const total = countRes.total || 0
+
+        const res = await db.collection('adMaterials')
+          .where(query)
+          .orderBy('createdAt', 'desc')
+          .skip(skip)
+          .limit(limit)
+          .get()
+
+        const urlMap = await buildMaterialPhotoUrlMap(res.data || [])
+        const list = (res.data || []).map(m => ({
+          ...m,
+          photoURL: (m.photo && urlMap[m.photo]) || ''
+        }))
+
+        return {
+          success: true,
+          list,
+          total,
+          page,
+          limit,
+          skip,
+          hasMore: skip + list.length < total,
+          categories: MATERIAL_CATEGORIES
+        }
+      }
+
+      // 新增广告物料
+      case 'addMaterial': {
+        if (!(await isAdmin(openid))) {
+          return { success: false, error: '只有管理员可以维护物料库' }
+        }
+        const materialName = material && typeof material.materialName === 'string'
+          ? material.materialName.trim()
+          : ''
+        if (!materialName) {
+          return { success: false, error: '缺少物料标准名称' }
+        }
+        let photo = ''
+        try {
+          photo = sanitizeMaterialPhoto(material.photo)
+        } catch (photoErr) {
+          return { success: false, error: photoErr.message }
+        }
+        const category = (material.category && MATERIAL_CATEGORIES.includes(material.category))
+          ? material.category
+          : '其他'
+        const addRes = await db.collection('adMaterials').add({
+          data: {
+            _openid: openid,
+            materialName,
+            category,
+            aliases: Array.isArray(material.aliases)
+              ? material.aliases.map(s => String(s || '').trim()).filter(Boolean)
+              : [],
+            visualFeatures: String(material.visualFeatures || '').trim(),
+            photo,
+            isActive: true,
+            createdAt: db.serverDate(),
+            updatedAt: db.serverDate()
+          }
+        })
+        return { success: true, _id: addRes._id }
+      }
+
+      // 更新广告物料
+      case 'updateMaterial': {
+        if (!(await isAdmin(openid))) {
+          return { success: false, error: '只有管理员可以维护物料库' }
+        }
+        if (!materialId) {
+          return { success: false, error: '缺少 materialId' }
+        }
+        const picked = pickMaterialEditableFields(material)
+        if (picked.materialName !== undefined) {
+          picked.materialName = String(picked.materialName || '').trim()
+          if (!picked.materialName) {
+            return { success: false, error: '物料标准名称不能为空' }
+          }
+        }
+        if (picked.category !== undefined && !MATERIAL_CATEGORIES.includes(picked.category)) {
+          picked.category = '其他'
+        }
+        if (picked.visualFeatures !== undefined) {
+          picked.visualFeatures = String(picked.visualFeatures || '').trim()
+        }
+        if (picked.aliases !== undefined) {
+          picked.aliases = Array.isArray(picked.aliases)
+            ? picked.aliases.map(s => String(s || '').trim()).filter(Boolean)
+            : []
+        }
+        let oldPhoto = ''
+        try {
+          const prev = await db.collection('adMaterials').doc(materialId).get()
+          oldPhoto = (prev.data && prev.data.photo) || ''
+        } catch (_) {}
+        if (picked.photo !== undefined) {
+          try {
+            picked.photo = sanitizeMaterialPhoto(picked.photo)
+          } catch (photoErr) {
+            return { success: false, error: photoErr.message }
+          }
+        }
+        const updateData = {
+          ...picked,
+          updatedAt: db.serverDate()
+        }
+        await db.collection('adMaterials').doc(materialId).update({ data: updateData })
+        if (picked.photo !== undefined && oldPhoto && isCloudFileId(oldPhoto) && picked.photo !== oldPhoto) {
+          await deleteCloudFiles([oldPhoto])
+        }
+        return { success: true }
+      }
+
+      // 下架广告物料（软删除）
+      case 'removeMaterial': {
+        if (!(await isAdmin(openid))) {
+          return { success: false, error: '只有管理员可以维护物料库' }
+        }
+        if (!materialId) {
+          return { success: false, error: '缺少 materialId' }
+        }
+        await db.collection('adMaterials').doc(materialId).update({
           data: { isActive: false, updatedAt: db.serverDate() }
         })
         return { success: true }

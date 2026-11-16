@@ -42,6 +42,7 @@ Page({
     photoTempPath: '',
     watermarkedPath: '',
     watermarkedPaths: [],
+    uploadPhotoPaths: [],
     previewIndex: 0,
     confirmBtnText: '下一步',
     showPreview: false,
@@ -107,6 +108,7 @@ Page({
 
   onShow() {
     this.refreshApprovalBanner()
+    this.loadImageMode()
     // 隐私授权补弹：app.js 的 wx.onNeedPrivacyAuthorize 拦截触发时，
     // 若当时弹窗组件尚未挂载会置 _privacyPending 标记，这里在页面显示时补弹一次
     if (app.globalData._privacyPending) {
@@ -368,8 +370,9 @@ Page({
   },
 
   // 完成拍照：1张直接走原来的单图水印流程；
-  // 流量优先(traffic)：多张拼成网格大图再打水印；
-  // 精度优先(quality)：跳过拼图，每张各自打水印后多 fileID 直传。
+  // 流量优先(traffic)：多张拼成网格大图再打水印，只上传这 1 张拼图；
+  // 精度优先(quality)：先拼成 1 张带水印网格大图（用于预览、存相册、发微信），
+  //                    同时每张原图各自打水印后作为多张高清图传给上传页供 AI 分析。
   async finishCapture() {
     const { capturedPhotos } = this.data
     if (capturedPhotos.length === 0) {
@@ -382,39 +385,43 @@ Page({
     try {
       const qualityMode = this.data.imageMode === 'quality' && capturedPhotos.length > 1
 
+      let sourcePath
+      if (capturedPhotos.length === 1) {
+        sourcePath = capturedPhotos[0]
+      } else {
+        const gridComp = this.selectComponent('#photoGridCanvas')
+        if (!gridComp) {
+          throw new Error('拼图组件未找到')
+        }
+        gridComp.setData({ imagePaths: capturedPhotos })
+        sourcePath = await gridComp.compose()
+      }
+
       if (qualityMode) {
-        // 精度优先：每张单独打水印，确认时带多路径去上传页
+        // 1. 先给拼好的网格大图打水印（用于预览、存入系统相册、发微信好友）
+        const stitchedWatermarked = await this.composeWatermarkPath(sourcePath)
+        // 2. 再为每张高清原图单独打水印，确认时传给上传页供 AI 逐张识别
         const watermarkedList = []
         for (let i = 0; i < capturedPhotos.length; i++) {
           const wm = await this.composeWatermarkPath(capturedPhotos[i])
           watermarkedList.push(wm)
         }
         this.setData({
-          photoTempPath: watermarkedList[0],
-          watermarkedPath: watermarkedList[0],
-          watermarkedPaths: watermarkedList,
+          photoTempPath: sourcePath,
+          watermarkedPath: stitchedWatermarked,
+          watermarkedPaths: [],
+          uploadPhotoPaths: watermarkedList,
           previewIndex: 0,
-          confirmBtnText: `下一步（${watermarkedList.length}张）`,
+          confirmBtnText: '下一步',
           composing: false
         })
-        // 合成成功后默认存入系统相册（不再展示手动存相册按钮）
-        this.autoSaveToAlbum(watermarkedList)
+        // 合成成功后只把拼好的这一张大图存入系统相册
+        this.autoSaveToAlbum([stitchedWatermarked])
       } else {
-        let sourcePath
-        if (capturedPhotos.length === 1) {
-          sourcePath = capturedPhotos[0]
-        } else {
-          const gridComp = this.selectComponent('#photoGridCanvas')
-          if (!gridComp) {
-            throw new Error('拼图组件未找到')
-          }
-          gridComp.setData({ imagePaths: capturedPhotos })
-          sourcePath = await gridComp.compose()
-        }
-
         this.setData({
           photoTempPath: sourcePath,
           watermarkedPaths: [],
+          uploadPhotoPaths: [],
           previewIndex: 0,
           confirmBtnText: '下一步'
         })
@@ -500,6 +507,7 @@ Page({
       photoTempPath: '',
       watermarkedPath: '',
       watermarkedPaths: [],
+      uploadPhotoPaths: [],
       previewIndex: 0,
       confirmBtnText: '下一步',
       showPreview: false,
@@ -797,8 +805,11 @@ Page({
 
   // 跳转到上传页
   navigateToUpload(location) {
-    const { watermarkedPath, watermarkedPaths, address, taskName, storeName, userName, selectedCustomerId, recordType } = this.data
-    const multi = Array.isArray(watermarkedPaths) && watermarkedPaths.length > 1
+    const { watermarkedPath, watermarkedPaths, uploadPhotoPaths, address, taskName, storeName, userName, selectedCustomerId, recordType } = this.data
+    const uploadList = (Array.isArray(uploadPhotoPaths) && uploadPhotoPaths.length > 1)
+      ? uploadPhotoPaths
+      : ((Array.isArray(watermarkedPaths) && watermarkedPaths.length > 1) ? watermarkedPaths : [])
+    const multi = uploadList.length > 1
     let url = `/pages/upload/upload?` +
       `lat=${location.latitude}` +
       `&lng=${location.longitude}` +
@@ -809,7 +820,10 @@ Page({
       `&customerId=${encodeURIComponent(selectedCustomerId || '')}` +
       `&recordType=${encodeURIComponent(recordType || 'visit')}`
     if (multi) {
-      url += `&photoPaths=${encodeURIComponent(JSON.stringify(watermarkedPaths))}`
+      url += `&photoPaths=${encodeURIComponent(JSON.stringify(uploadList))}`
+      if (watermarkedPath) {
+        url += `&sharePhotoPath=${encodeURIComponent(watermarkedPath)}`
+      }
     } else {
       url += `&photoPath=${encodeURIComponent(watermarkedPath)}`
     }
@@ -822,6 +836,7 @@ Page({
       photoTempPath: '',
       watermarkedPath: '',
       watermarkedPaths: [],
+      uploadPhotoPaths: [],
       previewIndex: 0,
       confirmBtnText: '下一步',
       showPreview: false

@@ -1,69 +1,149 @@
 <!--pages/products/products.wxml-->
 <view class="products-page">
 
-  <view class="page-hint">
-    <text>录入的品牌名、别名和参考照会用于 AI 识别货架照片时的比对，越准确，识别结果越可靠。</text>
-  </view>
-
-  <!-- 列表 -->
-  <view class="list-container" wx:if="{{list.length > 0}}">
-    <view class="product-card" wx:for="{{list}}" wx:key="_id">
-      <view class="card-photos">
-        <image
-          class="card-photo"
-          wx:for="{{['front','back','side']}}"
-          wx:for-item="slot"
-          wx:key="slot"
-          src="{{item.photoURLs[slot] || item.photos[slot]}}"
-          mode="aspectFill"
-          wx:if="{{item.photoURLs[slot] || item.photos[slot]}}"
-          data-url="{{item.photoURLs[slot] || item.photos[slot]}}"
-          bindtap="onPreviewPhoto"
-        ></image>
-        <view class="card-photo placeholder" wx:if="{{!item.photos.front}}">
-          <text>📦</text>
-        </view>
-      </view>
-
-      <view class="card-body">
-        <view class="card-header">
-          <text class="card-brand">{{item.brandName}}</text>
-          <text class="card-line" wx:if="{{item.productLine}}">{{item.productLine}}</text>
-        </view>
-
-        <view class="card-aliases" wx:if="{{item.aliases.length > 0}}">
-          <text class="alias-tag" wx:for="{{item.aliases}}" wx:key="*this" wx:for-item="alias">{{alias}}</text>
-        </view>
-
-        <view class="card-actions">
-          <block wx:if="{{isAdmin}}">
-            <text class="action-btn" data-item="{{item}}" bindtap="onEditProduct">编辑</text>
-            <text class="action-btn danger" data-item="{{item}}" bindtap="onRemoveProduct">下架</text>
-          </block>
-        </view>
-      </view>
+  <!-- 顶部 Tab 切换：白酒产品 vs 广告物料 -->
+  <view class="tab-bar">
+    <view
+      class="tab-item {{activeTab === 'products' ? 'active' : ''}}"
+      data-tab="products"
+      bindtap="onSwitchTab"
+    >
+      <text>白酒产品 ({{total}})</text>
+    </view>
+    <view
+      class="tab-item {{activeTab === 'materials' ? 'active' : ''}}"
+      data-tab="materials"
+      bindtap="onSwitchTab"
+    >
+      <text>广告物料 ({{materialTotal}})</text>
     </view>
   </view>
 
-  <view class="list-footer" wx:if="{{list.length > 0}}">
-    <text wx:if="{{loadingMore}}">加载中...</text>
-    <text wx:elif="{{hasMore}}">上拉加载更多（已加载 {{list.length}}/{{total}}）</text>
-    <text wx:else>已全部加载（共 {{total}} 条）</text>
+  <view class="page-hint" wx:if="{{activeTab === 'products'}}">
+    <text>录入的品牌名、别名和参考照会用于 AI 识别货架照片时的比对，越准确，识别结果越可靠。</text>
+  </view>
+  <view class="page-hint" wx:else>
+    <text>录入终端广告物料的标准名称、分类与视觉特征后，AI 会在每次拜访照片中自动识别并按标准名称统计全店覆盖率。</text>
   </view>
 
-  <!-- 空状态 -->
-  <view class="empty-state" wx:if="{{!loading && list.length === 0}}">
-    <text class="empty-icon">📦</text>
-    <text class="empty-text">还没有录入产品</text>
-    <text class="empty-hint">先加一个产品，AI 识别货架时会优先参考</text>
-  </view>
+  <!-- ==================== 白酒产品列表 ==================== -->
+  <block wx:if="{{activeTab === 'products'}}">
+    <view class="list-container" wx:if="{{list.length > 0}}">
+      <view class="product-card" wx:for="{{list}}" wx:key="_id">
+        <view class="card-photos">
+          <image
+            class="card-photo"
+            wx:for="{{['front','back','side']}}"
+            wx:for-item="slot"
+            wx:key="slot"
+            src="{{item.photoURLs[slot] || item.photos[slot]}}"
+            mode="aspectFill"
+            wx:if="{{item.photoURLs[slot] || item.photos[slot]}}"
+            data-url="{{item.photoURLs[slot] || item.photos[slot]}}"
+            bindtap="onPreviewPhoto"
+          ></image>
+          <view class="card-photo placeholder" wx:if="{{!item.photos.front}}">
+            <text>📦</text>
+          </view>
+        </view>
 
-  <view class="loading-state" wx:if="{{loading}}">
-    <text>加载中...</text>
-  </view>
+        <view class="card-body">
+          <view class="card-header">
+            <text class="card-brand">{{item.brandName}}</text>
+            <text class="card-line" wx:if="{{item.productLine}}">{{item.productLine}}</text>
+          </view>
+
+          <view class="card-aliases" wx:if="{{item.aliases.length > 0}}">
+            <text class="alias-tag" wx:for="{{item.aliases}}" wx:key="*this" wx:for-item="alias">{{alias}}</text>
+          </view>
+
+          <view class="card-actions">
+            <block wx:if="{{isAdmin}}">
+              <text class="action-btn" data-item="{{item}}" bindtap="onEditProduct">编辑</text>
+              <text class="action-btn danger" data-item="{{item}}" bindtap="onRemoveProduct">下架</text>
+            </block>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <view class="list-footer" wx:if="{{list.length > 0}}">
+      <text wx:if="{{loadingMore}}">加载中...</text>
+      <text wx:elif="{{hasMore}}">上拉加载更多（已加载 {{list.length}}/{{total}}）</text>
+      <text wx:else>已全部加载（共 {{total}} 条）</text>
+    </view>
+
+    <!-- 空状态 -->
+    <view class="empty-state" wx:if="{{!loading && list.length === 0}}">
+      <text class="empty-icon">📦</text>
+      <text class="empty-text">还没有录入产品</text>
+      <text class="empty-hint">先加一个产品，AI 识别货架时会优先参考</text>
+    </view>
+
+    <view class="loading-state" wx:if="{{loading}}">
+      <text>加载中...</text>
+    </view>
+  </block>
+
+  <!-- ==================== 广告物料列表 ==================== -->
+  <block wx:if="{{activeTab === 'materials'}}">
+    <view class="list-container" wx:if="{{materialList.length > 0}}">
+      <view class="product-card" wx:for="{{materialList}}" wx:key="_id">
+        <view class="card-photos">
+          <image
+            class="card-photo"
+            src="{{item.photoURL || item.photo}}"
+            mode="aspectFill"
+            wx:if="{{item.photoURL || item.photo}}"
+            data-url="{{item.photoURL || item.photo}}"
+            bindtap="onPreviewPhoto"
+          ></image>
+          <view class="card-photo placeholder" wx:else>
+            <text>🪧</text>
+          </view>
+        </view>
+
+        <view class="card-body">
+          <view class="card-header">
+            <text class="card-brand">{{item.materialName}}</text>
+            <text class="category-badge" wx:if="{{item.category}}">{{item.category}}</text>
+          </view>
+
+          <view class="card-features" wx:if="{{item.visualFeatures}}">
+            <text>{{item.visualFeatures}}</text>
+          </view>
+
+          <view class="card-aliases" wx:if="{{item.aliases && item.aliases.length > 0}}">
+            <text class="alias-tag" wx:for="{{item.aliases}}" wx:key="*this" wx:for-item="alias">{{alias}}</text>
+          </view>
+
+          <view class="card-actions">
+            <block wx:if="{{isAdmin}}">
+              <text class="action-btn" data-item="{{item}}" bindtap="onEditMaterial">编辑</text>
+              <text class="action-btn danger" data-item="{{item}}" bindtap="onRemoveMaterial">下架</text>
+            </block>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <view class="list-footer" wx:if="{{materialList.length > 0}}">
+      <text>共 {{materialTotal}} 种启用中的广告物料</text>
+    </view>
+
+    <view class="empty-state" wx:if="{{!materialLoading && materialList.length === 0}}">
+      <text class="empty-icon">🪧</text>
+      <text class="empty-text">还没有录入广告物料</text>
+      <text class="empty-hint">点击右下角 ＋ 录入物料标准名称与特征，AI 将自动统计各门店覆盖率</text>
+    </view>
+
+    <view class="loading-state" wx:if="{{materialLoading}}">
+      <text>加载中...</text>
+    </view>
+  </block>
 
   <!-- 悬浮新增按钮（仅管理员） -->
-  <view class="fab-btn" wx:if="{{isAdmin}}" bindtap="onAddProduct">
+  <view class="fab-btn" wx:if="{{isAdmin}}" bindtap="onTapFab">
     <text>＋</text>
   </view>
 
@@ -149,6 +229,93 @@
     <view class="editor-footer">
       <button class="btn-primary" bindtap="onSave" disabled="{{saving}}">
         {{saving ? '保存中...' : '保存'}}
+      </button>
+    </view>
+  </view>
+
+  <!-- 广告物料编辑面板 -->
+  <view class="editor-mask" wx:if="{{showMaterialEditor}}" bindtap="closeMaterialEditor"></view>
+  <view class="editor-panel {{showMaterialEditor ? 'show' : ''}}">
+    <view class="editor-header">
+      <text class="editor-title">{{editingMaterialId ? '编辑广告物料' : '新增广告物料'}}</text>
+      <text class="editor-close" bindtap="closeMaterialEditor">✕</text>
+    </view>
+
+    <scroll-view class="editor-content" scroll-y>
+      <view class="form-item">
+        <text class="form-label">物料标准名称 *</text>
+        <input
+          class="form-input"
+          style="color: #1a1a2e; background: #fff; height: 80rpx;"
+          placeholder="如：永丰特8方形红灯箱"
+          placeholder-style="color: #999;"
+          value="{{materialForm.materialName}}"
+          bindinput="onMaterialNameInput"
+        />
+        <text class="form-tip">统计 200 家门店物料覆盖率时将严格按此标准名称汇总</text>
+      </view>
+
+      <view class="form-item">
+        <text class="form-label">物料分类</text>
+        <view class="category-pills">
+          <view
+            class="cat-pill {{materialForm.category === item ? 'active' : ''}}"
+            wx:for="{{materialCategories}}"
+            wx:key="*this"
+            data-cat="{{item}}"
+            bindtap="onSelectMaterialCategory"
+          >{{item}}</view>
+        </view>
+      </view>
+
+      <view class="form-item">
+        <text class="form-label">视觉识别特征（供 AI 比对，越具体越准）</text>
+        <textarea
+          class="form-textarea"
+          placeholder="如：红底金字、方形发光灯箱，印有“永丰特8”字样及酒瓶图案，常挂于烟酒柜上方或收银台后方"
+          placeholder-style="color: #999;"
+          value="{{materialForm.visualFeatures}}"
+          bindinput="onMaterialFeaturesInput"
+          maxlength="200"
+        ></textarea>
+      </view>
+
+      <view class="form-item">
+        <text class="form-label">别名 / 近似叫法（用中文逗号分隔，可选）</text>
+        <input
+          class="form-input"
+          style="color: #1a1a2e; background: #fff; height: 80rpx;"
+          placeholder="如：特8灯箱，红色亚克力灯箱"
+          placeholder-style="color: #999;"
+          value="{{materialForm.aliasesText}}"
+          bindinput="onMaterialAliasesInput"
+        />
+      </view>
+
+      <view class="form-item">
+        <text class="form-label">物料参考照片（可选）</text>
+        <view class="photo-slots">
+          <view class="photo-slot" bindtap="onChooseMaterialPhoto" wx:if="{{!materialForm.photo}}">
+            <text class="slot-icon">📷</text>
+            <text class="slot-label">上传实物图</text>
+          </view>
+          <view class="photo-slot filled" wx:else>
+            <image
+              class="slot-img"
+              src="{{materialForm.photoURL || materialForm.photo}}"
+              mode="aspectFill"
+              data-url="{{materialForm.photoURL || materialForm.photo}}"
+              bindtap="onPreviewPhoto"
+            ></image>
+            <text class="slot-remove" bindtap="onRemoveMaterialPhoto">✕</text>
+          </view>
+        </view>
+      </view>
+    </scroll-view>
+
+    <view class="editor-footer">
+      <button class="btn-primary" bindtap="onSaveMaterial" disabled="{{savingMaterial}}">
+        {{savingMaterial ? '保存中...' : '保存物料'}}
       </button>
     </view>
   </view>

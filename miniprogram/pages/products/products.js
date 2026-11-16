@@ -5,6 +5,7 @@
 const api = require('../../utils/api')
 Page({
   data: {
+    activeTab: 'products', // 'products' | 'materials'
     loading: true,
     list: [],
     page: 1,
@@ -13,7 +14,24 @@ Page({
     hasMore: false,
     loadingMore: false,
 
-    // 编辑面板状态
+    // 广告物料列表状态
+    materialLoading: false,
+    materialList: [],
+    materialTotal: 0,
+    materialCategories: [
+      '灯箱',
+      'POP海报',
+      '台卡/桌贴',
+      '门头店招',
+      '冰柜贴/玻璃贴',
+      '堆头围挡',
+      '展示架/陈列架',
+      '条幅/吊旗',
+      '价签/跳跳卡',
+      '其他'
+    ],
+
+    // 产品编辑面板状态
     showEditor: false,
     editingId: '', // 空字符串表示"新增"，非空表示"编辑"
     form: {
@@ -32,14 +50,30 @@ Page({
       }
     },
     saving: false,
+
+    // 物料编辑面板状态
+    showMaterialEditor: false,
+    editingMaterialId: '',
+    materialForm: {
+      materialName: '',
+      category: '灯箱',
+      visualFeatures: '',
+      aliasesText: '',
+      photo: '',
+      photoURL: ''
+    },
+    savingMaterial: false,
+
     isAdmin: false
   },
 
-  onLoad() {
+  onLoad(options) {
     const app = getApp()
     const role = (app.globalData.userInfo && app.globalData.userInfo.role) || app.globalData.userRole || 'sales'
-    this.setData({ isAdmin: role === 'admin' })
+    const activeTab = (options && options.tab === 'materials') ? 'materials' : 'products'
+    this.setData({ isAdmin: role === 'admin', activeTab })
     this.loadProducts()
+    this.loadMaterials()
   },
 
   onShow() {
@@ -49,12 +83,32 @@ Page({
   },
 
   onPullDownRefresh() {
-    this.loadProducts({ reset: true }).finally(() => wx.stopPullDownRefresh())
+    const p = this.data.activeTab === 'materials'
+      ? this.loadMaterials()
+      : this.loadProducts({ reset: true })
+    p.finally(() => wx.stopPullDownRefresh())
   },
 
   onReachBottom() {
-    if (this.data.hasMore && !this.data.loadingMore && !this.data.loading) {
+    if (this.data.activeTab === 'products' && this.data.hasMore && !this.data.loadingMore && !this.data.loading) {
       this.loadProducts({ append: true })
+    }
+  },
+
+  onSwitchTab(e) {
+    const tab = e.currentTarget.dataset.tab
+    if (!tab || tab === this.data.activeTab) return
+    this.setData({ activeTab: tab })
+    if (tab === 'materials' && this.data.materialList.length === 0) {
+      this.loadMaterials()
+    }
+  },
+
+  onTapFab() {
+    if (this.data.activeTab === 'materials') {
+      this.onAddMaterial()
+    } else {
+      this.onAddProduct()
     }
   },
 
@@ -304,6 +358,214 @@ Page({
           }
         } catch (err) {
           console.error('下架产品失败:', err)
+          wx.showToast({ title: '操作失败，请重试', icon: 'none' })
+        }
+      }
+    })
+  },
+
+  // ============================================================
+  // 广告物料管理
+  // ============================================================
+  async loadMaterials() {
+    this.setData({ materialLoading: true })
+    try {
+      const res = await api.callFunction({
+        name: 'products',
+        data: { action: 'listMaterials', limit: 100 }
+      })
+      if (res.result && res.result.success) {
+        const materialList = res.result.list || []
+        const updatePayload = {
+          materialList,
+          materialTotal: res.result.total || materialList.length,
+          materialLoading: false
+        }
+        if (Array.isArray(res.result.categories) && res.result.categories.length > 0) {
+          updatePayload.materialCategories = res.result.categories
+        }
+        this.setData(updatePayload)
+      } else {
+        this.setData({ materialLoading: false })
+      }
+    } catch (err) {
+      console.error('加载广告物料库失败:', err)
+      this.setData({ materialLoading: false })
+    }
+  },
+
+  onAddMaterial() {
+    if (!this.data.isAdmin) {
+      wx.showToast({ title: '仅管理员可维护物料库', icon: 'none' })
+      return
+    }
+    this.setData({
+      showMaterialEditor: true,
+      editingMaterialId: '',
+      materialForm: {
+        materialName: '',
+        category: '灯箱',
+        visualFeatures: '',
+        aliasesText: '',
+        photo: '',
+        photoURL: ''
+      }
+    })
+  },
+
+  onEditMaterial(e) {
+    if (!this.data.isAdmin) {
+      wx.showToast({ title: '仅管理员可维护物料库', icon: 'none' })
+      return
+    }
+    const item = e.currentTarget.dataset.item
+    this.setData({
+      showMaterialEditor: true,
+      editingMaterialId: item._id,
+      materialForm: {
+        materialName: item.materialName || '',
+        category: item.category || '其他',
+        visualFeatures: item.visualFeatures || '',
+        aliasesText: (item.aliases || []).join('，'),
+        photo: item.photo || '',
+        photoURL: item.photoURL || item.photo || ''
+      }
+    })
+  },
+
+  closeMaterialEditor() {
+    if (this.data.savingMaterial) return
+    this.setData({ showMaterialEditor: false })
+  },
+
+  onMaterialNameInput(e) {
+    this.setData({ 'materialForm.materialName': e.detail.value })
+  },
+
+  onSelectMaterialCategory(e) {
+    const cat = e.currentTarget.dataset.cat
+    if (!cat) return
+    this.setData({ 'materialForm.category': cat })
+  },
+
+  onMaterialFeaturesInput(e) {
+    this.setData({ 'materialForm.visualFeatures': e.detail.value })
+  },
+
+  onMaterialAliasesInput(e) {
+    this.setData({ 'materialForm.aliasesText': e.detail.value })
+  },
+
+  async onChooseMaterialPhoto() {
+    if (!this.data.isAdmin) return
+    try {
+      const chooseRes = await wx.chooseMedia({
+        count: 1,
+        mediaType: ['image'],
+        sizeType: ['compressed'],
+        sourceType: ['album', 'camera']
+      })
+      const tempPath = chooseRes.tempFiles[0].tempFilePath
+      this.setData({
+        'materialForm.photo': tempPath,
+        'materialForm.photoURL': tempPath
+      })
+    } catch (err) {
+      if (err && err.errMsg && err.errMsg.includes('cancel')) return
+      console.error('选择物料参考照失败:', err)
+      wx.showToast({ title: '选择失败，请重试', icon: 'none' })
+    }
+  },
+
+  onRemoveMaterialPhoto() {
+    this.setData({
+      'materialForm.photo': '',
+      'materialForm.photoURL': ''
+    })
+  },
+
+  async onSaveMaterial() {
+    const { materialForm, editingMaterialId } = this.data
+    const materialName = (materialForm.materialName || '').trim()
+    if (!materialName) {
+      wx.showToast({ title: '请填写物料标准名称', icon: 'none' })
+      return
+    }
+
+    const aliases = (materialForm.aliasesText || '')
+      .split(/[，,]/)
+      .map(s => s.trim())
+      .filter(Boolean)
+
+    this.setData({ savingMaterial: true })
+    try {
+      wx.showLoading({ title: '保存中...', mask: true })
+      let photo = materialForm.photo || ''
+      if (photo && typeof photo === 'string' && photo.indexOf('sg://') !== 0 && photo.indexOf('cloud://') !== 0) {
+        const cloudPath = `products/material-${Date.now()}-${Math.random().toString(36).substr(2, 6)}.jpg`
+        const uploadRes = await api.uploadFile({ cloudPath, filePath: photo })
+        photo = uploadRes.fileID
+      }
+
+      const materialPayload = {
+        materialName,
+        category: materialForm.category || '其他',
+        visualFeatures: (materialForm.visualFeatures || '').trim(),
+        aliases,
+        photo
+      }
+
+      const res = await api.callFunction({
+        name: 'products',
+        data: editingMaterialId
+          ? { action: 'updateMaterial', materialId: editingMaterialId, material: materialPayload }
+          : { action: 'addMaterial', material: materialPayload }
+      })
+
+      if (res.result && res.result.success) {
+        wx.showToast({ title: '已保存', icon: 'success' })
+        this.setData({ showMaterialEditor: false })
+        this.loadMaterials()
+      } else {
+        wx.showToast({ title: (res.result && res.result.error) || '保存失败', icon: 'none' })
+      }
+    } catch (err) {
+      console.error('保存广告物料失败:', err)
+      wx.showToast({ title: '保存失败，请重试', icon: 'none' })
+    } finally {
+      wx.hideLoading()
+      this.setData({ savingMaterial: false })
+    }
+  },
+
+  onRemoveMaterial(e) {
+    if (!this.data.isAdmin) {
+      wx.showToast({ title: '仅管理员可维护物料库', icon: 'none' })
+      return
+    }
+    const item = e.currentTarget.dataset.item
+    wx.showModal({
+      title: '下架物料',
+      content: `确定要下架「${item.materialName}」吗？下架后新拜访将不再统计该物料。`,
+      success: async (res) => {
+        if (!res.confirm) return
+        try {
+          const result = await api.callFunction({
+            name: 'products',
+            data: { action: 'removeMaterial', materialId: item._id }
+          })
+          if (result.result && result.result.success) {
+            wx.showToast({ title: '已下架', icon: 'success' })
+            const nextList = this.data.materialList.filter(x => x._id !== item._id)
+            this.setData({
+              materialList: nextList,
+              materialTotal: Math.max(0, this.data.materialTotal - 1)
+            })
+          } else {
+            wx.showToast({ title: '操作失败', icon: 'none' })
+          }
+        } catch (err) {
+          console.error('下架广告物料失败:', err)
           wx.showToast({ title: '操作失败，请重试', icon: 'none' })
         }
       }

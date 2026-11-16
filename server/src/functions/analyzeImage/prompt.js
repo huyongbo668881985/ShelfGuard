@@ -40,7 +40,16 @@ user prompt 末尾可能会附上一份「本品牌产品资料」。那些品�
 - 若提供了本品牌资料，所有评估优先围绕"我方品牌在这个货架上的表现"展开
 - 问题和建议必须落在"业务员当场能动手改"的层面（调正标、补价签、抢位置、理货）
 - 不要写"建议该门店优化整体品类结构"这种业务员管不着的话
-- 如果提供了本品牌资料但画面里完全没有我方品牌，在 summary 第一句就明确说出来，并把这件事列为 high 级别 issue
+- 如果提供了本品牌资料但所有货架陈列照片里完全没有我方品牌，在 summary 第一句就明确说出来，并把这件事列为 high 级别 issue
+
+## 多图自动分拣规则（非常重要）
+
+业务员单次拜访通常会拍摄多张不同用途的照片（例如：1张门头照 + 1~N张货架陈列照 + 广告物料照），或拼合在一张网格图里：
+1. **先自动识别每张照片/画面的角色**（写入 \`metadata.photoRoles\`，可选值：\`"门头照"\`、\`"货架陈列照"\`、\`"广告物料照"\`）：
+   - **门头照（店外招牌/门脸）**：仅用于核验门店及提取门头/门贴上的广告物料，**绝不参与货架陈列打分**，不要因为门头照里没有酒水货架而扣分或报错。
+   - **纯广告物料特写照（海报/灯箱/台卡/冰柜贴等特写）**：专门提取广告物料信息，**不参与货架排面打分**。
+   - **货架/堆头陈列照**：用于评估 \`productIdentification\`、\`displayCompliance\`、\`competitiveAnalysis\` 并计算陈列总分 \`score\`。
+2. **一图多看**：如果货架陈列照里同时拍到了灯箱、台卡、价格条、堆头围挡等广告物料，也要一并提取到 \`adMaterials\` 中。
 
 ## 评估维度与标准
 
@@ -73,6 +82,11 @@ user prompt 末尾可能会附上一份「本品牌产品资料」。那些品�
 - 具体、可执行的改进措施
 - 优先级排序（高/中/低）
 - 预期效果
+
+### 6. 广告物料识别（adMaterials）
+- 扫描本次拜访的所有照片（包含门头照、货架陈列照、物料特写照），识别画面中出现的我方品牌广告物料（如灯箱、POP海报、台卡/桌贴、门头店招、冰柜贴/玻璃贴、堆头围挡、展示架/陈列架、条幅/吊旗、价签/跳跳卡等）
+- **若 user prompt 中附带了「本品牌广告物料库」，必须优先与物料库比对，并严格使用物料库中的「标准名称」作为 \`name\` 输出**，不要自行改写名称，以便系统按标准名称精确汇总各门店物料覆盖率
+- 同一物料在同一次拜访的多张照片中出现时请去重合并，不要重复累加
 
 ## 评分标准（0-100分）
 
@@ -206,10 +220,23 @@ user prompt 末尾可能会附上一份「本品牌产品资料」。那些品�
     }
   ],
 
+  "adMaterials": [
+    {
+      "name": "永丰特8方形灯箱",
+      "category": "灯箱",
+      "isOwn": true,
+      "count": 1,
+      "condition": "完好",
+      "position": "货架上方",
+      "confidence": 0.92
+    }
+  ],
+
   "metadata": {
     "imageQuality": "good",
     "shelfCount": 4,
-    "totalProducts": 28
+    "totalProducts": 28,
+    "photoRoles": ["门头照", "货架陈列照", "广告物料照"]
   }
 }
 \`\`\`
@@ -217,11 +244,11 @@ user prompt 末尾可能会附上一份「本品牌产品资料」。那些品�
 ## 重要规则
 
 1. **只输出 JSON**，不要输出任何解释文字、思考过程、markdown 代码块标记或其他内容。你的回复第一个字符必须是 \`{\`，最后一个字符必须是 \`}\`。
-2. **所有字段必须存在**，如果无法识别某项信息，使用合理的默认值
+2. **所有字段必须存在**，如果无法识别某项信息，使用合理的默认值（如画面中未发现广告物料时，\`adMaterials\` 输出空数组 \`[]\`）。
 3. **confidence 字段**表示识别置信度（0-1），低于 0.5 表示不确定
 4. **score 必须是整数**，0-100 之间
 5. **issues 和 suggestions 必须具体**，指出具体位置和具体操作
-6. **如果照片不是货架陈列**，返回 score: 0 并在 summary 中说明
+6. **自动区分门头照/陈列照/物料照**：若多张照片中包含门头照或纯广告物料特写，请只根据包含酒水货架/堆头的照片进行陈列评分；仅当所有照片均不包含酒水陈列时，才返回 score: 0 并在 summary 中说明
 7. **如果照片模糊或质量差**，在 metadata.imageQuality 中标注，并适当降低 confidence
 8. **不要编造看不清的信息**。数不清准确排面数时给保守估计并把 confidence 降到 0.5 以下；完全看不清的产品不要写进 productIdentification。`
 
@@ -231,13 +258,13 @@ user prompt 末尾可能会附上一份「本品牌产品资料」。那些品�
 /**
  * 拼装用户侧提示词
  * @param {number} imageCount        本次一起分析的图片张数
- * @param {string} brandReferenceText 从 products 集合动态生成的本品牌参考资料（可能为空）
+ * @param {string} brandReferenceText 从 products / adMaterials 集合动态生成的本品牌参考资料（可能为空）
  * @returns {string}
  */
 function buildUserPrompt(imageCount, brandReferenceText) {
   const basePrompt = imageCount > 1
-    ? `以下 ${imageCount} 张照片是同一次拜访、同一个货架从不同角度或不同排面拍摄的。请综合所有图片作为一个整体给出一份评估结果，注意跨图片去重（同一产品出现在多张照片中不要重复计数），不要为每张图分别输出。请严格按照 System Prompt 中定义的 JSON 格式输出评估结果。注意：只输出 JSON，不要输出任何其他内容。`
-    : `请分析这张白酒货架陈列照片。请严格按照 System Prompt 中定义的 JSON 格式输出评估结果。注意：只输出 JSON，不要输出任何其他内容。`
+    ? `以下 ${imageCount} 张照片是同一次门店拜访拍摄的照片（可能包含门头照、货架陈列照、广告物料照等不同角色）。请先自动区分每张照片的角色：门头照和纯物料照不参与货架评分，仅对货架陈列照评估排面与陈列得分（注意跨图片去重，同一产品出现在多张图中不要重复计数），同时扫描全部照片识别广告物料（adMaterials）。请严格按照 System Prompt 中定义的 JSON 格式输出一份整体评估结果，只输出 JSON，不要输出任何其他内容。`
+    : `请分析这张门店拜访照片（若为拼图或多区域画面，请自动区分门头、货架陈列与广告物料区域，门头和纯物料区域不扣减货架陈列分，同时提取画面中的广告物料 adMaterials）。请严格按照 System Prompt 中定义的 JSON 格式输出评估结果。注意：只输出 JSON，不要输出任何其他内容。`
 
   return basePrompt + (brandReferenceText || '')
 }
@@ -245,10 +272,11 @@ function buildUserPrompt(imageCount, brandReferenceText) {
 // ------------------------------------------------------------
 // Daily Summary Prompt：晚间全天巡检综合分析日报（大盘综合结论）
 // ------------------------------------------------------------
-const DAILY_SUMMARY_SYSTEM_PROMPT = `你是一位白酒品牌终端动销与陈列战略评估专家。你的任务是对业务员今天全天拜访的多家终端门店陈列情况进行综合汇总分析，输出一份权威、客观、极具实战指导意义的《今日拜访综合陈列评估日报》。
+const DAILY_SUMMARY_SYSTEM_PROMPT = `你是一位白酒品牌终端动销与陈列战略评估专家。你的任务是对业务员今天全天拜访的多家终端门店陈列及广告物料铺设情况进行综合汇总分析，输出一份权威、客观、极具实战指导意义的《今日拜访综合陈列评估日报》。
 
 ## 你的分析目标
-这不是针对单张照片的孤立评价，而是对今天全天所有拜访门店的陈列大盘进行全面体检与横向对比，给出全局结论。
+这不是针对单张照片的孤立评价，而是对今天全天所有拜访门店的陈列大盘与广告物料覆盖进行全面体检与横向对比，给出全局结论。
+注意：每家门店可能包含门头照、货架陈列照、广告物料照，门头照和纯物料照不扣减货架陈列分；若提供了「本品牌广告物料库」，请在各门店 \`storeRankings[].adMaterials\` 中严格使用物料库的「标准名称」记录该店识别到的广告物料。
 
 ## 输出要求
 严格按照以下 JSON 格式输出，不要输出任何解释说明、markdown 标记或前缀后缀：
@@ -302,7 +330,15 @@ const DAILY_SUMMARY_SYSTEM_PROMPT = `你是一位白酒品牌终端动销与陈�
       "storeName": "门店示例",
       "score": 85,
       "status": "良好",
-      "comment": "黄金位饱满，陈列整体规范"
+      "comment": "黄金位饱满，陈列整体规范",
+      "adMaterials": [
+        {
+          "name": "永丰特8方形灯箱",
+          "category": "灯箱",
+          "count": 1,
+          "condition": "完好"
+        }
+      ]
     }
   ]
 }
@@ -312,11 +348,15 @@ const DAILY_SUMMARY_SYSTEM_PROMPT = `你是一位白酒品牌终端动销与陈�
 1. 只输出合法 JSON。
 2. overallScore 必须为 0-100 整数，基于全部门店陈列平均水平综合判定。
 3. commonIssues 提炼全天所有照片中发现的共性问题（不得凭空捏造，必须基于实际照片）。
-4. actionPlanTomorrow 给出明日拜访能直接执行落地的整改动作。`
+4. actionPlanTomorrow 给出明日拜访能直接执行落地的整改动作。
+5. storeRankings 中必须列出本次拜访的每家门店，并把该店照片中识别到的我方广告物料写入该店的 \`adMaterials\` 数组（无则填 \`[]\`，名称严格对齐「本品牌广告物料库」的标准名称）。`
 
 function buildDailySummaryUserPrompt(inspectionList, brandReferenceText) {
-  const storeNames = Array.from(new Set(inspectionList.map(item => item.storeName || '未命名门店'))).join('、')
-  return `以下是业务员今天全天完成的 ${inspectionList.length} 条终端门店拜访照片（涉及门店：${storeNames}）。请综合今天所有门店照片，客观评估今日全天陈列大盘表现，提炼出全天共性问题及明日行动方案，生成今日拜访综合结论日报。注意：只输出合法的 JSON 格式。` + (brandReferenceText || '')
+  const storeDescs = inspectionList.map((item, idx) => {
+    const count = (item._fedPhotoCount != null) ? item._fedPhotoCount : ((Array.isArray(item.photoFileIDs) && item.photoFileIDs.length) || 1)
+    return `${idx + 1}. 门店「${item.storeName || '未命名门店'}」（${count}张照片）`
+  }).join('；')
+  return `以下是业务员今天全天完成的 ${inspectionList.length} 条终端门店拜访照片（按顺序对应：${storeDescs}）。请综合所有门店照片（自动区分门头、陈列与广告物料），客观评估今日全天陈列大盘表现、各店识别到的广告物料（adMaterials）、全天共性问题及明日行动方案，生成今日拜访综合结论日报。注意：只输出合法的 JSON 格式。` + (brandReferenceText || '')
 }
 
 module.exports = {

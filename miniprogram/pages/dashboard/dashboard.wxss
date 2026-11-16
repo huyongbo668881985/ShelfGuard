@@ -518,3 +518,135 @@
   height: 80rpx;
   line-height: 80rpx;
 }
+
+.mat-user-scroll {
+  margin-top: 12rpx;
+  margin-bottom: 16rpx;
+}
+
+.mat-summary-row {
+  display: flex;
+  gap: 16rpx;
+  margin: 16rpx 0 24rpx;
+}
+
+.mat-stat-box {
+  flex: 1;
+  background: #F8FAFC;
+  border-radius: 14rpx;
+  padding: 18rpx 12rpx;
+  text-align: center;
+  border: 1rpx solid #EEF1F5;
+}
+
+.mat-stat-num {
+  display: block;
+  font-size: 32rpx;
+  font-weight: 700;
+  color: #1F2933;
+}
+
+.mat-stat-num.ok {
+  color: #2E7D32;
+}
+
+.mat-stat-num.warn {
+  color: #D97706;
+}
+
+.mat-stat-pct {
+  font-size: 22rpx;
+  font-weight: 500;
+}
+
+.mat-stat-lab {
+  display: block;
+  margin-top: 6rpx;
+  font-size: 22rpx;
+  color: #627D98;
+}
+
+.mat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 20rpx;
+}
+
+.mat-item {
+  background: #F8FAFC;
+  border-radius: 14rpx;
+  padding: 20rpx 22rpx;
+  border: 1rpx solid #EEF1F5;
+}
+
+.mat-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12rpx;
+  margin-bottom: 12rpx;
+}
+
+.mat-item-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  min-width: 0;
+}
+
+.mat-item-name {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #1F2933;
+}
+
+.mat-item-cat {
+  font-size: 20rpx;
+  padding: 2rpx 12rpx;
+  border-radius: 999rpx;
+  background: #EEF2FF;
+  color: #4338CA;
+}
+
+.mat-item-count {
+  font-size: 24rpx;
+  font-weight: 600;
+  color: #1C3D5A;
+  flex-shrink: 0;
+}
+
+.mat-bar-bg {
+  height: 12rpx;
+  border-radius: 999rpx;
+  background: #E4E7EB;
+  overflow: hidden;
+}
+
+.mat-bar-fill {
+  height: 100%;
+  border-radius: 999rpx;
+  background: linear-gradient(90deg, #2563EB, #10B981);
+}
+
+.mat-tab-row {
+  display: flex;
+  background: #E4E7EB;
+  border-radius: 12rpx;
+  padding: 6rpx;
+  margin-bottom: 16rpx;
+}
+
+.mat-tab-btn {
+  flex: 1;
+  text-align: center;
+  padding: 12rpx 0;
+  font-size: 26rpx;
+  color: #486581;
+  border-radius: 10rpx;
+}
+
+.mat-tab-btn.active {
+  background: #fff;
+  color: #1C3D5A;
+  font-weight: 700;
+}
