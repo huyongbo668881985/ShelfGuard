@@ -57,14 +57,15 @@ function clearMapFailure(ip) {
 }
 
 function checkWebMapPasscode(req, res) {
-  const requiredPass = (process.env.WEB_MAP_PASSWORD || '').trim()
-  if (!requiredPass) {
+  const adminPass = (process.env.WEB_MAP_PASSWORD || '').trim()
+  const managerPass = (process.env.WEB_MAP_MANAGER_PASSWORD || '').trim()
+  if (!adminPass && !managerPass) {
     res.status(503).json({
       success: false,
       needPasscode: true,
       error: '服务器尚未配置 WEB_MAP_PASSWORD 访问口令'
     })
-    return false
+    return null
   }
   const ip = clientIpOf(req)
   if (isMapRateLimited(ip)) {
@@ -73,21 +74,25 @@ function checkWebMapPasscode(req, res) {
       needPasscode: true,
       error: '密码尝试次数过多，请 5 分钟后再试'
     })
-    return false
+    return null
   }
   // 仅从请求头读取口令，避免 URL query 泄露到访问日志或浏览器历史记录
   const provided = String(req.headers['x-map-key'] || '').trim()
-  if (!provided || !safeEqual(provided, requiredPass)) {
-    if (provided) recordMapFailure(ip)
-    res.status(401).json({
-      success: false,
-      needPasscode: true,
-      error: '请输入访问口令'
-    })
-    return false
+  if (provided && adminPass && safeEqual(provided, adminPass)) {
+    clearMapFailure(ip)
+    return { includeAdmin: true }
   }
-  clearMapFailure(ip)
-  return true
+  if (provided && managerPass && safeEqual(provided, managerPass)) {
+    clearMapFailure(ip)
+    return { includeAdmin: false }
+  }
+  if (provided) recordMapFailure(ip)
+  res.status(401).json({
+    success: false,
+    needPasscode: true,
+    error: '请输入访问口令'
+  })
+  return null
 }
 
 function extractSharePercent(aiReport) {
@@ -109,7 +114,9 @@ function extractSharePercent(aiReport) {
 }
 
 async function mapRouteApiHandler(req, res) {
-  if (!checkWebMapPasscode(req, res)) return
+  const auth = checkWebMapPasscode(req, res)
+  if (!auth) return
+  const includeAdmin = !!auth.includeAdmin
 
   try {
     const dateStr = typeof req.query.date === 'string' ? req.query.date.trim() : ''
@@ -136,13 +143,18 @@ async function mapRouteApiHandler(req, res) {
       .limit(800)
       .get()
 
-    const allDayRecords = dayRes.data || []
+    let allDayRecords = dayRes.data || []
 
     // 汇总人员列表：在职已审批人员 + 当日有记录的人员
     const userMap = new Map()
+    const adminOpenids = new Set()
     try {
       const uRes = await db.collection('users').orderBy('createdAt', 'asc').limit(200).get()
       ;(uRes.data || []).forEach(u => {
+        if (u.role === 'admin' && u._openid) {
+          adminOpenids.add(u._openid)
+        }
+        if (!includeAdmin && u.role === 'admin') return
         if (u.disabled) return
         const isApproved = u.approved === true || (
           (u.approved === undefined || u.approved === null) &&
@@ -164,6 +176,10 @@ async function mapRouteApiHandler(req, res) {
       })
     } catch (e) {
       console.warn('[web-map] 读取用户列表失败:', e.message)
+    }
+
+    if (!includeAdmin && adminOpenids.size > 0) {
+      allDayRecords = allDayRecords.filter(r => !(r._openid && adminOpenids.has(r._openid)))
     }
 
     allDayRecords.forEach(r => {
@@ -317,6 +333,7 @@ async function mapRouteApiHandler(req, res) {
 
     return res.json({
       success: true,
+      mapScope: includeAdmin ? 'admin' : 'manager',
       selectedUserId,
       selectedUserName,
       usersList,
@@ -361,7 +378,9 @@ function formatTimeHM(dt) {
 }
 
 async function exportLedgerApiHandler(req, res) {
-  if (!checkWebMapPasscode(req, res)) return
+  const auth = checkWebMapPasscode(req, res)
+  if (!auth) return
+  const includeAdmin = !!auth.includeAdmin
 
   try {
     const scope = req.query.scope === 'month' ? 'month' : 'day'
@@ -400,10 +419,15 @@ async function exportLedgerApiHandler(req, res) {
     // 加载在册用户信息（映射 openid / userId -> 姓名与部门）
     const userByOpenid = new Map()
     const userById = new Map()
+    const adminOpenids = new Set()
     try {
       const uRes = await db.collection('users').orderBy('createdAt', 'asc').limit(500).get()
       ;(uRes.data || []).forEach(u => {
         if (!u) return
+        if (u.role === 'admin' && u._openid) {
+          adminOpenids.add(u._openid)
+        }
+        if (!includeAdmin && u.role === 'admin') return
         const info = {
           userId: u._id || u._openid || '',
           _openid: u._openid || '',
@@ -427,6 +451,9 @@ async function exportLedgerApiHandler(req, res) {
       .limit(5000)
       .get()
     let records = recRes.data || []
+    if (!includeAdmin && adminOpenids.size > 0) {
+      records = records.filter(r => !(r._openid && adminOpenids.has(r._openid)))
+    }
 
     // 若指定了单人且不是 __ALL__，按人员过滤
     if (reqUserId && reqUserId !== '__ALL__') {

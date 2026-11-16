@@ -4,8 +4,8 @@
 // 权限模型：
 // - 普通业务员（role: 'sales' 或未设置）：无论前端传什么筛选参数，服务端都强制
 //   只返回自己（_openid）的记录——这是修过的漏洞，不能再开回去。
-// - 管理者（role: 'admin' / 'manager'）：可以看全部业务员的记录，也可以传
-//   targetUserName 只看某个业务员的。
+// - 管理者（role: 'manager'）：可以看 manager / sales 的记录，不可看 admin 的记录。
+// - 管理员（role: 'admin'）：可以看全部人员的记录，也可以传 targetUserName 只看某个人。
 // 角色永远从服务端 users 表按 openid 查出来，不信任客户端传的任何角色声明。
 
 const cloud = require('../../cloud-shim')
@@ -66,13 +66,24 @@ async function getCaller(openid) {
   }
 }
 
+async function loadAdminOpenids() {
+  try {
+    const res = await db.collection('users').where({ role: 'admin' }).limit(200).get()
+    return (res.data || []).map(u => u && u._openid).filter(Boolean)
+  } catch (err) {
+    console.warn('查询管理员列表失败:', err.message)
+    return []
+  }
+}
+
 // 供管理者端胶囊/下拉筛选业务员：汇总在册已审批人员 + 历史记录中出现过的姓名
-async function loadManagerUserNames(extraList = []) {
+async function loadManagerUserNames(extraList = [], { excludeAdmins = false } = {}) {
   const nameSet = new Set()
   try {
     const uRes = await db.collection('users').orderBy('createdAt', 'asc').limit(300).get()
     ;(uRes.data || []).forEach(u => {
       if (!u || u.disabled) return
+      if (excludeAdmins && u.role === 'admin') return
       const isApproved = u.approved === true || (
         (u.approved === undefined || u.approved === null) &&
         (u.role === 'admin' || u.role === 'manager')
@@ -92,7 +103,7 @@ async function loadManagerUserNames(extraList = []) {
 }
 
 // 构建通用查询条件（列表和统计共用）
-function buildBaseConditions({ isManager, openid, targetUserName, where }) {
+function buildBaseConditions({ isManager, openid, targetUserName, where, excludeOpenids = [] }) {
   const ninetyDaysAgo = new Date()
   ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90)
 
@@ -119,7 +130,10 @@ function buildBaseConditions({ isManager, openid, targetUserName, where }) {
   }
 
   if (isManager) {
-    // 管理者：默认看全部业务员；如果指定了 targetUserName，只看这个人的
+    // 管理者：默认看全部可见人员；如果指定了 targetUserName，只看这个人的
+    if (Array.isArray(excludeOpenids) && excludeOpenids.length > 0) {
+      conditions._openid = _.nin(excludeOpenids)
+    }
     if (targetUserName) {
       conditions.userName = targetUserName
     }
@@ -180,7 +194,15 @@ exports.main = async (event, context) => {
   }
   const role = (caller && MANAGER_ROLES.includes(caller.role)) ? caller.role : 'sales'
   const isManager = MANAGER_ROLES.includes(role)
-  const queryConditions = buildBaseConditions({ isManager, openid, targetUserName: safeTargetUserName, where: safeWhere })
+  const excludeAdmins = role === 'manager'
+  const excludeOpenids = excludeAdmins ? await loadAdminOpenids() : []
+  const queryConditions = buildBaseConditions({
+    isManager,
+    openid,
+    targetUserName: safeTargetUserName,
+    where: safeWhere,
+    excludeOpenids
+  })
 
   try {
     if (action === 'stats') {
@@ -190,7 +212,8 @@ exports.main = async (event, context) => {
         isManager,
         openid,
         targetUserName: safeTargetUserName,
-        where: boardWhere
+        where: boardWhere,
+        excludeOpenids
       })
       // 统计口径：排除历史遗留的模拟报告（isMock: true）以及上下班考勤打卡记录（status: 'clocked'）
       const statsConditions = _.and(boardConditions, {
@@ -226,6 +249,7 @@ exports.main = async (event, context) => {
       let latestDailyReport = null
       const dailyWhere = {}
       if (isManager) {
+        if (excludeOpenids.length > 0) dailyWhere._openid = _.nin(excludeOpenids)
         if (safeTargetUserName) dailyWhere.userName = safeTargetUserName
       } else {
         dailyWhere._openid = openid
@@ -244,15 +268,17 @@ exports.main = async (event, context) => {
           const sRes = await db.collection('settings').doc('global').get()
           const fallbackReport = (sRes.data && sRes.data.latestDailyReport) || null
           if (fallbackReport) {
-            // 校验归属：普通业务员只能读取属于自己的快照
-            if (isManager || fallbackReport._openid === openid) {
+            // 校验归属：普通业务员只能读取属于自己的快照；manager 不可读 admin 的快照
+            const canSeeFallback = (isManager && !(excludeAdmins && excludeOpenids.includes(fallbackReport._openid))) ||
+              fallbackReport._openid === openid
+            if (canSeeFallback) {
               latestDailyReport = fallbackReport
             }
           }
         } catch (se) {}
       }
 
-      const salesUsers = isManager ? await loadManagerUserNames() : []
+      const salesUsers = isManager ? await loadManagerUserNames([], { excludeAdmins }) : []
 
       return {
         success: true,
@@ -282,6 +308,8 @@ exports.main = async (event, context) => {
       }
       if (!isManager) {
         dayCond._openid = openid
+      } else if (excludeOpenids.length > 0) {
+        dayCond._openid = _.nin(excludeOpenids)
       }
 
       const dayRes = await db.collection('inspections')
@@ -318,6 +346,7 @@ exports.main = async (event, context) => {
           const uRes = await db.collection('users').orderBy('createdAt', 'asc').limit(200).get()
           ;(uRes.data || []).forEach(u => {
             if (u.disabled) return
+            if (excludeAdmins && u.role === 'admin') return
             const isApproved = u.approved === true || (
               (u.approved === undefined || u.approved === null) &&
               (u.role === 'admin' || u.role === 'manager')
@@ -530,7 +559,7 @@ exports.main = async (event, context) => {
       return item
     })
 
-    const salesUsers = (isManager && safePage === 1) ? await loadManagerUserNames(list) : undefined
+    const salesUsers = (isManager && safePage === 1) ? await loadManagerUserNames(list, { excludeAdmins }) : undefined
 
     return {
       success: true,

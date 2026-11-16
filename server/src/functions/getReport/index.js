@@ -9,7 +9,8 @@
 //
 // 权限模型与 analyzeImage / getHistory 一致：
 // - 记录本人（_openid）可直接读取；
-// - 管理者（role: admin / manager）可读全员；
+// - 管理员（role: admin）可读全员；
+// - 管理者（role: manager）可读 manager / sales（含自己），不可读 admin；
 // - 其他情况拒绝，不信任任何客户端传来的角色声明。
 
 const cloud = require('../../cloud-shim')
@@ -60,12 +61,19 @@ exports.main = async (event, context) => {
     return { success: false, error: '拜访记录不存在' }
   }
 
-  // 归属校验：本人可直接读；管理者可读全员；其余拒绝
+  // 归属校验：本人可直接读；admin 可读全员；manager 不可读 admin；其余拒绝
   if (doc._openid !== openid) {
     const role = (caller && MANAGER_ROLES.includes(caller.role)) ? caller.role : 'sales'
     if (!MANAGER_ROLES.includes(role)) {
       console.warn(`拒绝越权读取: caller=${openid} 试图读取 inspection=${inspectionId}（属于 ${doc._openid}）`)
       return { success: false, error: '无权访问该拜访记录' }
+    }
+    if (role === 'manager' && doc._openid) {
+      const owner = await getCaller(doc._openid)
+      if (owner && owner.role === 'admin') {
+        console.warn(`拒绝越权读取: manager=${openid} 试图读取 admin(${doc._openid}) 的 inspection=${inspectionId}`)
+        return { success: false, error: '无权访问该拜访记录' }
+      }
     }
   }
 
