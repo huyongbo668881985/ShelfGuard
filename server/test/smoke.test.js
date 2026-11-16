@@ -430,8 +430,12 @@ test('登录、审批、巡检、照片和看板主路径', async () => {
   })
   assert.equal(exportDayRes.status, 200)
   assert.match(exportDayRes.headers.get('content-type') || '', /text\/csv/)
-  const exportDayCsv = await exportDayRes.text()
-  assert.ok(exportDayCsv.startsWith('\uFEFF'))
+  const exportDayBuf = Buffer.from(await exportDayRes.arrayBuffer())
+  // UTF-8 BOM: EF BB BF (Fetch res.text() 会按规范剥离 BOM，因此用 arrayBuffer 校验原始字节)
+  assert.equal(exportDayBuf[0], 0xef)
+  assert.equal(exportDayBuf[1], 0xbb)
+  assert.equal(exportDayBuf[2], 0xbf)
+  const exportDayCsv = exportDayBuf.toString('utf8')
   assert.ok(exportDayCsv.includes('特8烟酒店'))
 
   const exportMonthRes = await fetch(`${base}/api/web/export-ledger?scope=month`, {
