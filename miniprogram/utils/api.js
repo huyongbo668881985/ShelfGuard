@@ -102,7 +102,15 @@ async function request(path, data) {
 }
 
 function callFunction({ name, data }) {
-  return request('/api/fn/' + name, data || {}).then(result => ({ result }))
+  return request('/api/fn/' + name, data || {}).then(result => {
+    if (name === 'submitInspection' && result && result.success) {
+      try {
+        const app = getApp()
+        if (app && typeof app.markListDirty === 'function') app.markListDirty()
+      } catch (_) {}
+    }
+    return { result }
+  })
 }
 
 function uploadFile({ cloudPath, filePath }) {

@@ -52,15 +52,21 @@ Page({
   },
 
   onLoad() {
+    this._lastRefreshAt = 0
+    this._seenListVersion = -1
     this.syncManagerFlag()
-    this.loadHistory()
-    this.loadStats()
   },
 
   onShow() {
-    // 每次显示时刷新列表（角色可能在设置页刚更新过）
-    this.syncManagerFlag()
-    this.refreshList()
+    // 每次显示时按需刷新：首次进入 / 角色刚更新 / 有新提交 / 超过 60 秒才重拉，
+    // 避免 onLoad+onShow 双重请求，也避免从报告页返回时反复清空重刷图片。
+    const roleChanged = this.syncManagerFlag()
+    const listVersion = (app.globalData && app.globalData.listVersion) || 0
+    const dirty = this._seenListVersion !== listVersion
+    const stale = !this._lastRefreshAt || (Date.now() - this._lastRefreshAt > 60000)
+    if (roleChanged || dirty || stale) {
+      this.refreshList()
+    }
   },
 
   // 从全局登录态读取当前用户角色。app.js 的 login() 是异步的，
@@ -71,7 +77,9 @@ Page({
     const isManager = role === 'admin' || role === 'manager'
     if (isManager !== this.data.isManager) {
       this.setData({ isManager })
+      return true
     }
+    return false
   },
 
   onPullDownRefresh() {
@@ -80,21 +88,30 @@ Page({
 
   onReachBottom() {
     if (this.data.hasMore && !this.data.loading) {
-      this.loadHistory()
+      this.loadHistory(false)
     }
   },
 
-  // 刷新列表
+  // 刷新列表（不再先清空 list，等新数据回来再整体替换，避免已有缩略图 DOM 卸载重载）
   async refreshList() {
-    this.setData({ page: 1, list: [], hasMore: true })
-    await this.loadHistory()
-    await this.loadStats()
+    this._lastRefreshAt = Date.now()
+    this._seenListVersion = (app.globalData && app.globalData.listVersion) || 0
+    await Promise.all([
+      this.loadHistory(true),
+      this.loadStats()
+    ])
     wx.stopPullDownRefresh()
   },
 
   // 加载历史记录
-  async loadHistory() {
-    if (this.data.loading) return
+  async loadHistory(reset = false) {
+    if (reset) {
+      this._reqSeq = (this._reqSeq || 0) + 1
+    } else if (this.data.loading) {
+      return
+    }
+    const seq = this._reqSeq || 0
+    const targetPage = reset ? 1 : this.data.page
     this.setData({ loading: true })
 
     try {
@@ -105,23 +122,24 @@ Page({
         name: 'getHistory',
         data: {
           action: 'list',
-          page: this.data.page,
+          page: targetPage,
           pageSize: this.data.pageSize,
           where: where,
           // 非管理者传了也没用，服务端会强制忽略只返回本人数据
           targetUserName: this.data.isManager ? this.data.filterUserName : ''
         }
       })
+      if (seq !== (this._reqSeq || 0)) return
 
       const result = res.result
       if (result.success) {
         // 格式化列表数据
         const formattedList = result.list.map(item => this.formatItem(item))
-        const newList = this.data.list.concat(formattedList)
+        const newList = reset ? formattedList : this.data.list.concat(formattedList)
         const nextData = {
           list: newList,
           total: result.total,
-          page: this.data.page + 1,
+          page: targetPage + 1,
           hasMore: newList.length < result.total
         }
         if (result.isManager != null && result.isManager !== this.data.isManager) {
@@ -133,11 +151,14 @@ Page({
         this.setData(nextData)
       }
     } catch (err) {
+      if (seq !== (this._reqSeq || 0)) return
       console.error('加载历史失败:', err)
       wx.showToast({ title: '加载失败', icon: 'none' })
     }
 
-    this.setData({ loading: false })
+    if (seq === (this._reqSeq || 0)) {
+      this.setData({ loading: false })
+    }
   },
 
   // 构建查询条件

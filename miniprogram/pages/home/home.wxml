@@ -77,7 +77,7 @@
 
     <!-- 列表 -->
     <view class="record-item" wx:for="{{list}}" wx:key="_id" data-id="{{item._id}}" bindtap="onTapItem">
-      <image class="record-thumb" wx:if="{{item.thumbnailURL}}" src="{{item.thumbnailURL}}" mode="aspectFill"></image>
+      <image class="record-thumb" wx:if="{{item.thumbnailURL}}" src="{{item.thumbnailURL}}" mode="aspectFill" lazy-load="{{true}}"></image>
       <view class="record-thumb placeholder" wx:else>{{item.isClock ? (item.recordType === 'clock_in' ? '🌅' : '🌙') : '📷'}}</view>
       <view class="record-body">
         <view class="record-store-row">

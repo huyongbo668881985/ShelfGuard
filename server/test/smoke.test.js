@@ -249,15 +249,37 @@ test('登录、审批、巡检、照片和看板主路径', async () => {
   assert.equal(history.body.success, true)
   assert.equal(history.body.list.length, 1)
   assert.ok(history.body.list[0].thumbnailURL)
+  assert.ok(history.body.list[0].thumbnailURL.includes('v=thumb'))
+
+  // 稳定时间桶签名：连续两次请求对同一文件返回完全一致的 URL，确保客户端强缓存命中
+  const historyAgain = await call(adminLogin.token, 'getHistory', {
+    action: 'list',
+    page: 1,
+    pageSize: 10,
+    where: {}
+  })
+  assert.equal(historyAgain.body.list[0].thumbnailURL, history.body.list[0].thumbnailURL)
 
   const report = await call(adminLogin.token, 'getReport', { inspectionId })
   assert.equal(report.body.success, true)
   assert.equal(report.body.detail.photoURLs.length, 1)
+  assert.equal(report.body.detail.photoThumbURLs.length, 1)
+  assert.ok(report.body.detail.photoThumbURLs[0].includes('v=preview'))
   const photoUrl = new URL(report.body.detail.photoURLs[0])
   const photoRes = await fetch(`${base.replace(/\/shelfguard$/, '')}${photoUrl.pathname}${photoUrl.search}`)
   assert.equal(photoRes.status, 200)
+  assert.match(photoRes.headers.get('cache-control') || '', /immutable/)
   const photoBuf = Buffer.from(await photoRes.arrayBuffer())
   assert.deepEqual(photoBuf, jpeg)
+
+  // 变体鉴权校验：合法 v=thumb 放行，篡改 v 参数被拒
+  const thumbUrl = new URL(history.body.list[0].thumbnailURL)
+  const thumbRes = await fetch(`${base.replace(/\/shelfguard$/, '')}${thumbUrl.pathname}${thumbUrl.search}`)
+  assert.equal(thumbRes.status, 200)
+  const tamperedThumbRes = await fetch(`${base.replace(/\/shelfguard$/, '')}${photoUrl.pathname}${photoUrl.search}&v=thumb`)
+  assert.equal(tamperedThumbRes.status, 401)
+  const badVariantRes = await fetch(`${base.replace(/\/shelfguard$/, '')}${photoUrl.pathname}${photoUrl.search}&v=huge`)
+  assert.equal(badVariantRes.status, 404)
 
   const naked = await fetch(`${base}/files/${cloudPath}`)
   assert.equal(naked.status, 401)

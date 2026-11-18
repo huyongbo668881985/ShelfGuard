@@ -256,7 +256,7 @@ async function mapRouteApiHandler(req, res) {
       if (e.name) nameToUserId.set(e.name, e.userId)
     })
 
-    // 批量换取照片签名链接
+    // 批量换取照片签名链接（原图用于放大灯箱，preview 用于侧边卡片，thumb 用于时间轴缩略图）
     const allPhotoIds = []
     targetRecords.forEach(item => {
       if (Array.isArray(item.photoFileIDs)) {
@@ -266,11 +266,23 @@ async function mapRouteApiHandler(req, res) {
       }
     })
     const photoURLMap = {}
+    const previewURLMap = {}
+    const thumbURLMap = {}
     if (allPhotoIds.length > 0) {
       try {
-        const fileRes = await files.getTempFileURL({ fileList: allPhotoIds })
-        ;(fileRes.fileList || []).forEach(f => {
+        const [origRes, previewRes, thumbRes] = await Promise.all([
+          files.getTempFileURL({ fileList: allPhotoIds }),
+          files.getTempFileURL({ fileList: allPhotoIds, variant: 'preview' }),
+          files.getTempFileURL({ fileList: allPhotoIds, variant: 'thumb' })
+        ])
+        ;(origRes.fileList || []).forEach(f => {
           if (f.tempFileURL) photoURLMap[f.fileID] = f.tempFileURL
+        })
+        ;(previewRes.fileList || []).forEach(f => {
+          if (f.tempFileURL) previewURLMap[f.fileID] = f.tempFileURL
+        })
+        ;(thumbRes.fileList || []).forEach(f => {
+          if (f.tempFileURL) thumbURLMap[f.fileID] = f.tempFileURL
         })
       } catch (err) {
         console.error('[web-map] 获取照片签名链接失败:', err)
@@ -278,9 +290,11 @@ async function mapRouteApiHandler(req, res) {
     }
 
     const points = targetRecords.map(item => {
-      const photoURLs = Array.isArray(item.photoFileIDs)
-        ? item.photoFileIDs.map(fid => photoURLMap[fid] || '').filter(Boolean)
-        : []
+      const fids = Array.isArray(item.photoFileIDs) ? item.photoFileIDs : []
+      const photoURLs = fids.map(fid => photoURLMap[fid] || '').filter(Boolean)
+      const photoThumbURLs = fids.map(fid => previewURLMap[fid] || photoURLMap[fid] || '').filter(Boolean)
+      const firstFid = fids[0] || ''
+      const thumbnailURL = (firstFid && (thumbURLMap[firstFid] || photoURLMap[firstFid])) || photoURLs[0] || ''
       const recordType = (item.recordType === 'clock_in' || item.recordType === 'clock_out')
         ? item.recordType
         : (item.status === 'clocked' ? 'clock_in' : 'visit')
@@ -312,7 +326,8 @@ async function mapRouteApiHandler(req, res) {
         customerId: item.customerId || '',
         photoCount: item.photoCount || photoURLs.length,
         photoURLs,
-        thumbnailURL: photoURLs[0] || '',
+        photoThumbURLs,
+        thumbnailURL,
         location: item.location || {},
         status: item.status || '',
         createdAt: item.createdAt,
@@ -1662,7 +1677,8 @@ function renderHtml(prefix) {
             lng,
             addressText: (item.location && item.location.address) ||
               (hasCoord ? (rawLat.toFixed(5) + ', ' + rawLng.toFixed(5)) : '未记录定位地址'),
-            photoURLs: Array.isArray(item.photoURLs) ? item.photoURLs : []
+            photoURLs: Array.isArray(item.photoURLs) ? item.photoURLs : [],
+            photoThumbURLs: Array.isArray(item.photoThumbURLs) ? item.photoThumbURLs : []
           });
         });
       }
@@ -1748,7 +1764,7 @@ function renderHtml(prefix) {
             ? '<span class="tag tag-nocoord">无定位</span>'
             : '';
           const thumbHtml = p.thumbnailURL
-            ? '<img class="tl-thumb" src="' + escapeHtml(p.thumbnailURL) + '" alt="缩略图" />'
+            ? '<img class="tl-thumb" loading="lazy" decoding="async" src="' + escapeHtml(p.thumbnailURL) + '" alt="缩略图" />'
             : '';
 
           html += '<div class="tl-item ' + (isAct ? 'active' : '') + '" id="tl-item-' + idx + '" data-idx="' + idx + '">' +
@@ -1902,8 +1918,9 @@ function renderHtml(prefix) {
           const gridClass = pt.photoURLs.length === 1 ? 'photo-grid single' : 'photo-grid';
           photosHtml = '<div class="' + gridClass + '">';
           pt.photoURLs.forEach((u, i) => {
+            const thumbU = (pt.photoThumbURLs && pt.photoThumbURLs[i]) || u;
             photosHtml += '<div class="photo-card" data-photo-idx="' + i + '">' +
-              '<img src="' + escapeHtml(u) + '" alt="现场照片" />' +
+              '<img loading="lazy" decoding="async" src="' + escapeHtml(thumbU) + '" alt="现场照片" />' +
               '<span class="photo-hint">🔍 点击放大 (' + (i + 1) + '/' + pt.photoURLs.length + ')</span>' +
             '</div>';
           });

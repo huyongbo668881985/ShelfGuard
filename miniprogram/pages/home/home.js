@@ -55,21 +55,30 @@ Page({
   },
 
   onLoad() {
+    this._lastRefreshAt = 0
+    this._seenListVersion = -1
+    this._lastLoginRole = ''
     const todayStr = toDateStr(new Date())
     this.setData({ todayStr, selectedDate: todayStr })
     this.updateDateLabels(todayStr)
     this.syncUser()
-    // 登录是异步的：冷启动时 userInfo 可能还没回来，登录完成后补刷新
+    // 登录是异步的：冷启动时 userInfo 可能还没回来，仅当登录完成后角色发生变化时再补刷一次，
+    // 避免与 onShow 在 1 秒内重叠触发两次 getHistory。
     if (!app.globalData.isLoggedIn) {
       app.loginCallback = () => {
+        const prevRole = this._lastLoginRole
+        const nextRole = (app.globalData.userInfo && app.globalData.userInfo.role) || app.globalData.userRole || 'sales'
         this.syncUser()
-        this.refresh()
+        if (!this.data.loaded || (prevRole && prevRole !== nextRole)) {
+          this.refresh()
+        }
       }
     }
   },
 
   onShow() {
     // 跨天后「今天」要跟着变（小程序后台驻留过夜的情况）
+    let dateChanged = false
     const nowStr = toDateStr(new Date())
     if (nowStr !== this.data.todayStr) {
       const wasToday = this.data.isToday
@@ -77,10 +86,13 @@ Page({
       if (wasToday) {
         this.setData({ selectedDate: nowStr })
         this.updateDateLabels(nowStr)
+        dateChanged = true
       }
     }
 
+    const prevIsManager = this.data.isManager
     this.syncUser()
+    const roleChanged = prevIsManager !== this.data.isManager
     if (this.data.needsApproval && typeof app.refreshUserStatus === 'function') {
       app.refreshUserStatus()
     }
@@ -113,7 +125,12 @@ Page({
       return
     }
 
-    this.refresh()
+    const listVersion = (app.globalData && app.globalData.listVersion) || 0
+    const dirty = this._seenListVersion !== listVersion
+    const stale = !this._lastRefreshAt || (Date.now() - this._lastRefreshAt > 60000)
+    if (dateChanged || roleChanged || dirty || stale) {
+      this.refresh()
+    }
   },
 
   async onPullDownRefresh() {
@@ -223,6 +240,9 @@ Page({
   // ---------- 数据 ----------
 
   refresh() {
+    this._lastRefreshAt = Date.now()
+    this._seenListVersion = (app.globalData && app.globalData.listVersion) || 0
+    this._lastLoginRole = (app.globalData.userInfo && app.globalData.userInfo.role) || app.globalData.userRole || 'sales'
     return this.loadList(true)
   },
 

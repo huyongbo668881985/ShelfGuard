@@ -430,7 +430,10 @@ exports.main = async (event, context) => {
         selectedUserName = (caller && caller.name) || (personRecords[0] && personRecords[0].userName) || '我'
       }
 
-      // 批量换取选中人员当日所有照片的临时链接（地图点开气泡卡片可直接看全部照片）
+      // 批量换取选中人员当日所有照片的临时链接：
+      // - photoURLs:      高清原图（点击放大预览）
+      // - photoThumbURLs: 中等预览图（底部卡片横向列表）
+      // - thumbnailURL:   小缩略图（列表/时间轴小图）
       const allPhotoIds = []
       personRecords.forEach(item => {
         if (Array.isArray(item.photoFileIDs)) {
@@ -440,11 +443,23 @@ exports.main = async (event, context) => {
         }
       })
       const photoURLMap = {}
+      const previewURLMap = {}
+      const thumbURLMap = {}
       if (allPhotoIds.length > 0) {
         try {
-          const fileRes = await cloud.getTempFileURL({ fileList: allPhotoIds })
-          ;(fileRes.fileList || []).forEach(f => {
+          const [origRes, previewRes, thumbRes] = await Promise.all([
+            cloud.getTempFileURL({ fileList: allPhotoIds }),
+            cloud.getTempFileURL({ fileList: allPhotoIds, variant: 'preview' }),
+            cloud.getTempFileURL({ fileList: allPhotoIds, variant: 'thumb' })
+          ])
+          ;(origRes.fileList || []).forEach(f => {
             if (f.tempFileURL) photoURLMap[f.fileID] = f.tempFileURL
+          })
+          ;(previewRes.fileList || []).forEach(f => {
+            if (f.tempFileURL) previewURLMap[f.fileID] = f.tempFileURL
+          })
+          ;(thumbRes.fileList || []).forEach(f => {
+            if (f.tempFileURL) thumbURLMap[f.fileID] = f.tempFileURL
           })
         } catch (err) {
           console.error('获取地图点位照片临时链接失败:', err)
@@ -452,9 +467,11 @@ exports.main = async (event, context) => {
       }
 
       const points = personRecords.map(item => {
-        const photoURLs = Array.isArray(item.photoFileIDs)
-          ? item.photoFileIDs.map(fid => photoURLMap[fid] || '').filter(Boolean)
-          : []
+        const fids = Array.isArray(item.photoFileIDs) ? item.photoFileIDs : []
+        const photoURLs = fids.map(fid => photoURLMap[fid] || '').filter(Boolean)
+        const photoThumbURLs = fids.map(fid => previewURLMap[fid] || photoURLMap[fid] || '').filter(Boolean)
+        const firstFid = fids[0] || ''
+        const thumbnailURL = (firstFid && (thumbURLMap[firstFid] || photoURLMap[firstFid])) || photoURLs[0] || ''
         const recordType = (item.recordType === 'clock_in' || item.recordType === 'clock_out')
           ? item.recordType
           : 'visit'
@@ -478,7 +495,8 @@ exports.main = async (event, context) => {
           customerId: item.customerId || '',
           photoCount: item.photoCount || photoURLs.length,
           photoURLs,
-          thumbnailURL: photoURLs[0] || '',
+          photoThumbURLs,
+          thumbnailURL,
           location: item.location || {},
           status: item.status || '',
           createdAt: item.createdAt,
@@ -530,7 +548,7 @@ exports.main = async (event, context) => {
     const thumbnailURLMap = {}
     if (thumbnailIds.length > 0) {
       try {
-        const fileRes = await cloud.getTempFileURL({ fileList: thumbnailIds })
+        const fileRes = await cloud.getTempFileURL({ fileList: thumbnailIds, variant: 'thumb' })
         fileRes.fileList.forEach(f => {
           if (f.tempFileURL) thumbnailURLMap[f.fileID] = f.tempFileURL
         })

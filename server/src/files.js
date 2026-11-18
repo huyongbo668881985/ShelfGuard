@@ -6,11 +6,122 @@ const crypto = require('crypto')
 const db = require('./docdb')
 const { publicBase, basePath, fileUrlSecret } = require('./config')
 
-const URL_TTL_MS = 2 * 60 * 60 * 1000
+const URL_BUCKET_MS = 2 * 60 * 60 * 1000
+const URL_MIN_TTL_MS = 2 * 60 * 60 * 1000
 const DATA_URL_MAX_BYTES = 3 * 1024 * 1024
+
+// 服务端图片变体白名单：
+// - thumb:   列表缩略图（首页 / 历史 / 照片明细 / 地图时间轴），约 10~25KB
+// - preview: 详情页网格卡片预览图（点开放大/保存/转发仍用原图），约 35~70KB
+const VARIANTS = Object.freeze({
+  thumb: { maxDim: 360, quality: 72 },
+  preview: { maxDim: 720, quality: 78 }
+})
+
+let sharpLib = null
+let sharpLoaded = false
+function getSharp() {
+  if (!sharpLoaded) {
+    sharpLoaded = true
+    try {
+      sharpLib = require('sharp')
+    } catch (_) {
+      sharpLib = null
+    }
+  }
+  return sharpLib
+}
+
+const inflightVariants = new Map()
 
 function filesRoot() {
   return path.join(require('./docdb')._internal.dataDir(), 'files')
+}
+
+function normalizeVariant(raw) {
+  if (!raw) return ''
+  const v = String(raw).trim()
+  return Object.prototype.hasOwnProperty.call(VARIANTS, v) ? v : null
+}
+
+function variantPath(rel, variant) {
+  const root = path.resolve(filesRoot(), '.thumbs', variant)
+  const abs = path.resolve(root, `${rel}.jpg`)
+  if (abs !== root && !abs.startsWith(root + path.sep)) return null
+  return abs
+}
+
+function removeVariants(rel) {
+  Object.keys(VARIANTS).forEach(v => {
+    const vp = variantPath(rel, v)
+    if (vp && fs.existsSync(vp)) {
+      try { fs.unlinkSync(vp) } catch (_) {}
+    }
+  })
+}
+
+async function ensureVariant(rel, origAbs, variant) {
+  const spec = VARIANTS[variant]
+  if (!spec) return null
+  const sharp = getSharp()
+  if (!sharp) return null
+  const dest = variantPath(rel, variant)
+  if (!dest) return null
+
+  try {
+    const origStat = fs.statSync(origAbs)
+    if (fs.existsSync(dest)) {
+      const thumbStat = fs.statSync(dest)
+      if (thumbStat.size > 0 && thumbStat.mtimeMs >= origStat.mtimeMs) {
+        return dest
+      }
+    }
+  } catch (_) {
+    return null
+  }
+
+  const key = `${variant}:${rel}`
+  if (inflightVariants.has(key)) {
+    return inflightVariants.get(key)
+  }
+
+  const task = (async () => {
+    const tmp = `${dest}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    try {
+      fs.mkdirSync(path.dirname(dest), { recursive: true })
+      await sharp(origAbs)
+        .rotate()
+        .resize({
+          width: spec.maxDim,
+          height: spec.maxDim,
+          fit: 'inside',
+          withoutEnlargement: true
+        })
+        .jpeg({ quality: spec.quality, mozjpeg: true })
+        .toFile(tmp)
+      fs.renameSync(tmp, dest)
+      return dest
+    } catch (_) {
+      if (fs.existsSync(tmp)) {
+        try { fs.unlinkSync(tmp) } catch (__) {}
+      }
+      return null
+    } finally {
+      inflightVariants.delete(key)
+    }
+  })()
+
+  inflightVariants.set(key, task)
+  return task
+}
+
+function prewarmVariants(rel, origAbs) {
+  if (!getSharp()) return
+  setImmediate(() => {
+    Promise.all(
+      Object.keys(VARIANTS).map(v => ensureVariant(rel, origAbs, v).catch(() => null))
+    ).catch(() => {})
+  })
 }
 
 function safeRel(rel) {
@@ -32,11 +143,19 @@ function absPath(rel) {
   return abs
 }
 
-function sign(rel, exp) {
+// 固定时间桶对齐：同一 2 小时窗口内所有请求对同一文件返回完全相同的 exp 与 sig，
+// 让小程序/浏览器能够命中本地强缓存，彻底避免反复下载同一张照片。
+// 任意时刻签出的链接均保证至少还有 2 小时有效期（实际 2~4 小时）。
+function stableExp(now = Date.now()) {
+  return Math.ceil((now + 1) / URL_BUCKET_MS) * URL_BUCKET_MS + URL_MIN_TTL_MS
+}
+
+function sign(rel, exp, variant = '') {
   const secret = fileUrlSecret()
   if (!secret) throw new Error('未配置 FILE_URL_SECRET / JWT_SECRET')
+  const payload = variant ? `${rel}|${exp}|${variant}` : `${rel}|${exp}`
   return crypto.createHmac('sha256', secret)
-    .update(`${rel}|${exp}`)
+    .update(payload)
     .digest('base64url')
 }
 
@@ -47,11 +166,13 @@ function safeEqual(a, b) {
   return crypto.timingSafeEqual(left, right)
 }
 
-function signedUrl(rel) {
-  const exp = Date.now() + URL_TTL_MS
-  const sig = sign(rel, exp)
+function signedUrl(rel, variant = '') {
+  const v = normalizeVariant(variant) || ''
+  const exp = stableExp()
+  const sig = sign(rel, exp, v)
   const encoded = rel.split('/').map(encodeURIComponent).join('/')
-  return `${publicBase()}${basePath()}/files/${encoded}?exp=${exp}&sig=${encodeURIComponent(sig)}`
+  const vParam = v ? `v=${encodeURIComponent(v)}&` : ''
+  return `${publicBase()}${basePath()}/files/${encoded}?${vParam}exp=${exp}&sig=${encodeURIComponent(sig)}`
 }
 
 function mimeOf(rel) {
@@ -92,8 +213,9 @@ function ownerOf(rel) {
   return m ? m[1] : ''
 }
 
-async function getTempFileURL({ fileList } = {}) {
+async function getTempFileURL({ fileList, variant } = {}) {
   const list = Array.isArray(fileList) ? fileList : []
+  const safeVariant = normalizeVariant(variant) || ''
   return {
     fileList: list.map(fileID => {
       const rel = safeRel(fileID)
@@ -101,7 +223,7 @@ async function getTempFileURL({ fileList } = {}) {
       const ok = !!(abs && fs.existsSync(abs))
       return {
         fileID,
-        tempFileURL: ok ? signedUrl(rel) : '',
+        tempFileURL: ok ? signedUrl(rel, safeVariant) : '',
         status: ok ? 0 : -1
       }
     })
@@ -153,6 +275,7 @@ async function deleteFile({ fileList } = {}, ctx = {}) {
     }
     try {
       if (fs.existsSync(abs)) fs.unlinkSync(abs)
+      removeVariants(rel)
       out.push({ fileID, status: 0 })
     } catch (err) {
       out.push({ fileID, status: -1, errMsg: err.message })
@@ -205,6 +328,7 @@ async function handleUpload(req, res) {
       fs.copyFileSync(tmp, dest)
       fs.unlinkSync(tmp)
     }
+    prewarmVariants(rel, dest)
     return res.json({ fileID: fileIdOf(rel) })
   } catch (err) {
     cleanup()
@@ -224,10 +348,13 @@ async function handleDownload(req, res, relRaw) {
   const abs = absPath(rel)
   if (!abs || !fs.existsSync(abs)) return res.status(404).json({ success: false, error: '文件不存在' })
 
+  const variant = normalizeVariant(req.query.v)
+  if (variant === null) return res.status(404).json({ success: false, error: '不支持的图片尺寸' })
+
   const exp = parseInt(req.query.exp, 10)
   const sig = req.query.sig ? String(req.query.sig) : ''
   let allowed = false
-  if (sig && Number.isFinite(exp) && exp > Date.now() && safeEqual(sig, sign(rel, exp))) {
+  if (sig && Number.isFinite(exp) && exp > Date.now() && safeEqual(sig, sign(rel, exp, variant))) {
     allowed = true
   }
   if (!allowed && req.user && req.user.openid) {
@@ -239,9 +366,19 @@ async function handleDownload(req, res, relRaw) {
   }
   if (!allowed) return res.status(401).json({ success: false, error: '无权访问该照片' })
 
-  res.setHeader('Content-Type', mimeOf(rel))
-  res.setHeader('Cache-Control', 'private, max-age=300')
-  return res.sendFile(abs)
+  let targetAbs = abs
+  let contentType = mimeOf(rel)
+  if (variant) {
+    const generated = await ensureVariant(rel, abs, variant)
+    if (generated) {
+      targetAbs = generated
+      contentType = 'image/jpeg'
+    }
+  }
+
+  res.setHeader('Content-Type', contentType)
+  res.setHeader('Cache-Control', 'private, max-age=7200, immutable')
+  return res.sendFile(targetAbs)
 }
 
 module.exports = {
@@ -250,6 +387,8 @@ module.exports = {
   deleteFile,
   handleUpload,
   handleDownload,
+  ensureVariant,
   safeRel,
-  fileIdOf
+  fileIdOf,
+  VARIANTS
 }

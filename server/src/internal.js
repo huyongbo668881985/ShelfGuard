@@ -132,7 +132,7 @@ async function customerSummaryHandler(req, res) {
     const urlMap = {}
     if (fileIds.length > 0) {
       try {
-        const tempRes = await files.getTempFileURL({ fileList: fileIds })
+        const tempRes = await files.getTempFileURL({ fileList: fileIds, variant: 'thumb' })
         ;(tempRes.fileList || []).forEach(f => {
           if (f.tempFileURL) urlMap[f.fileID] = f.tempFileURL
         })

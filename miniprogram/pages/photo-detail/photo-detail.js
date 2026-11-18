@@ -163,8 +163,7 @@ Page({
   },
 
   async refreshList() {
-    this.setData({ page: 1, list: [], hasMore: true })
-    await this.loadList()
+    await this.loadList(true)
   },
 
   buildWhere() {
@@ -211,20 +210,27 @@ Page({
     return item
   },
 
-  async loadList() {
-    if (this.data.loading) return
+  async loadList(reset = false) {
+    if (reset) {
+      this._reqSeq = (this._reqSeq || 0) + 1
+    } else if (this.data.loading) {
+      return
+    }
+    const seq = this._reqSeq || 0
+    const targetPage = reset ? 1 : this.data.page
     this.setData({ loading: true })
     try {
       const res = await api.callFunction({
         name: 'getHistory',
         data: {
           action: 'list',
-          page: this.data.page,
+          page: targetPage,
           pageSize: this.data.pageSize,
           where: this.buildWhere(),
           targetUserName: this.data.isManager ? (this.data.filterUserName || '') : ''
         }
       })
+      if (seq !== (this._reqSeq || 0)) return
       const result = res.result || {}
       if (!result.success) {
         wx.showToast({ title: result.error || '加载失败', icon: 'none' })
@@ -234,11 +240,11 @@ Page({
         this.setData({ isManager: result.isManager })
       }
       const formatted = (result.list || []).map(item => this.formatItem(item))
-      const newList = this.data.list.concat(formatted)
+      const newList = reset ? formatted : this.data.list.concat(formatted)
       const nextData = {
         list: newList,
         total: result.total || 0,
-        page: this.data.page + 1,
+        page: targetPage + 1,
         hasMore: newList.length < (result.total || 0)
       }
       if (Array.isArray(result.salesUsers) && result.salesUsers.length > 0) {
@@ -246,10 +252,13 @@ Page({
       }
       this.setData(nextData)
     } catch (err) {
+      if (seq !== (this._reqSeq || 0)) return
       console.error('加载照片明细失败:', err)
       wx.showToast({ title: '加载失败', icon: 'none' })
     } finally {
-      this.setData({ loading: false })
+      if (seq === (this._reqSeq || 0)) {
+        this.setData({ loading: false })
+      }
     }
   },
 

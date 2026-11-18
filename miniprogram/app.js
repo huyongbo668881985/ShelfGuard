@@ -108,6 +108,8 @@ App({
 
     // 「继续拜访下一家」通信标记：upload 页提交后点了继续，回相机页 onShow 读它并清空
     startNextVisit: false,
+    // 新拜访/打卡提交成功时递增，供首页和历史页按需刷新，避免每次从详情返回都重复拉列表
+    listVersion: 0,
 
     // 隐私授权拦截回调暂存：wx.onNeedPrivacyAuthorize 触发时填入 resolve/event，
     // 弹窗「同意」后调用 resolve({ event, resolve }) 放行被拦截的接口；
@@ -132,6 +134,11 @@ App({
       compressTargetSize: 700,    // 压缩目标大小 KB
       aiModel: 'qwen'             // AI 模型（实际以云函数 analyzeImage 的 CURRENT_MODEL 为准）
     }
+  },
+
+  // 标记列表数据已变更（新拜访/打卡提交后调用），通知首页与历史页在下次展示时刷新
+  markListDirty() {
+    this.globalData.listVersion = (this.globalData.listVersion || 0) + 1
   },
 
   // 准入批准：与云端 isUserApproved 规则对齐（无字段时 admin/manager 视为已批准）

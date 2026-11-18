@@ -146,7 +146,7 @@
               data-url="{{item}}"
               bindtap="previewPointPhoto"
             >
-              <image class="detail-photo-img" src="{{item}}" mode="aspectFill" lazy-load></image>
+              <image class="detail-photo-img" src="{{(activePoint.photoThumbURLs && activePoint.photoThumbURLs[index]) || item}}" mode="aspectFill" lazy-load="{{true}}"></image>
               <view class="detail-photo-zoom">🔍</view>
             </view>
           </view>

@@ -230,6 +230,7 @@ Page({
           lng,
           addressText: (item.location && item.location.address) || (hasCoord ? `${rawLat.toFixed(5)}, ${rawLng.toFixed(5)}` : '未记录定位地址'),
           photoURLs: Array.isArray(item.photoURLs) ? item.photoURLs : [],
+          photoThumbURLs: Array.isArray(item.photoThumbURLs) ? item.photoThumbURLs : [],
           score,
           scoreColor
         }
