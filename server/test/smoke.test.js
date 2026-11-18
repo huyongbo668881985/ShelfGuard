@@ -488,5 +488,62 @@ test('登录、审批、巡检、照片和看板主路径', async () => {
   assert.ok(mgrStats.body.salesUsers.includes('张三'))
   assert.ok(dash.body.overall.lowVisitCustomers.some(c => c.userName === '张三'))
 
+  // 验证 docdb _.nin 指令及 manager 角色打卡后调用 getHistory（屏蔽 admin 记录但不报错）
+  assert.equal(db._internal.matchQuery({ _openid: 'u1', tags: ['a', 'b'] }, { _openid: db.command.nin(['admin1']) }), true)
+  assert.equal(db._internal.matchQuery({ _openid: 'admin1' }, { _openid: db.command.nin(['admin1']) }), false)
+  assert.equal(db._internal.matchQuery({ tags: ['a', 'b'] }, { tags: db.command.nin(['b']) }), false)
+  assert.equal(db._internal.matchQuery({}, { _openid: db.command.nin(['admin1']) }), true)
+
+  const mgrLogin = await login('manager001')
+  const mgrUsers = await call(adminLogin.token, 'users', { action: 'listUsers' })
+  const mgrRow = mgrUsers.body.list.find(item => item.openidMasked === 'man****001')
+  assert.ok(mgrRow)
+  assert.equal((await call(adminLogin.token, 'users', {
+    action: 'setRole',
+    targetId: mgrRow._id,
+    role: 'manager'
+  })).body.success, true)
+  assert.equal((await call(mgrLogin.token, 'login', {
+    action: 'update',
+    userInfo: { name: '王经理' }
+  })).body.success, true)
+
+  const mgrCloudPath = `inspections/manager001/${Date.now()}-clock.jpg`
+  const mgrForm = new FormData()
+  mgrForm.append('cloudPath', mgrCloudPath)
+  mgrForm.append('file', new Blob([jpeg], { type: 'image/jpeg' }), 'clock.jpg')
+  const mgrUploaded = await fetch(`${base}/api/upload`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${mgrLogin.token}` },
+    body: mgrForm
+  })
+  const mgrUploadedBody = await mgrUploaded.json()
+  assert.equal(mgrUploaded.status, 200, JSON.stringify(mgrUploadedBody))
+
+  const mgrClock = await call(mgrLogin.token, 'submitInspection', {
+    recordType: 'clock_in',
+    taskName: '考勤打卡：上班打卡',
+    storeName: '上班打卡',
+    userName: '王经理',
+    customerId: '',
+    fileIDs: [mgrUploadedBody.fileID],
+    location: { latitude: 30.26, longitude: 120.17, address: '公司门口' }
+  })
+  assert.equal(mgrClock.body.success, true, JSON.stringify(mgrClock.body))
+
+  const mgrHistList = await call(mgrLogin.token, 'getHistory', { action: 'list', page: 1, pageSize: 50 })
+  assert.equal(mgrHistList.status, 200)
+  assert.equal(mgrHistList.body.success, true, JSON.stringify(mgrHistList.body))
+  assert.ok(mgrHistList.body.list.some(it => it._id === mgrClock.body.inspectionId && it.recordType === 'clock_in'))
+  assert.equal(mgrHistList.body.list.some(it => it._id === inspectionId), false)
+
+  const mgrHistStats = await call(mgrLogin.token, 'getHistory', { action: 'stats' })
+  assert.equal(mgrHistStats.body.success, true)
+  assert.equal(mgrHistStats.body.salesUsers.includes('张三'), false)
+
+  const mgrMapRoute = await call(mgrLogin.token, 'getHistory', { action: 'mapRoute' })
+  assert.equal(mgrMapRoute.body.success, true)
+  assert.equal(mgrMapRoute.body.points.some(p => p._id === inspectionId), false)
+
   assert.ok(salesRow || sales)
 })

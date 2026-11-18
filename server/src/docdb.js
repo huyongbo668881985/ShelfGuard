@@ -183,6 +183,13 @@ function matchValue(actual, expected) {
       }
       return list.some(item => equalValue(actual, item))
     }
+    if (op === 'nin') {
+      const list = Array.isArray(arg) ? arg : []
+      if (Array.isArray(actual)) {
+        return !actual.some(item => list.some(candidate => equalValue(item, candidate)))
+      }
+      return !list.some(item => equalValue(actual, item))
+    }
     if (op === 'exists') {
       const want = arg !== false
       const exists = actual !== undefined
@@ -476,6 +483,7 @@ const command = {
   lt(v) { return cmd('lt', v) },
   neq(v) { return cmd('neq', v) },
   in(list) { return cmd('in', list) },
+  nin(list) { return cmd('nin', list) },
   exists(flag) { return cmd('exists', flag) },
   inc(n) { return cmd('inc', n) },
   aggregate: {

@@ -210,7 +210,7 @@ Page({
       return
     }
 
-    // 未完成登录时先 login，再校验停用/审批（避免 globalData.userInfo 仍为 null 绕过前端检查）
+    // 未完成登录时先 login；若本地仍缓存未批准/停用，先向服务端复核一次最新状态
     let me = app.globalData.userInfo
     if (!me && typeof app.login === 'function') {
       try {
@@ -225,6 +225,10 @@ Page({
       wx.showToast({ title: '未登录，请重新进入小程序', icon: 'none' })
       return
     }
+    if ((!app.isUserApproved(me) || me.disabled) && typeof app.refreshUserStatus === 'function') {
+      await app.refreshUserStatus()
+      me = app.globalData.userInfo || me
+    }
     if (me.disabled) {
       wx.showModal({
         title: '账号已停用',
@@ -233,12 +237,7 @@ Page({
       })
       return
     }
-    const role = me.role || app.globalData.userRole || 'sales'
-    const approvedOk = (
-      me.approved === true ||
-      ((me.approved === undefined || me.approved === null) && (role === 'admin' || role === 'manager'))
-    )
-    if (!approvedOk) {
+    if (!app.isUserApproved(me)) {
       wx.showModal({
         title: '等待管理员审批',
         content: '你的账号尚未通过管理员审批，暂时无法提交拜访。请联系管理员在「用户与权限管理」中批准。',

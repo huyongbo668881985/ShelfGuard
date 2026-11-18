@@ -74,6 +74,15 @@ App({
     this.login()
   },
 
+  onShow: function () {
+    if (!this.globalData.isLoggedIn) return
+    const needPromptRefresh = !this.globalData.userApproved || this.globalData.userDisabled
+    const stale = Date.now() - (this._lastUserSyncAt || 0) > 60000
+    if (needPromptRefresh || stale) {
+      this.refreshUserStatus()
+    }
+  },
+
   globalData: {
     // 用户信息
     userInfo: null,
@@ -125,58 +134,119 @@ App({
     }
   },
 
+  // 准入批准：与云端 isUserApproved 规则对齐（无字段时 admin/manager 视为已批准）
+  isUserApproved(user) {
+    if (!user) return false
+    if (user.approved === true) return true
+    if (user.approved === undefined || user.approved === null) {
+      const role = user.role || this.globalData.userRole || 'sales'
+      return role === 'admin' || role === 'manager'
+    }
+    return false
+  },
+
+  _applyUserInfo(userInfo) {
+    if (!userInfo) return
+    this.globalData.userInfo = userInfo
+    // 角色与停用状态供前端判断入口（真正的鉴权在服务端）
+    this.globalData.userRole = userInfo.role || 'sales'
+    this.globalData.userDisabled = !!userInfo.disabled
+    this.globalData.userApproved = this.isUserApproved(userInfo)
+    if (userInfo.name) {
+      this.globalData.currentTask.userName = userInfo.name
+    }
+    this.globalData.needsName = !normalizeName(userInfo.name) && !userInfo.disabled
+    this._lastUserSyncAt = Date.now()
+  },
+
+  _notifyPagesUserChanged() {
+    try {
+      const pages = getCurrentPages()
+      pages.forEach(p => {
+        if (!p) return
+        if (typeof p.syncUser === 'function') p.syncUser()
+        if (typeof p.refreshApprovalBanner === 'function') p.refreshApprovalBanner()
+      })
+    } catch (_) {}
+  },
+
+  // 静默向服务端重新拉取一次当前用户资料（审批状态/角色/停用/姓名）
+  async refreshUserStatus() {
+    if (this._loginPromise) return this._loginPromise
+    if (!this.globalData.isLoggedIn || !api.getToken()) {
+      return this.login()
+    }
+    if (this._refreshUserPromise) return this._refreshUserPromise
+
+    this._refreshUserPromise = (async () => {
+      try {
+        const res = await api.callFunction({ name: 'login', data: {} })
+        const r = res && res.result
+        if (r && r.openid) this.globalData.openid = r.openid
+        if (r && r.userInfo) {
+          this._applyUserInfo(r.userInfo)
+          this._notifyPagesUserChanged()
+          if (this.globalData.needsName) {
+            this.promptForName()
+          }
+        }
+        return r
+      } catch (err) {
+        console.warn('[用户状态] 刷新失败，保留当前缓存:', err)
+        return null
+      } finally {
+        this._refreshUserPromise = null
+      }
+    })()
+
+    return this._refreshUserPromise
+  },
+
   // 用户登录
   async login() {
-    try {
-      const code = await new Promise((resolve, reject) => {
-        wx.login({
-          success: (res) => res.code ? resolve(res.code) : reject(new Error('未取得登录凭证')),
-          fail: reject
+    if (this._loginPromise) return this._loginPromise
+
+    this._loginPromise = (async () => {
+      try {
+        const code = await new Promise((resolve, reject) => {
+          wx.login({
+            success: (res) => res.code ? resolve(res.code) : reject(new Error('未取得登录凭证')),
+            fail: reject
+          })
         })
-      })
-      const result = await api.loginWithCode(code)
-      this.globalData.openid = result.openid
-      this.globalData.isLoggedIn = true
+        const result = await api.loginWithCode(code)
+        this.globalData.openid = result.openid
+        this.globalData.isLoggedIn = true
 
-      // 如果用户信息存在，更新全局状态
-      if (result.userInfo) {
-        this.globalData.userInfo = result.userInfo
-        // 角色与停用状态供前端判断入口（真正的鉴权在服务端）
-        this.globalData.userRole = result.userInfo.role || 'sales'
-        this.globalData.userDisabled = !!result.userInfo.disabled
-        // 准入批准：与云端 isUserApproved 规则对齐（无字段时 admin/manager 视为已批准）
-        const _role = result.userInfo.role || 'sales'
-        const _ap = result.userInfo.approved
-        this.globalData.userApproved = _ap === true || (
-          (_ap === undefined || _ap === null) && (_role === 'admin' || _role === 'manager')
-        )
-        // 同步业务员信息到当前任务
-        if (result.userInfo.name) {
-          this.globalData.currentTask.userName = result.userInfo.name
+        if (result.userInfo) {
+          this._applyUserInfo(result.userInfo)
         }
-        this.globalData.needsName = !normalizeName(result.userInfo.name) && !result.userInfo.disabled
+
+        console.log('[登录] 成功:', result.openid)
+
+        // 登录成功后静默刷离线待上传队列
+        this.flushOfflineQueueQuiet()
+
+        // 拉一次团队统一设置（拍照上传策略等），失败就沿用缓存/默认值
+        this.refreshClientConfig()
+
+        // 首次登录还没有姓名：弹出必填输入框
+        if (this.globalData.needsName) {
+          this.promptForName()
+        }
+
+        // 触发登录成功事件
+        this.loginCallback && this.loginCallback(result)
+        this._notifyPagesUserChanged()
+      } catch (err) {
+        console.error('[登录] 失败:', err)
+        toast('登录失败，请检查网络')
+      } finally {
+        this._loginPromise = null
       }
+    })()
 
-      console.log('[登录] 成功:', result.openid)
-
-      // 登录成功后静默刷离线待上传队列
-      this.flushOfflineQueueQuiet()
-
-      // 拉一次团队统一设置（拍照上传策略等），失败就沿用缓存/默认值
-      this.refreshClientConfig()
-
-      // 首次登录还没有姓名：弹出必填输入框
-      if (this.globalData.needsName) {
-        this.promptForName()
-      }
-
-      // 触发登录成功事件
-      this.loginCallback && this.loginCallback(result)
-
-    } catch (err) {
-      console.error('[登录] 失败:', err)
-      toast('登录失败，请检查网络')
-    }
+    return this._loginPromise
   },
 
   // 从服务端读取团队统一设置（只读，所有已登录用户都能读；修改只有管理员能在「管理」里改）

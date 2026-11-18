@@ -532,20 +532,20 @@ Page({
 
     let uploadedFileID = ''
     try {
-      // 1. 确保已登录且账号已审批
+      // 1. 确保已登录且账号已审批（若本地仍缓存未批准，先向服务端复核一次最新审批状态）
       let me = app.globalData.userInfo
       if (!me && typeof app.login === 'function') {
         await app.login()
         me = app.globalData.userInfo
       }
       if (!me) throw new Error('登录状态失效，请重试')
+      if ((!app.isUserApproved(me) || me.disabled) && typeof app.refreshUserStatus === 'function') {
+        await app.refreshUserStatus()
+        me = app.globalData.userInfo || me
+        this.refreshApprovalBanner()
+      }
       if (me.disabled) throw new Error('账号已停用，无法打卡')
-      const role = me.role || app.globalData.userRole || 'sales'
-      const approvedOk = (
-        me.approved === true ||
-        ((me.approved === undefined || me.approved === null) && (role === 'admin' || role === 'manager'))
-      )
-      if (!approvedOk) {
+      if (!app.isUserApproved(me)) {
         const err = new Error('等待管理员审批，暂时无法打卡')
         err.code = 'NOT_APPROVED'
         throw err

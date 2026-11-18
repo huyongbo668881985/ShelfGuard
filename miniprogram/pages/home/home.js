@@ -81,6 +81,9 @@ Page({
     }
 
     this.syncUser()
+    if (this.data.needsApproval && typeof app.refreshUserStatus === 'function') {
+      app.refreshUserStatus()
+    }
     this.refreshOfflineCount()
 
     // 隐私授权补弹（app.js 拦截时组件尚未挂载会置标记）
@@ -113,8 +116,17 @@ Page({
     this.refresh()
   },
 
-  onPullDownRefresh() {
-    this.refresh().finally(() => wx.stopPullDownRefresh())
+  async onPullDownRefresh() {
+    try {
+      const tasks = [this.refresh()]
+      if (typeof app.refreshUserStatus === 'function') {
+        tasks.push(app.refreshUserStatus())
+      }
+      await Promise.all(tasks)
+      this.syncUser()
+    } finally {
+      wx.stopPullDownRefresh()
+    }
   },
 
   onReachBottom() {
@@ -319,11 +331,17 @@ Page({
 
   // ---------- 上下班打卡 ----------
 
-  onTapClock(e) {
+  async onTapClock(e) {
     const type = e.currentTarget.dataset.type || 'clock_in'
     if (this.data.needsApproval) {
-      wx.showToast({ title: '账号待管理员审批，批准前无法打卡', icon: 'none' })
-      return
+      if (typeof app.refreshUserStatus === 'function') {
+        await app.refreshUserStatus()
+        this.syncUser()
+      }
+      if (this.data.needsApproval) {
+        wx.showToast({ title: '账号待管理员审批，批准前无法打卡', icon: 'none' })
+        return
+      }
     }
     const existing = type === 'clock_out' ? this.data.todayClockOut : this.data.todayClockIn
     const label = type === 'clock_out' ? '下班打卡' : '上班打卡'
