@@ -16,6 +16,7 @@ const { smartCompress } = require('../../utils/compress')
 // 与下方 photo.compressedSize（字节）引用同一单位来源，避免 KB/字节混用造成误解。
 const { formatFileSize } = require('../../utils/format')
 const offlineQueue = require('../../utils/offlineQueue')
+const { saveImagesToAlbum } = require('../../utils/album')
 
 Page({
   data: {
@@ -102,9 +103,19 @@ Page({
   },
 
   onShow() {
+    if (app.globalData._privacyPending) {
+      app.globalData._privacyPending = false
+      this.showPrivacyAuthorize()
+    }
     this.refreshOfflineCount()
     // 有网时自动尝试刷离线队列（不弹窗打断当前页）
     this.autoFlushOffline()
+  },
+
+  showPrivacyAuthorize() {
+    const comp = this.selectComponent('#privacyAuth')
+    if (comp) comp.show()
+    else app.globalData._privacyPending = true
   },
 
   refreshOfflineCount() {
@@ -555,6 +566,16 @@ Page({
     } else {
       wx.previewImage({ current: sharePath, urls })
     }
+  },
+
+  // 手动保存水印图到系统相册（点一次才存，不在拍照时自动保存，避免安卓端反复弹出路径提示）
+  async saveToAlbum() {
+    const { sharePhotoPath, photos } = this.data
+    const photoUrls = (photos || [])
+      .map(p => p.compressedPath || p.originalPath)
+      .filter(Boolean)
+    const targetPaths = sharePhotoPath ? [sharePhotoPath] : photoUrls
+    await saveImagesToAlbum(targetPaths)
   },
 
   // ============================================================

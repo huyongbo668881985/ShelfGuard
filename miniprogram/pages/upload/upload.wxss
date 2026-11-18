@@ -203,6 +203,7 @@
 .share-row {
   display: flex;
   justify-content: center;
+  gap: 20rpx;
   padding: 24rpx 30rpx 0;
   background: #fff;
 }

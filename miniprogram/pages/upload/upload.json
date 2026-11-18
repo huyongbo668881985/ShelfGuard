@@ -1,3 +1,6 @@
 {
-  "navigationBarTitleText": "确认上传"
+  "navigationBarTitleText": "确认上传",
+  "usingComponents": {
+    "privacy-auth": "/components/privacy-auth/index"
+  }
 }

@@ -31,28 +31,35 @@ Component({
       }
     },
 
-    onAgree(e) {
+    _flushPrivacyQueue(payload) {
       const app = getApp()
-      const resolve = app.globalData._privacyResolve
-      this.hide()
-      if (typeof resolve === 'function') {
-        // 调用 resolve 表示用户已同意隐私协议，让原本被拦截的接口继续授权
-        resolve({ event: 'agree', buttonId: 'agree-btn' })
-        app.globalData._privacyResolve = null
-        app.globalData._privacyEvent = null
+      const queue = Array.isArray(app.globalData._privacyQueue)
+        ? app.globalData._privacyQueue.splice(0)
+        : []
+      if (queue.length > 0) {
+        queue.forEach(item => {
+          if (item && typeof item.resolve === 'function') {
+            item.resolve(payload)
+          }
+        })
+      } else if (typeof app.globalData._privacyResolve === 'function') {
+        app.globalData._privacyResolve(payload)
       }
+      app.globalData._privacyResolve = null
+      app.globalData._privacyEvent = null
+      app.globalData._privacyPending = false
+    },
+
+    onAgree(e) {
+      this.hide()
+      // 一次性放行所有因隐私授权挂起的接口（相机/位置/相册等）
+      this._flushPrivacyQueue({ event: 'agree', buttonId: 'agree-btn' })
     },
 
     onRefuse() {
-      const app = getApp()
-      const resolve = app.globalData._privacyResolve
       this.hide()
-      if (typeof resolve === 'function') {
-        // 必须 resolve disagree，否则被拦截的隐私 API Promise 会永久挂起
-        resolve({ event: 'disagree' })
-        app.globalData._privacyResolve = null
-        app.globalData._privacyEvent = null
-      }
+      // 必须 resolve disagree，否则被拦截的隐私 API Promise 会永久挂起
+      this._flushPrivacyQueue({ event: 'disagree' })
       wx.showToast({ title: '已取消，将无法使用需授权的功能', icon: 'none' })
     }
   }

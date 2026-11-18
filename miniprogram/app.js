@@ -35,6 +35,11 @@ App({
     if (typeof wx.onNeedPrivacyAuthorize === 'function') {
       wx.onNeedPrivacyAuthorize((resolve, event) => {
         const app = getApp()
+        // 队列暂存并发触发的隐私拦截回调（如相机与定位同时触发），避免后一个覆盖前一个
+        if (!Array.isArray(app.globalData._privacyQueue)) {
+          app.globalData._privacyQueue = []
+        }
+        app.globalData._privacyQueue.push({ resolve, event })
         app.globalData._privacyResolve = resolve
         app.globalData._privacyEvent = event
         const pages = getCurrentPages()
@@ -111,9 +116,10 @@ App({
     // 新拜访/打卡提交成功时递增，供首页和历史页按需刷新，避免每次从详情返回都重复拉列表
     listVersion: 0,
 
-    // 隐私授权拦截回调暂存：wx.onNeedPrivacyAuthorize 触发时填入 resolve/event，
-    // 弹窗「同意」后调用 resolve({ event, resolve }) 放行被拦截的接口；
+    // 隐私授权拦截回调暂存：wx.onNeedPrivacyAuthorize 触发时入队，
+    // 弹窗「同意」后一次性放行队列中全部被拦截的接口；
     // _privacyPending 用于组件尚未挂载时的补弹标记
+    _privacyQueue: [],
     _privacyResolve: null,
     _privacyEvent: null,
     _privacyPending: false,

@@ -63,11 +63,15 @@
     </view>
   </scroll-view>
 
-  <!-- 发微信好友（本地水印图） -->
+  <!-- 发微信好友 / 手动存相册（本地水印图） -->
   <view class="share-row" wx:if="{{photos.length > 0 && (status === 'ready' || status === 'error')}}">
     <view class="share-btn" bindtap="shareToWechat">
       <text class="share-icon">📤</text>
       <text class="share-text">发微信好友</text>
+    </view>
+    <view class="share-btn" bindtap="saveToAlbum">
+      <text class="share-icon">💾</text>
+      <text class="share-text">存到相册</text>
     </view>
   </view>
 
@@ -170,4 +174,6 @@
       <block wx:else>上传</block>
     </button>
   </view>
+
+  <privacy-auth id="privacyAuth"></privacy-auth>
 </view>

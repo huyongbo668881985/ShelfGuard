@@ -3,6 +3,7 @@
 
 const api = require('../../utils/api')
 const { formatDate } = require('../../utils/date')
+const { saveImagesToAlbum } = require('../../utils/album')
 
 Page({
   data: {
@@ -243,29 +244,11 @@ Page({
     const url = e.currentTarget.dataset.url || this.currentPhotoUrl()
     if (!url) return
 
-    wx.showLoading({ title: '正在保存...' })
+    wx.showLoading({ title: '准备图片中...' })
     try {
       const localPath = await this.downloadImageToLocal(url)
-      wx.saveImageToPhotosAlbum({
-        filePath: localPath,
-        success: () => {
-          wx.hideLoading()
-          wx.showToast({ title: '已存入系统相册', icon: 'success' })
-        },
-        fail: (err) => {
-          wx.hideLoading()
-          if (err && err.errMsg && err.errMsg.includes('auth deny')) {
-            wx.showModal({
-              title: '需要相册权限',
-              content: '请在设置中开启相册权限，用于保存拜访照片',
-              confirmText: '去设置',
-              success: (r) => { if (r.confirm) wx.openSetting() }
-            })
-          } else {
-            wx.showToast({ title: '保存失败', icon: 'none' })
-          }
-        }
-      })
+      wx.hideLoading()
+      await saveImagesToAlbum([localPath])
     } catch (err) {
       wx.hideLoading()
       wx.showToast({ title: '下载照片失败', icon: 'none' })
@@ -279,42 +262,19 @@ Page({
       wx.showToast({ title: '没有可保存的照片', icon: 'none' })
       return
     }
-    wx.showLoading({ title: `保存中 0/${urls.length}`, mask: true })
-    let ok = 0
-    let denied = false
+    wx.showLoading({ title: '准备照片中...', mask: true })
+    const localPaths = []
     for (let i = 0; i < urls.length; i++) {
-      wx.showLoading({ title: `保存中 ${i + 1}/${urls.length}`, mask: true })
       try {
-        const localPath = await this.downloadImageToLocal(urls[i])
-        await new Promise((resolve, reject) => {
-          wx.saveImageToPhotosAlbum({
-            filePath: localPath,
-            success: resolve,
-            fail: reject
-          })
-        })
-        ok++
-      } catch (err) {
-        if (err && err.errMsg && String(err.errMsg).includes('auth deny')) {
-          denied = true
-          break
-        }
-      }
+        localPaths.push(await this.downloadImageToLocal(urls[i]))
+      } catch (_) {}
     }
     wx.hideLoading()
-    if (denied) {
-      wx.showModal({
-        title: '需要相册权限',
-        content: '请在设置中开启相册权限，用于保存拜访照片',
-        confirmText: '去设置',
-        success: (r) => { if (r.confirm) wx.openSetting() }
-      })
+    if (localPaths.length === 0) {
+      wx.showToast({ title: '下载照片失败', icon: 'none' })
       return
     }
-    wx.showToast({
-      title: ok === urls.length ? `已全部存入（${ok}张）` : `已保存 ${ok}/${urls.length} 张`,
-      icon: ok === urls.length ? 'success' : 'none'
-    })
+    await saveImagesToAlbum(localPaths)
   },
 
     // 工具：下载网络图片为本地临时文件

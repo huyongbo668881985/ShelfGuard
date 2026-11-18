@@ -82,11 +82,11 @@ Page({
     }
   },
 
-  // 后台静默更新定位并刷新距离排序（不阻塞客户列表秒开）
+  // 后台静默更新定位并刷新距离排序（不阻塞客户列表秒开，失败也不弹窗打扰）
   async silentRefreshLocation() {
     this.setData({ locatingDistance: true })
     try {
-      const loc = await getLocation()
+      const loc = await getLocation({ silent: true })
       if (!loc || loc.latitude == null || loc.longitude == null) return
       app.globalData.lastLocation = {
         latitude: loc.latitude,

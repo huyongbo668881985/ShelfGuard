@@ -4,9 +4,12 @@
 const api = require('./api')
 /**
  * 获取当前位置（带权限检查）
+ * @param {object} [options]
+ * @param {boolean} [options.silent=false] 为 true 时静默失败，不弹权限引导弹窗
  * @returns {Promise<{latitude, longitude}>}
  */
-function getLocation() {
+function getLocation(options = {}) {
+  const silent = !!(options && options.silent)
   return new Promise((resolve, reject) => {
     wx.getLocation({
       type: 'gcj02',
@@ -15,7 +18,7 @@ function getLocation() {
           latitude: res.latitude,
           longitude: res.longitude
         }
-        // 逆地理编码：把坐标转成路名/地标，方便水印直接显示可读地址
+        // 逆地理编码：把坐标转成路名/地标，失败时静默降级为坐标
         try {
           const geo = await reverseGeocode(res.latitude, res.longitude)
           location.address = geo.address
@@ -27,9 +30,9 @@ function getLocation() {
         resolve(location)
       },
       fail: err => {
-        // 某些失败场景 errMsg 可能不存在，先判空避免 TypeError 崩溃
-        if (err.errMsg && (err.errMsg.indexOf('auth deny') !== -1 ||
-            err.errMsg.indexOf('authorize') !== -1)) {
+        // 静默模式下失败不弹窗；非静默模式（用户主动点击定位）才引导开启位置权限
+        const msg = String((err && err.errMsg) || '').toLowerCase()
+        if (!silent && (msg.includes('auth deny') || msg.includes('auth denied') || msg.includes('authorize'))) {
           showLocationAuth()
         }
         reject(err)

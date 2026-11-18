@@ -129,14 +129,12 @@ Page({
           selectedCustomerId: '',
           address: (this.data.location && this.data.location.address) || this.data.address
         })
-        wx.showToast({ title: '已切换为无门店模式', icon: 'none' })
       } else {
         this.setData({
           storeName: selected.storeName || '',
           address: selected.address || this.data.address,
           selectedCustomerId: selected._id
         })
-        wx.showToast({ title: `已选择：${selected.storeName}`, icon: 'none' })
       }
     }
   },
@@ -191,11 +189,11 @@ Page({
     })
   },
 
-  // 获取位置（复用 utils/location.js：失败时会自动引导用户去设置里开权限）
+  // 获取位置（静默模式：逆地理失败时已在 location.js 自动降级为经纬度，彻底失败时复用缓存或留空，不弹框打断）
   getLocation() {
     const p = (async () => {
       try {
-        const location = await fetchLocation()
+        const location = await fetchLocation({ silent: true })
         app.globalData.lastLocation = {
           latitude: location.latitude,
           longitude: location.longitude,
@@ -208,23 +206,15 @@ Page({
           // 首页选了有地址的门店时，水印保持用门店地址，不被当前定位覆盖
           address: this.storeAddressFromHome || location.address || `${location.latitude.toFixed(6)}, ${location.longitude.toFixed(6)}`
         })
-        // 临时诊断：逆地理编码失败时把原因弹到手机上，方便定位问题（确认修复后可删）
-        if (location.geoReason) {
-          const reasonText = {
-            NO_KEY: '服务器未配置地图 Key',
-            API_ERROR: '地图服务返回错误',
-            DEP_OR_API_ERROR: '地图服务暂时不可用',
-            CALL_FAIL: '逆地理编码调用失败',
-            GEOCODE_FAIL: '逆地理编码失败'
-          }
-          const msg = reasonText[location.geoReason.split('(')[0]] || '逆地理编码未生效'
-          console.warn('[逆地理编码诊断]', location.geoReason)
-          wx.showToast({ title: `定位地址: ${msg}`, icon: 'none', duration: 2500 })
-        }
       } catch (err) {
-        console.error('获取位置失败:', err)
-        wx.showToast({ title: '位置获取失败', icon: 'none' })
-        // location 保持为 null，confirmPhoto 里会做兜底处理，不会导致崩溃
+        console.warn('获取位置失败，静默兜底:', err)
+        const cached = app.globalData.lastLocation
+        if (cached && cached.latitude != null && cached.longitude != null) {
+          this.setData({
+            location: this.data.location || cached,
+            address: this.storeAddressFromHome || this.data.address || cached.address || `${Number(cached.latitude).toFixed(6)}, ${Number(cached.longitude).toFixed(6)}`
+          })
+        }
       }
     })()
     this._locationPromise = p
@@ -415,8 +405,6 @@ Page({
           confirmBtnText: '下一步',
           composing: false
         })
-        // 合成成功后只把拼好的这一张大图存入系统相册
-        this.autoSaveToAlbum([stitchedWatermarked])
       } else {
         this.setData({
           photoTempPath: sourcePath,
@@ -488,8 +476,6 @@ Page({
         watermarkedPath: watermarkedPath,
         composing: false
       })
-      // 合成成功后默认存入系统相册（不再展示手动存相册按钮）
-      this.autoSaveToAlbum([watermarkedPath])
 
     } catch (err) {
       console.error('水印合成失败:', err)
@@ -569,8 +555,6 @@ Page({
           wmPath = rawPath || this.data.photoTempPath
         }
         this.setData({ watermarkedPath: wmPath })
-        // 后台静默存入系统相册，不阻塞打卡上传
-        wx.saveImageToPhotosAlbum({ filePath: wmPath, fail: () => {} })
       }
 
       // 4. 压缩与上传
@@ -698,66 +682,6 @@ Page({
     })
   },
 
-  // 水印合成成功后自动存入系统相册（多图逐张保存，只弹一次结果提示）
-  async autoSaveToAlbum(paths) {
-    const list = (paths || []).filter(Boolean)
-    if (list.length === 0) return
-
-    const showLoading = list.length > 1
-    if (showLoading) {
-      wx.showLoading({ title: `保存中 0/${list.length}`, mask: true })
-    }
-
-    let ok = 0
-    let denied = false
-    for (let i = 0; i < list.length; i++) {
-      if (showLoading) {
-        wx.showLoading({ title: `保存中 ${i + 1}/${list.length}`, mask: true })
-      }
-      try {
-        await new Promise((resolve, reject) => {
-          wx.saveImageToPhotosAlbum({
-            filePath: list[i],
-            success: resolve,
-            fail: reject
-          })
-        })
-        ok++
-      } catch (err) {
-        if (err && err.errMsg && err.errMsg.includes('auth deny')) {
-          denied = true
-          break
-        }
-      }
-    }
-
-    if (showLoading) wx.hideLoading()
-
-    if (denied) {
-      wx.showModal({
-        title: '需要相册权限',
-        content: '请在设置中开启相册权限，用于保存带水印的拜访照片',
-        confirmText: '去设置',
-        success: (r) => { if (r.confirm) wx.openSetting() }
-      })
-      return
-    }
-
-    if (ok === 0) {
-      wx.showToast({ title: '保存失败', icon: 'none' })
-      return
-    }
-
-    if (list.length === 1) {
-      wx.showToast({ title: '已存入系统相册', icon: 'success' })
-    } else {
-      wx.showToast({
-        title: ok === list.length ? `已全部存入（${ok}张）` : `已保存 ${ok}/${list.length} 张`,
-        icon: ok === list.length ? 'success' : 'none'
-      })
-    }
-  },
-
   // 确认照片，跳转上传页（上下班打卡模式下若首次提交失败，点击此按钮直接重试极速打卡）
   confirmPhoto() {
     if (this.data.recordType === 'clock_in' || this.data.recordType === 'clock_out') {
@@ -771,7 +695,7 @@ Page({
       return
     }
 
-    // 校验基础信息（不含位置，位置单独用弹窗兜底，避免因定位失败卡死流程）
+    // 校验基础信息（不含位置，无定位时静默使用缓存或 {0,0} 兜底放行）
     const { valid, errors } = validateInspection({
       photoPath: watermarkedPath,
       taskName
@@ -781,26 +705,8 @@ Page({
       return
     }
 
-    // 位置获取失败时（location 为 null），给用户选择：不带位置继续 / 重新定位，
-    // 而不是像之前那样直接访问 location.latitude 导致白屏崩溃。
-    if (!location) {
-      wx.showModal({
-        title: '未获取到位置信息',
-        content: '当前拜访记录将不包含门店定位，是否仍要继续？',
-        confirmText: '继续',
-        cancelText: '重新定位',
-        success: (res) => {
-          if (res.confirm) {
-            this.navigateToUpload({ latitude: 0, longitude: 0 })
-          } else {
-            this.getLocation()
-          }
-        }
-      })
-      return
-    }
-
-    this.navigateToUpload(location)
+    const fallbackLoc = location || app.globalData.lastLocation || { latitude: 0, longitude: 0 }
+    this.navigateToUpload(fallbackLoc)
   },
 
   // 跳转到上传页
