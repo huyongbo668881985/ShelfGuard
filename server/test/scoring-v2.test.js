@@ -798,6 +798,61 @@ test('修复1：photo-grid-canvas 零裁边自适应格子与 contain 几何校�
   assert.ok(rect.drawX + rect.drawWidth <= 10 + 750 + 1e-6)
   assert.ok(rect.drawY + rect.drawHeight <= 20 + 1000 + 1e-6)
   assert.ok(Math.abs(rect.drawWidth / rect.drawHeight - 1920 / 1080) < 1e-6)
+
+  // 4. 单数拼图（3/5 张）返回右下角 emptyCell，双数拼图（2/4/6 张）返回 null
+  assert.ok(landscape.emptyCell)
+  assert.equal(landscape.emptyCell.width, landscape.cellWidth)
+  assert.equal(landscape.emptyCell.height, landscape.cellHeight)
+  assert.ok(landscape.emptyCell.x > landscape.cellWidth && landscape.emptyCell.y > landscape.cellHeight)
+  assert.equal(portrait6.emptyCell, null)
+})
+
+test('零遮挡水印布局：单图方案D / 单数拼图方案C / 双数拼图方案A 及 3600px 上限保护', () => {
+  const prevComponent = global.Component
+  global.Component = () => {}
+  let wmMod
+  try {
+    const compPath = require.resolve('../../miniprogram/components/watermark-canvas/index.js')
+    delete require.cache[compPath]
+    wmMod = require(compPath)._layout
+  } finally {
+    global.Component = prevComponent
+  }
+  const { computeCanvasPlan, MAX_CANVAS_DIM } = wmMod
+
+  // 1. 单图（方案 D 极简底条）：不遮挡原图且高分辨率图严格控在 3600px 以内
+  const singlePlan = computeCanvasPlan(1080, 1440, { position: 'bottom', layoutMode: 'compact_bar' })
+  assert.equal(singlePlan.layoutMode, 'compact_bar')
+  assert.equal(singlePlan.canvasWidth, 1080)
+  assert.equal(singlePlan.imgDrawHeight, 1440)
+  assert.ok(singlePlan.barHeight > 0 && singlePlan.barHeight < 200)
+  assert.equal(singlePlan.canvasHeight, 1440 + singlePlan.barHeight)
+
+  const raw4kSingle = computeCanvasPlan(3000, 4000, { position: 'bottom', layoutMode: 'compact_bar' })
+  assert.ok(raw4kSingle.canvasWidth <= MAX_CANVAS_DIM && raw4kSingle.canvasHeight <= MAX_CANVAS_DIM)
+  assert.ok(Math.abs(raw4kSingle.imgDrawWidth / raw4kSingle.imgDrawHeight - 3000 / 4000) < 1e-2)
+
+  // 2. 双数拼图（方案 A 深色横排底栏）：6 张竖图靠近 3600px 时等比例缩放保护，绝不超限
+  const even6Plan = computeCanvasPlan(1524, 3032, { position: 'bottom', layoutMode: 'footer_bar' })
+  assert.equal(even6Plan.layoutMode, 'footer_bar')
+  assert.ok(even6Plan.barHeight > 0)
+  assert.ok(even6Plan.canvasHeight <= MAX_CANVAS_DIM && even6Plan.canvasWidth <= MAX_CANVAS_DIM)
+  assert.ok(Math.abs(even6Plan.imgDrawWidth / even6Plan.imgDrawHeight - 1524 / 3032) < 1e-2)
+
+  // 3. 单数拼图（方案 C 右下角空白格嵌合）：0 额外增高
+  const odd3Plan = computeCanvasPlan(1524, 2024, {
+    position: 'bottom',
+    layoutMode: 'grid_slot',
+    emptyCell: { x: 766, y: 1016, width: 750, height: 1000 }
+  })
+  assert.equal(odd3Plan.layoutMode, 'grid_slot')
+  assert.equal(odd3Plan.barHeight, 0)
+  assert.equal(odd3Plan.canvasHeight, 2024)
+  assert.deepEqual(odd3Plan.emptyCell, { x: 766, y: 1016, width: 750, height: 1000 })
+
+  // 4. Prompt 包含系统相机水印忽略规则
+  const sysPrompt = buildSystemPrompt()
+  assert.match(sysPrompt, /忽略系统相机水印/)
 })
 
 test('修复2：产品瓶身参考图筛选 + 图文交错多模态 content 隔离', () => {

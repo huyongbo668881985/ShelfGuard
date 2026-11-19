@@ -1,6 +1,84 @@
 // components/watermark-canvas/index.js
 // 可复用的 Canvas 水印合成组件
 
+const MAX_CANVAS_DIM = 3600
+
+/**
+ * 计算水印画布合成方案（外扩底栏 / 拼图空白格嵌合 / 3600px 安全上限保护）
+ * @param {number} imgWidth
+ * @param {number} imgHeight
+ * @param {Object} config
+ */
+function computeCanvasPlan(imgWidth, imgHeight, config = {}) {
+  const safeW = Math.max(1, Math.round(imgWidth || 1))
+  const safeH = Math.max(1, Math.round(imgHeight || 1))
+  const position = config.position || 'bottom'
+  const emptyCell = config.emptyCell && config.emptyCell.width > 0 && config.emptyCell.height > 0
+    ? config.emptyCell
+    : null
+
+  let layoutMode = 'overlay'
+  if (position === 'bottom') {
+    if (config.layoutMode === 'grid_slot' && emptyCell) {
+      layoutMode = 'grid_slot'
+    } else if (config.layoutMode === 'footer_bar' || config.layoutMode === 'compact_bar' || config.layoutMode === 'overlay') {
+      layoutMode = config.layoutMode
+    } else {
+      layoutMode = 'compact_bar'
+    }
+  }
+
+  const refDim = Math.min(safeW, safeH * 1.35)
+  const barScale = Math.max(0.75, refDim / 900)
+  let rawBarHeight = 0
+
+  if (layoutMode === 'compact_bar') {
+    const padY = Math.round(14 * barScale)
+    const lineH = Math.round(24 * barScale)
+    rawBarHeight = padY * 2 + lineH * 3 + Math.round(6 * barScale)
+  } else if (layoutMode === 'footer_bar') {
+    const padY = Math.round(16 * barScale)
+    const lineH = Math.round(24 * barScale)
+    const leftMinH = Math.round(78 * barScale)
+    const rightMinH = lineH * 4
+    rawBarHeight = padY * 2 + Math.max(leftMinH, rightMinH)
+  }
+
+  const maxRaw = Math.max(safeW, safeH + rawBarHeight)
+  const shrink = maxRaw > MAX_CANVAS_DIM ? MAX_CANVAS_DIM / maxRaw : 1
+
+  const canvasWidth = Math.max(1, Math.round(safeW * shrink))
+  const imgDrawWidth = canvasWidth
+  const imgDrawHeight = Math.max(1, Math.round(safeH * shrink))
+  let barHeight = rawBarHeight > 0 ? Math.max(1, Math.round(rawBarHeight * shrink)) : 0
+  let canvasHeight = imgDrawHeight + barHeight
+  if (canvasHeight > MAX_CANVAS_DIM) {
+    barHeight = Math.max(0, MAX_CANVAS_DIM - imgDrawHeight)
+    canvasHeight = imgDrawHeight + barHeight
+  }
+
+  const scaledEmptyCell = emptyCell
+    ? {
+        x: Math.round(emptyCell.x * shrink),
+        y: Math.round(emptyCell.y * shrink),
+        width: Math.round(emptyCell.width * shrink),
+        height: Math.round(emptyCell.height * shrink)
+      }
+    : null
+
+  return {
+    layoutMode,
+    shrink,
+    barScale: barScale * shrink,
+    canvasWidth,
+    canvasHeight,
+    imgDrawWidth,
+    imgDrawHeight,
+    barHeight,
+    emptyCell: scaledEmptyCell
+  }
+}
+
 Component({
   properties: {
     // 原图路径
@@ -67,18 +145,20 @@ Component({
           img.src = this.properties.imagePath
         })
 
-        // 设置画布尺寸为原图尺寸（保持高清）
-        canvas.width = img.width
-        canvas.height = img.height
+        const plan = computeCanvasPlan(img.width, img.height, watermark)
 
-        // 绘制原图
-        ctx.drawImage(img, 0, 0, img.width, img.height)
+        // 设置画布尺寸（单图/双数拼图含外扩底栏，且严格不超过 3600px 安全上限）
+        canvas.width = plan.canvasWidth
+        canvas.height = plan.canvasHeight
+
+        // 绘制原图（若底栏导致超限，等比例缩放后完整绘制，不裁边）
+        ctx.drawImage(img, 0, 0, plan.imgDrawWidth, plan.imgDrawHeight)
 
         // 设置全局透明度
         ctx.globalAlpha = watermark.opacity || 1
 
         // 绘制水印
-        this._drawWatermark(ctx, canvas.width, canvas.height, watermark)
+        this._drawWatermark(ctx, plan, watermark)
 
         // 恢复透明度
         ctx.globalAlpha = 1
@@ -140,10 +220,10 @@ Component({
     },
 
     /**
-     * 绘制水印
+     * 绘制水印（按 layoutMode 分流：compact_bar / footer_bar / grid_slot / overlay）
      */
-    _drawWatermark(ctx, width, height, config) {
-      // 比例参考短边，基准系数放大约20%，确保拼图及大图上的水印清晰醒目、有分量感
+    _drawWatermark(ctx, plan, config) {
+      const { canvasWidth: width, canvasHeight: height, imgDrawHeight, barHeight, layoutMode, barScale, emptyCell } = plan
       const refDim = Math.min(width, height)
       const scale = Math.max(0.75, (refDim / 900) * 1.2)
       const padding = Math.round(20 * scale)
@@ -152,23 +232,333 @@ Component({
       const lineSpacing = Math.round(baseFontSize * 1.45)
 
       // 生成时间文本（含今日水印专用的大时间和星期）
-      const dateTimeObj = this._formatDateTime()
+      const dateTimeObj = this._formatDateTime(config.dateTime)
 
-      // 根据位置绘制
       if (config.position === 'top') {
         this._drawTopWatermark(ctx, width, height, config, {
           padding, baseFontSize, titleFontSize, lineSpacing, dateTime: dateTimeObj.fullStr
         })
-      } else if (config.position === 'full') {
+        return
+      }
+      if (config.position === 'full') {
         this._drawFullWatermark(ctx, width, height, config, {
           padding, baseFontSize, titleFontSize, lineSpacing, dateTime: dateTimeObj.fullStr
         })
-      } else {
-        // 默认 bottom：今日水印相机经典左下角卡片式排版
-        this._drawBottomWatermark(ctx, width, height, config, {
-          scale, padding, baseFontSize, titleFontSize, lineSpacing, dateTimeObj
-        })
+        return
       }
+
+      if (layoutMode === 'grid_slot' && emptyCell) {
+        this._drawGridSlotWatermark(ctx, emptyCell, config, dateTimeObj)
+        return
+      }
+
+      if (layoutMode === 'footer_bar' && barHeight > 0) {
+        this._drawHorizontalTwoColumnCard(
+          ctx,
+          { x: 0, y: imgDrawHeight, width, height: barHeight },
+          barScale,
+          config,
+          dateTimeObj,
+          { topBorder: true, bgColor: '#161922' }
+        )
+        return
+      }
+
+      if (layoutMode === 'compact_bar' && barHeight > 0) {
+        this._drawCompactBar(
+          ctx,
+          { x: 0, y: imgDrawHeight, width, height: barHeight },
+          barScale,
+          config,
+          dateTimeObj
+        )
+        return
+      }
+
+      // 兜底 overlay：今日水印相机经典左下角卡片式排版
+      this._drawBottomWatermark(ctx, width, height, config, {
+        scale, padding, baseFontSize, titleFontSize, lineSpacing, dateTimeObj
+      })
+    },
+
+    /**
+     * 共享时间模块：橙色 [真实时间] 标签 + 黄色强调竖条 + 大号时间 + 日期星期
+     */
+    _drawTimeBlock(ctx, x, y, scale, dateTimeObj, options = {}) {
+      const compact = Boolean(options.compact)
+      const tagFontSize = Math.round(12 * scale)
+      const tagH = Math.round(18 * scale)
+      const tagGapY = Math.round(6 * scale)
+      const tagPadW = Math.round(7 * scale)
+
+      ctx.save()
+      ctx.font = `bold ${tagFontSize}px sans-serif`
+      const tagText = '真实时间'
+      const tagTextW = ctx.measureText(tagText).width
+      const tagW = Math.round(tagTextW + tagPadW * 2)
+
+      ctx.fillStyle = '#FFA000'
+      this._drawRoundRect(ctx, x, y, tagW, tagH, Math.round(3 * scale))
+
+      ctx.fillStyle = '#FFFFFF'
+      ctx.textAlign = 'left'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(tagText, x + tagPadW, y + tagH / 2)
+      ctx.textBaseline = 'alphabetic'
+
+      const timeAreaY = y + tagH + tagGapY
+      const barW = Math.max(3, Math.round(4.5 * scale))
+      const barH = Math.round(36 * scale)
+      const barY = timeAreaY + Math.round(3 * scale)
+
+      ctx.fillStyle = '#FFA000'
+      ctx.fillRect(x, barY, barW, barH)
+
+      const timeX = x + barW + Math.round(10 * scale)
+      const timeFontSize = Math.round(36 * scale)
+      const subFontSize = Math.round(14 * scale)
+
+      ctx.fillStyle = '#FFFFFF'
+      ctx.font = `bold ${timeFontSize}px sans-serif`
+      ctx.fillText(dateTimeObj.timeStr, timeX, timeAreaY + Math.round(30 * scale))
+      const timeW = ctx.measureText(dateTimeObj.timeStr).width
+
+      const dateStr = compact ? dateTimeObj.dateWeekShortStr : dateTimeObj.dateWeekStr
+      ctx.font = `${subFontSize}px sans-serif`
+      ctx.fillStyle = 'rgba(240, 245, 250, 0.92)'
+      ctx.fillText(dateStr, timeX, timeAreaY + Math.round(48 * scale))
+      const dateW = ctx.measureText(dateStr).width
+      ctx.restore()
+
+      return {
+        width: Math.max(tagW, barW + Math.round(10 * scale) + Math.max(timeW, dateW)),
+        height: tagH + tagGapY + Math.round(52 * scale)
+      }
+    },
+
+    /**
+     * 方案 A（双数拼图底栏）& 方案 C（横排空白格）：深色左右两栏横排卡片
+     */
+    _drawHorizontalTwoColumnCard(ctx, box, scale, config, dateTimeObj, options = {}) {
+      const { rounded = false, topBorder = false, bgColor = '#161922' } = options
+      ctx.save()
+      ctx.fillStyle = bgColor
+      if (rounded) {
+        this._drawRoundRect(ctx, box.x, box.y, box.width, box.height, Math.round(14 * scale))
+      } else {
+        ctx.fillRect(box.x, box.y, box.width, box.height)
+      }
+
+      if (topBorder) {
+        ctx.fillStyle = '#2D3343'
+        ctx.fillRect(box.x, box.y, box.width, Math.max(1, Math.round(1.5 * scale)))
+      }
+
+      const padX = Math.round(22 * scale)
+      const padY = Math.round(14 * scale)
+
+      // 测量时间区实际尺寸并垂直居中
+      const timeScale = scale * 0.96
+      const estTimeH = Math.round(76 * timeScale)
+      const timeY = box.y + Math.max(padY, Math.round((box.height - estTimeH) / 2))
+      const timeMetrics = this._drawTimeBlock(ctx, box.x + padX, timeY, timeScale, dateTimeObj, { compact: false })
+
+      const gapX = Math.round(20 * scale)
+      const divX = box.x + padX + timeMetrics.width + gapX
+      ctx.fillStyle = '#2D3343'
+      ctx.fillRect(divX, box.y + padY, Math.max(1, Math.round(1.5 * scale)), Math.max(10, box.height - padY * 2))
+
+      const rx = divX + gapX
+      const rightMaxW = Math.max(60, box.x + box.width - padX - rx)
+      const items = [
+        { label: '任务', value: config.taskName },
+        { label: '门店', value: config.storeName },
+        { label: '地点', value: config.address },
+        { label: '记录人', value: config.userName }
+      ].filter(item => item.value)
+
+      const fieldFontSize = Math.round((config.fontSize || 16) * scale)
+      const lineH = Math.round(24 * scale)
+      const blockH = items.length * lineH
+      let currY = box.y + Math.max(padY + fieldFontSize, Math.round((box.height - blockH) / 2) + Math.round(fieldFontSize * 0.88))
+
+      const labelW = Math.round(68 * scale)
+      const valMaxW = Math.max(40, rightMaxW - labelW)
+
+      ctx.textAlign = 'left'
+      items.forEach(item => {
+        ctx.font = `${fieldFontSize}px sans-serif`
+        ctx.fillStyle = '#94A3B8'
+        ctx.fillText(item.label + '：', rx, currY)
+
+        ctx.font = `500 ${fieldFontSize}px sans-serif`
+        ctx.fillStyle = '#F8FAFC'
+        const safeVal = this._truncateText(ctx, item.value, valMaxW)
+        ctx.fillText(safeVal, rx + labelW, currY)
+        currY += lineH
+      })
+
+      ctx.restore()
+    },
+
+    /**
+     * 方案 D（单图极简底条）：左时间 + 右侧 3 紧凑行（优先保证门店与地点完整不截断）
+     */
+    _drawCompactBar(ctx, box, scale, config, dateTimeObj) {
+      ctx.save()
+      ctx.fillStyle = '#161922'
+      ctx.fillRect(box.x, box.y, box.width, box.height)
+
+      ctx.fillStyle = '#2D3343'
+      ctx.fillRect(box.x, box.y, box.width, Math.max(1, Math.round(1.5 * scale)))
+
+      const padX = Math.round(18 * scale)
+      const padY = Math.round(12 * scale)
+      const timeScale = scale * 0.88
+      const estTimeH = Math.round(76 * timeScale)
+      const timeY = box.y + Math.max(padY, Math.round((box.height - estTimeH) / 2))
+      const timeMetrics = this._drawTimeBlock(ctx, box.x + padX, timeY, timeScale, dateTimeObj, { compact: true })
+
+      const gapX = Math.round(16 * scale)
+      const divX = box.x + padX + timeMetrics.width + gapX
+      ctx.fillStyle = '#2D3343'
+      ctx.fillRect(divX, box.y + padY, Math.max(1, Math.round(1.5 * scale)), Math.max(10, box.height - padY * 2))
+
+      const rx = divX + gapX
+      const rightMaxW = Math.max(60, box.x + box.width - padX - rx)
+
+      const rows = []
+      if (config.storeName) {
+        rows.push({ label: '门店', value: config.storeName, highlight: true })
+        if (config.address) rows.push({ label: '地点', value: config.address })
+        const tailParts = []
+        if (config.taskName) tailParts.push(`任务：${config.taskName}`)
+        if (config.userName) tailParts.push(`记录人：${config.userName}`)
+        if (tailParts.length > 0) rows.push({ plain: tailParts.join('  ·  '), muted: true })
+      } else {
+        if (config.taskName) rows.push({ label: '任务', value: config.taskName, highlight: true })
+        if (config.address) rows.push({ label: '地点', value: config.address })
+        if (config.userName) rows.push({ label: '记录人', value: config.userName, muted: true })
+      }
+
+      const fontSize = Math.round(15 * scale)
+      const lineH = Math.round(23 * scale)
+      const blockH = rows.length * lineH
+      let currY = box.y + Math.max(padY + fontSize, Math.round((box.height - blockH) / 2) + Math.round(fontSize * 0.88))
+      const labelW = Math.round(50 * scale)
+
+      ctx.textAlign = 'left'
+      rows.forEach(row => {
+        if (row.plain) {
+          ctx.font = `${Math.round(fontSize * 0.92)}px sans-serif`
+          ctx.fillStyle = '#CBD5E1'
+          ctx.fillText(this._truncateText(ctx, row.plain, rightMaxW), rx, currY)
+        } else {
+          ctx.font = `${fontSize}px sans-serif`
+          ctx.fillStyle = '#94A3B8'
+          ctx.fillText(row.label + '：', rx, currY)
+
+          ctx.font = row.highlight ? `600 ${fontSize}px sans-serif` : `500 ${fontSize}px sans-serif`
+          ctx.fillStyle = row.muted ? '#CBD5E1' : '#F8FAFC'
+          ctx.fillText(this._truncateText(ctx, row.value, Math.max(40, rightMaxW - labelW)), rx + labelW, currY)
+        }
+        currY += lineH
+      })
+
+      ctx.restore()
+    },
+
+    /**
+     * 方案 C（3/5 张拼图右下角空白格嵌合）：竖格用竖排、扁横格自适应切换横排
+     */
+    _drawGridSlotWatermark(ctx, emptyCell, config, dateTimeObj) {
+      ctx.save()
+      ctx.fillStyle = '#111111'
+      ctx.fillRect(emptyCell.x, emptyCell.y, emptyCell.width, emptyCell.height)
+
+      const cellRatio = emptyCell.width / emptyCell.height
+      if (cellRatio > 1.2) {
+        const pad = Math.round(Math.min(emptyCell.width, emptyCell.height) * 0.05)
+        const box = {
+          x: emptyCell.x + pad,
+          y: emptyCell.y + pad,
+          width: emptyCell.width - pad * 2,
+          height: emptyCell.height - pad * 2
+        }
+        const hScale = Math.max(0.55, Math.min(box.width / 620, box.height / 180))
+        this._drawHorizontalTwoColumnCard(ctx, box, hScale, config, dateTimeObj, {
+          rounded: true,
+          bgColor: '#181C24'
+        })
+        ctx.restore()
+        return
+      }
+
+      // 竖格或方格：居中绘制竖版卡片（地址/门店自动最多折2行，利用纵向富余空间）
+      const cardScale = Math.max(0.65, Math.min(emptyCell.width / 460, emptyCell.height / 380))
+      const outerMargin = Math.round(16 * cardScale)
+      const cardPadX = Math.round(24 * cardScale)
+      const cardPadY = Math.round(22 * cardScale)
+      const cardW = emptyCell.width - outerMargin * 2
+      const maxTextW = cardW - cardPadX * 2
+
+      const fieldFontSize = Math.round((config.fontSize || 16) * cardScale)
+      const lineH = Math.round(24 * cardScale)
+      const labelW = Math.round(68 * cardScale)
+      const valMaxW = Math.max(40, maxTextW - labelW)
+
+      const rawItems = [
+        { label: '任务', value: config.taskName, maxLines: 1 },
+        { label: '门店', value: config.storeName, maxLines: 2 },
+        { label: '地点', value: config.address, maxLines: 2 },
+        { label: '记录人', value: config.userName, maxLines: 1 }
+      ].filter(item => item.value)
+
+      ctx.font = `500 ${fieldFontSize}px sans-serif`
+      const wrappedItems = rawItems.map(item => ({
+        label: item.label,
+        lines: this._wrapText(ctx, item.value, valMaxW, item.maxLines)
+      }))
+
+      const totalFieldLines = wrappedItems.reduce((sum, item) => sum + item.lines.length, 0)
+      const timeBlockH = Math.round(76 * cardScale)
+      const divGap = Math.round(16 * cardScale)
+      const contentH = timeBlockH + divGap + totalFieldLines * lineH
+      const cardH = Math.min(emptyCell.height - outerMargin * 2, contentH + cardPadY * 2)
+      const cardX = emptyCell.x + outerMargin
+      const cardY = emptyCell.y + Math.round((emptyCell.height - cardH) / 2)
+
+      ctx.fillStyle = '#181C24'
+      this._drawRoundRect(ctx, cardX, cardY, cardW, cardH, Math.round(14 * cardScale))
+
+      const startX = cardX + cardPadX
+      const startY = cardY + Math.max(cardPadY, Math.round((cardH - contentH) / 2))
+      this._drawTimeBlock(ctx, startX, startY, cardScale, dateTimeObj, { compact: false })
+
+      const divY = startY + timeBlockH + Math.round(6 * cardScale)
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)'
+      ctx.lineWidth = Math.max(1, Math.round(1 * cardScale))
+      ctx.beginPath()
+      ctx.moveTo(startX, divY)
+      ctx.lineTo(cardX + cardW - cardPadX, divY)
+      ctx.stroke()
+
+      let currY = divY + Math.round(22 * cardScale)
+      ctx.textAlign = 'left'
+      wrappedItems.forEach(item => {
+        ctx.font = `${fieldFontSize}px sans-serif`
+        ctx.fillStyle = '#94A3B8'
+        ctx.fillText(item.label + '：', startX, currY)
+
+        ctx.font = `500 ${fieldFontSize}px sans-serif`
+        ctx.fillStyle = '#F8FAFC'
+        item.lines.forEach((lineText, idx) => {
+          ctx.fillText(lineText, startX + labelW, currY + idx * lineH)
+        })
+        currY += item.lines.length * lineH
+      })
+
+      ctx.restore()
     },
 
     /**
@@ -369,6 +759,41 @@ Component({
     },
 
     /**
+     * 按最大宽度把文本折成最多 maxLines 行，末行超出时补省略号
+     */
+    _wrapText(ctx, text, maxWidth, maxLines = 2) {
+      if (!text || !maxWidth || maxLines <= 1) {
+        return [this._truncateText(ctx, text, maxWidth)]
+      }
+      if (ctx.measureText(text).width <= maxWidth) {
+        return [text]
+      }
+      const lines = []
+      let rest = String(text)
+      for (let i = 0; i < maxLines && rest.length > 0; i++) {
+        if (i === maxLines - 1) {
+          lines.push(this._truncateText(ctx, rest, maxWidth))
+          break
+        }
+        let low = 1
+        let high = rest.length
+        let fit = 1
+        while (low <= high) {
+          const mid = Math.floor((low + high) / 2)
+          if (ctx.measureText(rest.slice(0, mid)).width <= maxWidth) {
+            fit = mid
+            low = mid + 1
+          } else {
+            high = mid - 1
+          }
+        }
+        lines.push(rest.slice(0, fit))
+        rest = rest.slice(fit)
+      }
+      return lines
+    },
+
+    /**
      * 全屏水印（平铺）
      */
     _drawFullWatermark(ctx, width, height, config, params) {
@@ -395,23 +820,36 @@ Component({
     },
 
     /**
-     * 格式化当前时间（含今日水印专用大时间、年月日与星期）
+     * 格式化时间（含今日水印专用大时间、年月日与星期）
      */
-    _formatDateTime() {
-      const now = new Date()
+    _formatDateTime(dateTimeStr) {
+      let now = new Date()
+      if (typeof dateTimeStr === 'string' && /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}/.test(dateTimeStr.trim())) {
+        const parsed = new Date(dateTimeStr.trim().replace(/-/g, '/'))
+        if (!Number.isNaN(parsed.getTime())) {
+          now = parsed
+        }
+      }
       const year = now.getFullYear()
       const month = String(now.getMonth() + 1).padStart(2, '0')
       const day = String(now.getDate()).padStart(2, '0')
       const hour = String(now.getHours()).padStart(2, '0')
       const min = String(now.getMinutes()).padStart(2, '0')
       const weekdays = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六']
-      const week = weekdays[now.getDay()]
+      const shortWeekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+      const dayIdx = now.getDay()
 
       return {
         timeStr: `${hour}:${min}`,
-        dateWeekStr: `${year}.${month}.${day}  ${week}`,
+        dateWeekStr: `${year}.${month}.${day}  ${weekdays[dayIdx]}`,
+        dateWeekShortStr: `${year}.${month}.${day} ${shortWeekdays[dayIdx]}`,
         fullStr: `${year}-${month}-${day} ${hour}:${min}`
       }
     }
   }
 })
+
+// 便于纯 Node 单元测试复用画布尺寸与分流逻辑（小程序运行时自动忽略）
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports._layout = { computeCanvasPlan, MAX_CANVAS_DIM }
+}

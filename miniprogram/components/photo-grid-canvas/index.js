@@ -64,7 +64,22 @@ function computeGridLayout(images) {
     height = rows * cellHeight + (rows + 1) * GAP
   }
 
-  return { cols, rows, cellWidth, cellHeight, width, height }
+  return {
+    cols,
+    rows,
+    cellWidth,
+    cellHeight,
+    width,
+    height,
+    emptyCell: count < cols * rows
+      ? {
+          x: GAP + (cols - 1) * (cellWidth + GAP),
+          y: GAP + (rows - 1) * (cellHeight + GAP),
+          width: cellWidth,
+          height: cellHeight
+        }
+      : null
+  }
 }
 
 /**
@@ -93,10 +108,19 @@ Component({
 
   methods: {
     /**
-     * 拼接照片（对外调用）
+     * 拼接照片（对外调用，仅返回临时文件路径）
      * @returns {Promise<string>} 拼好的临时文件路径
      */
     async compose() {
+      const { tempPath } = await this.composeWithLayout()
+      return tempPath
+    },
+
+    /**
+     * 拼接照片并返回布局信息（含 3/5 张拼图时的右下角 emptyCell 坐标）
+     * @returns {Promise<{ tempPath: string, layout: Object }>}
+     */
+    async composeWithLayout() {
       const imagePaths = this.properties.imagePaths
       if (!imagePaths || imagePaths.length === 0) {
         throw new Error('缺少图片')
@@ -124,7 +148,8 @@ Component({
           imagePaths.map(path => this._loadImage(canvas, path))
         )
 
-        const { cols, cellWidth, cellHeight, width, height } = computeGridLayout(images)
+        const layout = computeGridLayout(images)
+        const { cols, cellWidth, cellHeight, width, height } = layout
 
         canvas.width = width
         canvas.height = height
@@ -161,8 +186,8 @@ Component({
         })
 
         this.setData({ composing: false })
-        this.triggerEvent('compose', { tempPath })
-        return tempPath
+        this.triggerEvent('compose', { tempPath, layout })
+        return { tempPath, layout }
 
       } catch (err) {
         this.setData({ composing: false })

@@ -11,6 +11,22 @@ const offlineQueue = require('../../utils/offlineQueue')
 // 任务名称：统一固定为默认值，业务员不能改（拍照页没有任何修改入口）
 const TASK_NAME_DEFAULT = '永丰特8：常规拜访'
 
+/**
+ * 根据照片张数与拼图布局决定零遮挡水印模式：
+ * - 1 张：方案 D（极简窄底条）
+ * - 单数且 >1 张（3/5 张）：方案 C（右下角空白格嵌合）
+ * - 双数拼图（2/4/6 张）：方案 A（深色横排底栏）
+ */
+function resolveWatermarkLayout(photoCount, gridLayout) {
+  if (photoCount <= 1) {
+    return { layoutMode: 'compact_bar' }
+  }
+  if (photoCount % 2 === 1 && gridLayout && gridLayout.emptyCell) {
+    return { layoutMode: 'grid_slot', emptyCell: gridLayout.emptyCell }
+  }
+  return { layoutMode: 'footer_bar' }
+}
+
 Page({
   data: {
     needsApproval: false,
@@ -376,6 +392,7 @@ Page({
       const qualityMode = this.data.imageMode === 'quality' && capturedPhotos.length > 1
 
       let sourcePath
+      let gridLayout = null
       if (capturedPhotos.length === 1) {
         sourcePath = capturedPhotos[0]
       } else {
@@ -384,16 +401,21 @@ Page({
           throw new Error('拼图组件未找到')
         }
         gridComp.setData({ imagePaths: capturedPhotos })
-        sourcePath = await gridComp.compose()
+        const gridRes = await gridComp.composeWithLayout()
+        sourcePath = gridRes.tempPath
+        gridLayout = gridRes.layout
       }
+
+      const stitchedLayout = resolveWatermarkLayout(capturedPhotos.length, gridLayout)
+      const singleLayout = resolveWatermarkLayout(1, null)
 
       if (qualityMode) {
         // 1. 先给拼好的网格大图打水印（用于预览、存入系统相册、发微信好友）
-        const stitchedWatermarked = await this.composeWatermarkPath(sourcePath)
-        // 2. 再为每张高清原图单独打水印，确认时传给上传页供 AI 逐张识别
+        const stitchedWatermarked = await this.composeWatermarkPath(sourcePath, stitchedLayout)
+        // 2. 再为每张高清原图单独打水印（单图走方案 D 极简窄底条，传给 AI 识别零遮挡）
         const watermarkedList = []
         for (let i = 0; i < capturedPhotos.length; i++) {
-          const wm = await this.composeWatermarkPath(capturedPhotos[i])
+          const wm = await this.composeWatermarkPath(capturedPhotos[i], singleLayout)
           watermarkedList.push(wm)
         }
         this.setData({
@@ -413,7 +435,7 @@ Page({
           previewIndex: 0,
           confirmBtnText: '下一步'
         })
-        await this.composeWatermark(sourcePath)
+        await this.composeWatermark(sourcePath, stitchedLayout)
       }
     } catch (err) {
       console.error('拼图/合成失败:', err)
@@ -422,14 +444,15 @@ Page({
     }
   },
 
-  // 只返回水印路径，不写页面状态（精度模式连拍用）
-  async composeWatermarkPath(imagePath) {
+  // 只返回水印路径，不写页面状态（精度模式连拍 & 极速打卡复用）
+  async composeWatermarkPath(imagePath, extraConfig = {}) {
     const watermarkComp = this.selectComponent('#watermarkCanvas')
     if (!watermarkComp) throw new Error('水印组件未找到')
     const now = new Date()
     const dateTime = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
     const watermark = {
       ...this.data.watermarkConfig,
+      ...extraConfig,
       taskName: this.data.taskName,
       storeName: this.data.storeName,
       userName: this.data.userName,
@@ -440,43 +463,16 @@ Page({
     return await watermarkComp.compose()
   },
 
-  // 合成水印
-  async composeWatermark(imagePath) {
+  // 合成水印并写回预览图状态
+  async composeWatermark(imagePath, extraConfig = {}) {
     this.setData({ composing: true })
 
     try {
-      // 获取水印组件实例
-      const watermarkComp = this.selectComponent('#watermarkCanvas')
-      if (!watermarkComp) {
-        throw new Error('水印组件未找到')
-      }
-
-      // 准备水印配置
-      const now = new Date()
-      const dateTime = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
-
-      const watermark = {
-        ...this.data.watermarkConfig,
-        taskName: this.data.taskName,
-        storeName: this.data.storeName,
-        userName: this.data.userName,
-        address: this.data.address,
-        dateTime: dateTime
-      }
-
-      // 设置组件属性
-      watermarkComp.setData({
-        imagePath: imagePath,
-        watermark: watermark
-      })
-
-      // 调用合成方法
-      const watermarkedPath = await watermarkComp.compose()
+      const watermarkedPath = await this.composeWatermarkPath(imagePath, extraConfig)
       this.setData({
-        watermarkedPath: watermarkedPath,
+        watermarkedPath,
         composing: false
       })
-
     } catch (err) {
       console.error('水印合成失败:', err)
       this.setData({
@@ -549,7 +545,7 @@ Page({
       let wmPath = isRetry && this.data.watermarkedPath ? this.data.watermarkedPath : ''
       if (!wmPath) {
         try {
-          wmPath = await this.composeWatermarkPath(rawPath || this.data.photoTempPath)
+          wmPath = await this.composeWatermarkPath(rawPath || this.data.photoTempPath, resolveWatermarkLayout(1, null))
         } catch (wmErr) {
           console.warn('极速打卡水印合成失败，降级使用原图:', wmErr)
           wmPath = rawPath || this.data.photoTempPath
