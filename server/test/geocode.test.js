@@ -150,7 +150,92 @@ test('isCoordinateAddress 正确区分纯坐标/空值与中文路名', () => {
   assert.equal(isCoordinateAddress('杭州市西湖区文三路 1 号'), false)
 })
 
-test('formatTiandituAddress 简洁地标/路名优先级与前缀裁剪正确', () => {
+test('formatTiandituAddress 按 区/县 + 路名 + POI 优先级拼接并彻底剔除 town', () => {
+  // 1) 正常完整数据：彻底剔除 town，按 区/县 + 路名(POI) 拼接
+  assert.equal(
+    formatTiandituAddress({
+      formatted_address: '河南省漯河市郾城区沙北街道黄河路聚鑫佳苑',
+      addressComponent: {
+        province: '河南省',
+        city: '漯河市',
+        county: '郾城区',
+        town: '沙北街道',
+        road: '黄河路',
+        address: '黄河路18号',
+        poi: '聚鑫佳苑'
+      }
+    }),
+    '郾城区黄河路(聚鑫佳苑)'
+  )
+
+  // 2) 缺少 road 的数据：直接拼接为 区/县 + POI，不带空括号
+  assert.equal(
+    formatTiandituAddress({
+      formatted_address: '河南省漯河市郾城区沙北街道聚鑫佳苑',
+      addressComponent: {
+        province: '河南省',
+        city: '漯河市',
+        county: '郾城区',
+        town: '沙北街道',
+        road: '',
+        address: '',
+        poi: '聚鑫佳苑'
+      }
+    }),
+    '郾城区聚鑫佳苑'
+  )
+
+  // 3) poi 已包含 road：跳过 road，避免重复字样
+  assert.equal(
+    formatTiandituAddress({
+      formatted_address: '河南省漯河市郾城区孟庙镇人民路18号院',
+      addressComponent: {
+        province: '河南省',
+        city: '漯河市',
+        county: '郾城区',
+        town: '孟庙镇',
+        road: '人民路',
+        address: '人民路18号',
+        poi: '人民路18号院'
+      }
+    }),
+    '郾城区人民路18号院'
+  )
+
+  // 4) road 包含 poi（双向去重）
+  assert.equal(
+    formatTiandituAddress({
+      formatted_address: '河南省漯河市郾城区沙北街道黄河路东段',
+      addressComponent: {
+        province: '河南省',
+        city: '漯河市',
+        county: '郾城区',
+        town: '沙北街道',
+        road: '黄河路东段',
+        address: '黄河路',
+        poi: ''
+      }
+    }),
+    '郾城区黄河路东段'
+  )
+
+  // 5) county 为空时回退取 city
+  assert.equal(
+    formatTiandituAddress({
+      formatted_address: '广东省东莞市南城街道鸿福路第一国际',
+      addressComponent: {
+        province: '广东省',
+        city: '东莞市',
+        county: '',
+        town: '南城街道',
+        road: '鸿福路',
+        poi: '第一国际'
+      }
+    }),
+    '东莞市鸿福路(第一国际)'
+  )
+
+  // 6) 同时有 road、address、poi 时优先 road + poi（不被 address 覆盖）
   assert.equal(
     formatTiandituAddress({
       formatted_address: '浙江省杭州市西湖区文三路199号创业大厦',
@@ -163,10 +248,10 @@ test('formatTiandituAddress 简洁地标/路名优先级与前缀裁剪正确', 
         poi: '创业大厦'
       }
     }),
-    '西湖区文三路199号(创业大厦)'
+    '西湖区文三路(创业大厦)'
   )
 
-  // 实测天地图常把完整省市区街道写进 address 和 poi，应自动去重裁掉省市前缀
+  // 7) 实测天地图常把完整省市区街道写进 address 和 poi，应自动裁掉省市区和 town 前缀
   assert.equal(
     formatTiandituAddress({
       formatted_address: '浙江省杭州市西湖区翠苑街道古荡湾社区万塘路262号',
@@ -180,9 +265,10 @@ test('formatTiandituAddress 简洁地标/路名优先级与前缀裁剪正确', 
         poi: '浙江省杭州市西湖区翠苑街道古荡湾社区万塘路262号'
       }
     }),
-    '西湖区古荡湾社区万塘路262号'
+    '西湖区华星路(古荡湾社区万塘路262号)'
   )
 
+  // 8) poi 为空回退 address，且 address 仅为纯门牌号时直接拼接不加括号
   assert.equal(
     formatTiandituAddress({
       formatted_address: '北京市西城区大红罗厂街31号',
@@ -195,7 +281,7 @@ test('formatTiandituAddress 简洁地标/路名优先级与前缀裁剪正确', 
     '大红罗厂街31号'
   )
 
-  // address/poi 仅重复省市名（含省+市拼接如 "浙江省杭州市"）时，自动忽略并回落到 county + road
+  // 9) address/poi 仅重复省市名时，自动忽略并回落到 county + road
   assert.equal(
     formatTiandituAddress({
       formatted_address: '北京市',
@@ -224,6 +310,39 @@ test('formatTiandituAddress 简洁地标/路名优先级与前缀裁剪正确', 
       }
     }),
     '西湖区文三路'
+  )
+
+  // 10) 结构化要素全空时回退 formatted_address（存在省/市/town 前缀时先裁掉，彻底剔除 town）
+  assert.equal(
+    formatTiandituAddress({
+      formatted_address: '河南省漯河市某错镇人民路北口',
+      addressComponent: {
+        province: '河南省',
+        city: '',
+        county: '',
+        town: '某错镇',
+        road: '',
+        poi: '',
+        address: ''
+      }
+    }),
+    '漯河市人民路北口'
+  )
+
+  assert.equal(
+    formatTiandituAddress({
+      formatted_address: '河南省沙北街道人民路北口',
+      addressComponent: {
+        province: '河南省',
+        city: '',
+        county: '',
+        town: '沙北街道',
+        road: '',
+        poi: '',
+        address: ''
+      }
+    }),
+    '人民路北口'
   )
 
   assert.equal(
@@ -261,7 +380,7 @@ test('reverseGeocodeCoords 优先天地图并在异常时过渡兜底腾讯地�
 
   assert.equal(tdtOk.success, true)
   assert.equal(tdtOk.provider, 'tianditu')
-  assert.equal(tdtOk.address, '文三路199号(华星时代广场)')
+  assert.equal(tdtOk.address, '文三路(华星时代广场)')
   assert.equal(seenRequests.length, 1)
   assert.match(seenRequests[0].url, /api\.tianditu\.gov\.cn\/geocoder/)
   assert.equal(seenRequests[0].cfg.headers['User-Agent'], 'ShelfGuard-Server/1.0')

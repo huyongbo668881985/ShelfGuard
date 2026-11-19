@@ -109,7 +109,8 @@ function formatHttpErrorDetail(err) {
 
 /**
  * 将天地图逆地理结果格式化为适合水印和门店卡片的简洁路名/地标。
- * 去掉冗余省市前缀，优先 区县 + 路名/门牌 + 周边 POI；无结构化要素时退回 formatted_address。
+ * 彻底剔除易出错的 town 字段，按「区/县(回退市) + 路名 + 标志性建筑/小区(回退 address)」优先级拼接；
+ * 结构化要素全部缺失时再退回 formatted_address。
  */
 function formatTiandituAddress(result) {
   if (!result || typeof result !== 'object') return ''
@@ -117,31 +118,52 @@ function formatTiandituAddress(result) {
     ? result.addressComponent
     : {}
 
-  const county = trimText(comp.county)
-  const road = trimText(comp.road)
-  const rawAddr = stripAdminPrefix(comp.address, comp)
-  const poi = stripAdminPrefix(comp.poi, comp)
+  const area = trimText(comp.county) || trimText(comp.city)
+  const road = stripAdminPrefix(comp.road, comp)
+  const cleanPoi = stripAdminPrefix(comp.poi, comp)
+  const cleanAddr = stripAdminPrefix(comp.address, comp)
+  const poi = cleanPoi || cleanAddr
+  const poiFromAddress = !cleanPoi && Boolean(cleanAddr)
   const formatted = trimText(result.formatted_address)
 
-  // 若 address 仅是纯门牌号（如 "31号"），补上 road 前缀
-  const baseStreet = rawAddr
-    ? (road && /^\d+/.test(rawAddr) && !rawAddr.includes(road) ? `${road}${rawAddr}` : rawAddr)
-    : road
-
   let body = ''
-  if (poi && baseStreet) {
-    if (baseStreet.includes(poi)) body = baseStreet
-    else if (poi.includes(baseStreet)) body = poi
-    else body = `${baseStreet}(${poi})`
+  if (road && poi) {
+    if (poi.includes(road)) {
+      body = poi
+    } else if (road.includes(poi)) {
+      body = road
+    } else if (poiFromAddress && /^\d+/.test(poi)) {
+      // poi 为空回退到 address 且仅为纯门牌号（如 "31号"）时直接拼接，不加括号
+      body = `${road}${poi}`
+    } else {
+      body = `${road}(${poi})`
+    }
   } else {
-    body = poi || baseStreet
+    body = road || poi
+  }
+
+  const town = trimText(comp.town)
+  if (!body && formatted) {
+    let strippedFormatted = stripAdminPrefix(formatted, comp)
+    if (town && strippedFormatted.includes(town)) {
+      strippedFormatted = strippedFormatted.replace(town, '').trim()
+    }
+    if (strippedFormatted) {
+      body = strippedFormatted
+    }
   }
 
   if (body) {
-    const withCounty = county && !body.startsWith(county) ? `${county}${body}` : body
-    return truncateAddress(withCounty)
+    const withArea = area && !body.startsWith(area) ? `${area}${body}` : body
+    return truncateAddress(withArea)
   }
-  if (formatted) return truncateAddress(formatted)
+  if (area) return truncateAddress(area)
+  if (formatted) {
+    const cleanedFormatted = town && formatted.includes(town)
+      ? formatted.replace(town, '').trim()
+      : formatted
+    return truncateAddress(cleanedFormatted || formatted)
+  }
   return ''
 }
 
