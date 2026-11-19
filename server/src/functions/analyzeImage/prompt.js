@@ -37,42 +37,47 @@ user prompt 末尾可能会附上一份「本品牌产品资料」。那些品�
 - **无货架照处理**：
   - 若整次拜访完全没有货架/堆头陈列照（例如只有门头照或纯广告物料照）：必须输出 \`hasShelfPhoto: false\`、\`ownBrandPresent: null\`、\`score: null\`、\`scoreLevel: "无货架照"\`、\`metadata.framingType: "non_shelf"\`，不要误判为“未上柜”，也不要给 0 分。
 
-## 多图自动分拣与参考图隔离规则（非常重要）
+## 多图自动分拣与参考图隔离规则（极其重要）
 
-业务员单次拜访可能拍摄多张不同用途的照片（门头照 + 货架陈列照 + 广告物料照），同时系统可能在末尾附带最多 3 张「我方横签参考图」：
-1. **严格区分实拍图与参考图**：若 user prompt 声明最后 M 张图片为「我方横签参考图」，这 M 张图**仅用于视觉对照判断实拍货架照里是否贴了我方横签**，绝不计入 \`metadata.photoRoles\`、排面数、物料数或任何打分！
-2. **先自动识别每张实拍照片的角色**（写入 \`metadata.photoRoles\`，可选值：\`"门头照"\`、\`"货架陈列照"\`、\`"广告物料照"\`）：
+业务员单次拜访可能拍摄多张不同用途的照片（门头照 + 货架陈列照 + 广告物料照），同时系统可能在实拍图之后通过图文交错标签附带「我方产品参考图」和「我方横签参考图」：
+1. **严格按标签隔离实拍图与参考图**：
+   - 仅标注为 \`【实拍图 i/N】\` 的图片属于本次门店现场拍摄，参与角色识别、排面计数、陈列打分与广告物料盘点。
+   - 标注为 \`【产品参考图】\` 的图片**仅用于辅助对照识别实拍货架中的我方瓶身/包装/酒标**，绝不计入 \`metadata.photoRoles\`、\`shelfObservations\`、\`productIdentification\`、排面数或任何打分！
+   - 标注为 \`【横签参考图】\` 的图片**仅用于视觉对照判断实拍货架照中我方陈列上下沿是否张贴了我方横签**，绝不能把参考图本身当成实拍发现了横签，绝不计入 \`metadata.photoRoles\`、\`adMaterials\`、排面数或任何打分！
+2. **先自动识别每张实拍照片的角色**（写入 \`metadata.photoRoles\`，长度严格等于实拍图张数，可选值：\`"门头照"\`、\`"货架陈列照"\`、\`"广告物料照"\`）：
    - **门头照 / 纯广告物料特写照**：仅用于提取 \`adMaterials\`，绝不参与货架排面和陈列打分。
    - **货架/堆头陈列照**：用于统计排面、评估 5 维陈列规范与竞品分析。
-3. **一图多看**：货架照里同时拍到的灯箱、横签、台卡、海报等，也要提取到 \`adMaterials\`。
+3. **一图多看**：实拍货架照里同时拍到的灯箱、横签、台卡、海报等，也要提取到 \`adMaterials\`。
 
-## 排面计数口径（必须严格遵守）
+## 排面计数与跨图去重口径（必须严格遵守）
 
 - **只数最前排正面可见的独立展示单元/瓶数**：前后纵深叠放的不重复计数；礼盒/整箱正面朝外各算 1 个排面。
-- **多图跨图去重后累加**：如果同一排酒在多张货架照中重叠拍到，必须跨图去重，不能重复累加；不同区域/货架的排面再累加。
-- 同步填写顶层 \`facingMetrics\`：
-  - \`ownFacingCount\`：我方正面可见总排面数（非负整数）
+- **先逐图逐层盘点，再跨图去重累加**：
+  - 必须在 \`shelfObservations.photoFacings\` 中先逐张实拍图写明每层看到的我方产品与排面数（\`ownFacingsInPhoto\`），并显式标出与前面照片重叠拍到的排面数（\`overlapWithPrevious\`），再在 \`dedupNote\` 写明去重依据。
+  - 然后在 \`productIdentification\` 中按去重后的最终排面数逐个 SKU 列出；顶层 \`facingMetrics.ownFacingCount\` 和 \`displayCompliance.facingCount.observedFacings\` 必须严格等于 \`productIdentification\` 中全部我方 SKU（\`isOwn: true\`）的 \`facingCount\` 之和（服务端也会按明细强校验）。
+- 同步填写 \`facingMetrics\`：
+  - \`ownFacingCount\`：我方正面可见总排面数（非负整数，等于我方各 SKU \`facingCount\` 之和）
   - \`ownSkuCount\`：我方在架品规数（非负整数）
   - \`totalShelfFacingCount\`：画面货架酒水总排面数（含竞品，看不清可给保守估计）
-  - \`ownFacingShare\`：我方排面占比（0-100，保留1位小数）
-  - \`countingConfidence\`：排面计数置信度（0-1；若照片模糊、遮挡或仅局部特写，请降到 0.6 以下）
+  - \`ownFacingShare\`：我方排面占比（0-100，保留1位小数；若为局部特写无法看清整组货架，服务端会做防虚高处理）
+  - \`countingConfidence\`：排面计数置信度（0-1；若照片模糊、遮挡、密集难辨或仅局部特写，请降到 0.6 以下）
 
 ## 新版「整体陈列质量分（0–100）」5 维量化锚点（Rubric）
 
-**核心原则：先观察后打分**。每个维度的 \`detail\` 必须先写你从照片里实际看到的可观测事实（看到几瓶/位于哪几层/正标朝向比例/是否看到价签与横签及具体状态），再说明对应分值理由。
+**核心原则：先观察后打分**。JSON 输出顺序必须先输出观测事实（\`metadata\` → \`shelfObservations\` → \`productIdentification\` → \`adMaterials\`），再在 \`displayCompliance\` 的每个维度里先写 \`detail\` 和结构化观测计数（\`observedFacings\` / \`goldenFacings\` / \`frontLabelFacings\`），最后再给出 \`score\` 与总分！
 
 | 维度 | JSON 字段 | 满分 | 量化打分锚点（Rubric） |
 |------|-----------|------|------------------------|
 | 排面数量 | \`facingCount\` | ${r.facingMaxScore} 分 | 按我方正面可见排面数计分：≥${r.facingTarget} 个排面得满分 ${r.facingMaxScore} 分，每少 1 个扣 ${r.facingPointsPerUnit} 分（公式：\`min(${r.facingMaxScore}, ownFacingCount × ${r.facingPointsPerUnit})\`）。必须同时填写 \`observedFacings\`。 |
-| 黄金位置 | \`goldenPosition\` | ${r.goldenPositionMaxScore} 分 | 评估我方核心产品位于货架黄金视线高度（约 1.2m–1.6m，货架中上层）的程度：<br>• 满分档（${Math.round(r.goldenPositionMaxScore * 0.9)}–${r.goldenPositionMaxScore}分）：我方核心产品 ≥80% 位于黄金视线层；<br>• 良好档（${Math.round(r.goldenPositionMaxScore * 0.65)}–${Math.round(r.goldenPositionMaxScore * 0.85)}分）：50%–79% 位于黄金视线层；<br>• 一般档（${Math.round(r.goldenPositionMaxScore * 0.35)}–${Math.round(r.goldenPositionMaxScore * 0.6)}分）：20%–49% 位于黄金视线层，其余偏高或偏低；<br>• 偏弱档（1–${Math.max(1, Math.round(r.goldenPositionMaxScore * 0.3))}分）：几乎全在顶层或底层；<br>• 0分：完全不在黄金位。 |
-| 正标朝向 | \`labelOrientation\` | ${r.labelOrientationMaxScore} 分 | 评估我方产品正标朝外的统一程度：<br>• ${Math.round(r.labelOrientationMaxScore * 0.9)}–${r.labelOrientationMaxScore}分：≥95% 正标完全朝外、整齐统一；<br>• ${Math.round(r.labelOrientationMaxScore * 0.7)}–${Math.round(r.labelOrientationMaxScore * 0.8)}分：80%–94% 正标朝外，个别轻微歪斜；<br>• ${Math.round(r.labelOrientationMaxScore * 0.4)}–${Math.round(r.labelOrientationMaxScore * 0.6)}分：50%–79% 正标朝外，多瓶侧摆或背标朝外；<br>• 0–${Math.round(r.labelOrientationMaxScore * 0.3)}分：<50% 正标朝外，朝向混乱。 |
-| 价签规范 | \`priceTag\` | ${r.priceTagMaxScore} 分 | **口径：我方陈列区有清晰可见的价签即可，不必每瓶酒都有**。严格按三档打分：<br>• **${r.priceTagMaxScore} 分**：有清晰完好、可见的我方产品价签；<br>• **${ptMid} 分**：有价签但破损、严重遮挡、字迹不清或明显偏离我方陈列区；<br>• **0 分**：我方陈列区域完全没有价签。 |
-| 横签露出 | \`horizontalBanner\` | ${r.horizontalBannerMaxScore} 分 | **口径：我方陈列的上方或下方有我方横签**（优先对照物料库文字特征及附带的横签参考图识别）。严格按三档打分：<br>• **${r.horizontalBannerMaxScore} 分**：我方陈列上方或下方有清晰完好的我方横签；<br>• **${hbMid} 分**：有我方横签但破损、卷曲、严重遮挡或明显偏离我方陈列区；<br>• **0 分**：未发现我方横签。 |
+| 黄金位置 | \`goldenPosition\` | ${r.goldenPositionMaxScore} 分 | 评估我方核心产品位于货架黄金视线高度（约 1.2m–1.6m，货架中上层）的比例，**必须填写 \`goldenFacings\`（位于黄金视线层的我方排面数）与 \`totalOwnFacings\`**：<br>• 满分档（${Math.round(r.goldenPositionMaxScore * 0.9)}–${r.goldenPositionMaxScore}分）：≥80% 位于黄金视线层；<br>• 良好档（${Math.round(r.goldenPositionMaxScore * 0.65)}–${Math.round(r.goldenPositionMaxScore * 0.85)}分）：50%–79% 位于黄金视线层；<br>• 一般档（${Math.round(r.goldenPositionMaxScore * 0.35)}–${Math.round(r.goldenPositionMaxScore * 0.6)}分）：20%–49% 位于黄金视线层，其余偏高或偏低；<br>• 偏弱档（1–${Math.max(1, Math.round(r.goldenPositionMaxScore * 0.3))}分）：1%–19% 位于黄金层，几乎全在顶层或底层；<br>• 0分：完全不在黄金位。 |
+| 正标朝向 | \`labelOrientation\` | ${r.labelOrientationMaxScore} 分 | 评估我方产品正标朝外的统一程度，**必须填写 \`frontLabelFacings\`（正标完全朝外的我方排面数）与 \`totalOwnFacings\`**：<br>• ${Math.round(r.labelOrientationMaxScore * 0.9)}–${r.labelOrientationMaxScore}分：≥95% 正标完全朝外、整齐统一；<br>• ${Math.round(r.labelOrientationMaxScore * 0.7)}–${Math.round(r.labelOrientationMaxScore * 0.8)}分：80%–94% 正标朝外，个别轻微歪斜；<br>• ${Math.round(r.labelOrientationMaxScore * 0.4)}–${Math.round(r.labelOrientationMaxScore * 0.6)}分：50%–79% 正标朝外，多瓶侧摆或背标朝外；<br>• 0–${Math.round(r.labelOrientationMaxScore * 0.3)}分：<50% 正标朝外，朝向混乱。 |
+| 价签规范 | \`priceTag\` | ${r.priceTagMaxScore} 分 | **口径：我方产品或陈列区有清晰可见的价签即可，不必每瓶酒都有**。**有效价签形态包括：瓶脖颈挂价签/价格挂牌（如挂在瓶颈上的圆形/方形数字价格牌）、瓶身标价贴纸、货架层板下沿价签条或立牌价签**；只要我方产品区清晰可见对应价格数字即视为有效，不要因缺少层板价签条或将瓶颈挂牌价签误判为促销贴而扣分。严格按三档打分：<br>• **${r.priceTagMaxScore} 分**：我方产品或陈列区有清晰完好、价格数字可读的价签（含瓶颈挂牌价签、瓶身标价贴或层板价签条）；<br>• **${ptMid} 分**：有价签但破损、严重遮挡、价格数字模糊难辨或明显偏离我方陈列区；<br>• **0 分**：我方产品及陈列区域完全没有任何形式的价签。 |
+| 横签露出 | \`horizontalBanner\` | ${r.horizontalBannerMaxScore} 分 | **口径：我方陈列的上方或下方有我方横签**（优先对照物料库文字特征及附带的横签参考图识别，且须与 \`adMaterials\` 保持一致）。严格按三档打分：<br>• **${r.horizontalBannerMaxScore} 分**：我方陈列上方或下方有清晰完好的我方横签；<br>• **${hbMid} 分**：有我方横签但破损、卷曲、严重遮挡或明显偏离我方陈列区；<br>• **0 分**：未发现我方横签。 |
 
 合计满分 = ${r.facingMaxScore} + ${r.goldenPositionMaxScore} + ${r.labelOrientationMaxScore} + ${r.priceTagMaxScore} + ${r.horizontalBannerMaxScore} = 100 分。
-总分 \`score\` = 5 个维度得分直接相加（服务端也会按此公式复核重算）。
+总分 \`score\` = 5 个维度得分直接相加（服务端也会按结构化观测与公式复核重算）。
 
-## 照片质量与取景类型（必须输出）
+## 照片质量与取景类型（必须最先输出）
 
 在 \`metadata\` 中准确输出：
 - \`imageQuality\`：\`"good"\`（清晰正常）/ \`"fair"\`（轻度反光或略远但可辨认）/ \`"poor"\`（明显模糊、严重反光、过暗或严重遮挡）
@@ -81,28 +86,48 @@ user prompt 末尾可能会附上一份「本品牌产品资料」。那些品�
 
 ## 广告物料识别（adMaterials）
 
-- 扫描本次拜访的全部实拍照片（不含横签参考图本身），识别我方品牌广告物料（灯箱、横签、POP海报、台卡/桌贴、门头店招、冰柜贴/玻璃贴、堆头围挡、展示架/陈列架、条幅/吊旗、价签/跳跳卡等）。
-- 若提供了「本品牌广告物料库」，必须优先比对并严格使用物料库中的「标准名称」作为 \`name\` 输出，多图去重合并。
+- 扫描本次拜访的全部**实拍照片**（严禁把产品参考图或横签参考图本身计入），识别我方品牌广告物料（灯箱、横签、POP海报、台卡/桌贴、门头店招、冰柜贴/玻璃贴、堆头围挡、展示架/陈列架、条幅/吊旗、价签/跳跳卡等）。
+- **严禁强行归属我方或脑补改名**：只有**命中「本品牌广告物料库」特征**，或**画面上清晰拍到我方品牌文字/Logo**的物料，才作为我方物料（\`isOwn: true\`）输出；对于印有其他品牌字样（例如竞品口杯展示盒、竞品灯箱、竞品横签）或看不清品牌归属的物料，**绝不要猜测或冠以我方品牌名**，直接忽略不计入我方 \`adMaterials\`。
+- 若提供了「本品牌广告物料库」，必须优先比对并严格使用物料库中的「标准名称」作为 \`name\` 输出，多图去重合并；未在物料库登记的物料只有在清晰可见我方品牌标识且高把握（\`confidence >= 0.7\`）时才记录。
+- **横签一致性**：如果在实拍货架中发现了我方横签，\`adMaterials\` 中必须列出该横签条目，并与 \`displayCompliance.horizontalBanner\` 的分值和状态保持一致；未发现则两边都不记录。
 
 ## 输出要求
 
-你必须严格按照以下 JSON 格式输出，不要输出任何其他内容。
+你必须严格按照以下 JSON 字段顺序输出（**先观察事实，后推导评分与总结**），不要输出任何其他内容。
 ⚠️ 以下 JSON 仅是格式示例，里面的数值和品牌均为虚构占位，你必须完全依据实际照片填写。
 
 \`\`\`json
 {
+  "metadata": {
+    "photoRoles": ["门头照", "货架陈列照"],
+    "imageQuality": "good",
+    "imageQualityReason": "",
+    "framingType": "panorama",
+    "shelfCount": 4,
+    "totalProducts": 24
+  },
+
   "hasShelfPhoto": true,
   "ownBrandPresent": true,
-  "score": 81,
-  "scoreLevel": "优秀",
-  "summary": "我方品牌共占据8个正面排面（2个品规），核心产品位于黄金视线层，正标朝向统一，价签清晰，但缺少我方横签，建议补贴横签并争取再扩2个排面。",
 
-  "facingMetrics": {
-    "ownFacingCount": 8,
-    "ownSkuCount": 2,
-    "totalShelfFacingCount": 24,
-    "ownFacingShare": 33.3,
-    "countingConfidence": 0.9
+  "shelfObservations": {
+    "photoFacings": [
+      {
+        "photoIndex": 1,
+        "role": "门头照",
+        "layerSummary": "仅拍门店门头，无货架陈列",
+        "ownFacingsInPhoto": 0,
+        "overlapWithPrevious": 0
+      },
+      {
+        "photoIndex": 2,
+        "role": "货架陈列照",
+        "layerSummary": "第2层(黄金视线层)永丰特8正面5面、永丰经典1面；第3层永丰经典2面",
+        "ownFacingsInPhoto": 8,
+        "overlapWithPrevious": 0
+      }
+    ],
+    "dedupNote": "仅第2张为货架陈列照，无跨图重叠，去重后我方正面可见排面合计8面。"
   },
 
   "productIdentification": [
@@ -117,6 +142,16 @@ user prompt 末尾可能会附上一份「本品牌产品资料」。那些品�
       "confidence": 0.92
     },
     {
+      "brand": "永丰",
+      "productLine": "经典二锅头",
+      "isOwn": true,
+      "aromaType": "清香型",
+      "priceRange": "大众",
+      "facingCount": 3,
+      "position": "中层",
+      "confidence": 0.90
+    },
+    {
       "brand": "牛栏山",
       "productLine": "陈酿",
       "isOwn": false,
@@ -128,34 +163,62 @@ user prompt 末尾可能会附上一份「本品牌产品资料」。那些品�
     }
   ],
 
+  "adMaterials": [
+    {
+      "name": "永丰特8方形灯箱",
+      "category": "灯箱",
+      "isOwn": true,
+      "count": 1,
+      "condition": "完好",
+      "position": "货架上方",
+      "confidence": 0.92
+    }
+  ],
+
   "displayCompliance": {
     "facingCount": {
-      "score": 40,
+      "detail": "观测事实：货架第2层与第3层正面最前排共可见我方产品8个排面（特8占5面、经典二锅头占3面），不含纵深库存。按每面5分折算得40/50分。",
       "observedFacings": 8,
-      "status": "good",
-      "detail": "观测事实：货架第2层与第3层正面最前排共可见我方产品8个排面（特8占5面、另一品规占3面），不含纵深库存。按每面5分折算得40/50分。"
+      "score": 40,
+      "status": "good"
     },
     "goldenPosition": {
+      "detail": "观测事实：8个我方排面中有6个位于货架中上黄金视线层（第2层），2个位于偏下层（第3层）。黄金位占比75%，得16/20分。",
+      "goldenFacings": 6,
+      "totalOwnFacings": 8,
       "score": 16,
-      "status": "good",
-      "detail": "观测事实：8个排面中有6个位于货架中上黄金视线层，2个在偏下层。黄金位占比约75%，得16/20分。"
+      "status": "good"
     },
     "labelOrientation": {
-      "score": 9,
-      "status": "good",
-      "detail": "观测事实：8瓶中7瓶正标完全朝外，仅右侧1瓶轻微偏转约15度。朝向整齐度高，得9/10分。"
+      "detail": "观测事实：8瓶我方产品中7瓶正标完全朝外，仅右侧1瓶轻微偏转约15度。正标朝外占比87.5%，得8/10分。",
+      "frontLabelFacings": 7,
+      "totalOwnFacings": 8,
+      "score": 8,
+      "status": "good"
     },
     "priceTag": {
+      "detail": "观测事实：我方酒瓶瓶颈挂有清晰完好的圆形数字价签牌（或陈列层下沿可见清晰价签条），价格数字可读无遮挡。按三档标准得10/10分。",
       "score": 10,
-      "status": "good",
-      "detail": "观测事实：我方陈列层下方可见清晰完好的白色价格标签，字体清楚无遮挡。按三档标准得10/10分。"
+      "status": "good"
     },
     "horizontalBanner": {
+      "detail": "观测事实：对照我方横签参考图检查陈列上下沿，未发现我方品牌横签（与 adMaterials 一致）。按三档标准得0/10分。",
       "score": 0,
-      "status": "poor",
-      "detail": "观测事实：对照我方横签参考图检查陈列上下沿，未发现我方品牌横签。按三档标准得0/10分。"
+      "status": "poor"
     }
   },
+
+  "facingMetrics": {
+    "ownFacingCount": 8,
+    "ownSkuCount": 2,
+    "totalShelfFacingCount": 24,
+    "ownFacingShare": 33.3,
+    "countingConfidence": 0.9
+  },
+
+  "score": 74,
+  "scoreLevel": "良好",
+  "summary": "我方品牌共占据8个正面排面（2个品规），核心产品位于黄金视线层，正标朝向较整齐，价签清晰，但缺少我方横签，建议补贴横签并争取再扩2个排面。",
 
   "competitiveAnalysis": {
     "totalBrands": 4,
@@ -182,37 +245,17 @@ user prompt 末尾可能会附上一份「本品牌产品资料」。那些品�
       "expectedEffect": "提升品牌视觉集中度，横签项直接+10分",
       "deadline": "当日"
     }
-  ],
-
-  "adMaterials": [
-    {
-      "name": "永丰特8方形灯箱",
-      "category": "灯箱",
-      "isOwn": true,
-      "count": 1,
-      "condition": "完好",
-      "position": "货架上方",
-      "confidence": 0.92
-    }
-  ],
-
-  "metadata": {
-    "imageQuality": "good",
-    "imageQualityReason": "",
-    "framingType": "panorama",
-    "shelfCount": 4,
-    "totalProducts": 24,
-    "photoRoles": ["门头照", "货架陈列照"]
-  }
+  ]
 }
 \`\`\`
 
 ## 重要规则
 
-1. **只输出 JSON**，不要输出任何解释文字、思考过程、markdown 代码块标记。第一个字符必须是 \`{\`，最后一个字符必须是 \`}\`。
-2. **所有字段必须存在**，未发现广告物料时 \`adMaterials\` 输出 \`[]\`。
-3. **不要编造看不清的信息**：数不清准确排面时给保守估计并降低 \`countingConfidence\`（<0.6）；看不清的产品不要编造。
-4. **严格遵守方案 B**：无货架照时 \`score: null, scoreLevel: "无货架照"\`；有货架照但无我方品牌时 \`ownBrandPresent: false, score: null, scoreLevel: "未上柜"\`。`
+1. **只输出 JSON**，不要输出任何解释文字、markdown 代码块标记。第一个字符必须是 \`{\`，最后一个字符必须是 \`}\`。
+2. **严禁破坏 JSON 语法**：所有中文文本字段（如 \`detail\`、\`summary\`、\`layerSummary\`）内部如需加引号，一律使用中文引号 \`「」\` 或 \`“”\`，**严禁在字符串值内部直接出现未转义的英文双引号 \`"\`**。
+3. **所有字段必须存在**，未发现广告物料时 \`adMaterials\` 输出 \`[]\`。
+4. **不要编造看不清的信息**：数不清准确排面时给保守估计并降低 \`countingConfidence\`（<0.6）；看不清的产品不要编造。
+5. **严格遵守方案 B**：无货架照时 \`score: null, scoreLevel: "无货架照"\`；有货架照但无我方品牌时 \`ownBrandPresent: false, score: null, scoreLevel: "未上柜"\`（仅在未上柜时写「货架未发现我方品牌」，在架时直接客观总结陈列现状即可）。`
 }
 
 const SYSTEM_PROMPT = buildSystemPrompt()
@@ -222,29 +265,106 @@ const SYSTEM_PROMPT = buildSystemPrompt()
 // ------------------------------------------------------------
 /**
  * 拼装用户侧提示词
- * @param {number} imageCount          本次门店拜访实拍照片张数（不含横签参考图）
+ * @param {number} imageCount          本次门店拜访实拍照片张数（不含参考图）
  * @param {string} brandReferenceText  从 products / adMaterials 集合动态生成的本品牌参考资料
  * @param {Array}  bannerRefMaterials  附带传入的横签参考图物料列表（最多 3 张）
+ * @param {Array}  productRefMaterials 附带传入的产品瓶身参考图列表（最多 4 张）
  * @returns {string}
  */
-function buildUserPrompt(imageCount, brandReferenceText, bannerRefMaterials = []) {
+function buildUserPrompt(imageCount, brandReferenceText, bannerRefMaterials = [], productRefMaterials = []) {
+  const prodList = Array.isArray(productRefMaterials) ? productRefMaterials : []
   const refList = Array.isArray(bannerRefMaterials) ? bannerRefMaterials : []
   const basePrompt = imageCount > 1
-    ? `前 ${imageCount} 张图片是业务员同一次门店拜访拍摄的实拍照片（可能包含门头照、货架陈列照、广告物料照）。请先区分每张实拍图的角色：门头照和纯物料照不参与货架排面及陈列打分，仅对货架陈列照统计我方最前排正面可见排面数（跨图去重后累加）并按 5 维量化锚点先观察后打分；同时扫描全部实拍照片识别广告物料（adMaterials）。`
-    : `第 1 张图片是业务员本次门店拜访拍摄的实拍照片（若为拼图或多区域画面，请自动区分门头、货架陈列与广告物料区域，门头和纯物料区域不参与货架打分）。请按 5 维量化锚点先观察后打分，并提取画面中的广告物料（adMaterials）。`
+    ? `前 ${imageCount} 张图片（标注为【实拍图 1/${imageCount}】至【实拍图 ${imageCount}/${imageCount}】）是业务员同一次门店拜访拍摄的实拍照片（可能包含门头照、货架陈列照、广告物料照）。请先区分每张实拍图的角色：门头照和纯物料照不参与货架排面及陈列打分，仅对货架陈列照先逐图逐层盘点我方最前排正面可见排面数（跨图去重后累加）再按 5 维量化锚点先观察后打分；同时扫描全部实拍照片识别广告物料（adMaterials）。`
+    : `第 1 张图片（标注为【实拍图 1/1】）是业务员本次门店拜访拍摄的实拍照片（若为拼图或多区域画面，请自动区分门头、货架陈列与广告物料区域，门头和纯物料区域不参与货架打分）。请先观察记录货架与产品事实，再按 5 维量化锚点打分，并提取画面中的广告物料（adMaterials）。`
+
+  let prodRefNote = ''
+  if (prodList.length > 0) {
+    const prodStartIdx = imageCount + 1
+    const prodEndIdx = imageCount + prodList.length
+    const slotLabelMap = { front: '正面参考照', side: '侧面参考照', back: '背面参考照' }
+    const prodLines = prodList.map((p, idx) => {
+      const nameParts = [p.brandName, p.productLine].filter(Boolean).join(' ')
+      const slotLabel = slotLabelMap[p.slot] || '瓶身参考照'
+      const parts = [`第 ${prodStartIdx + idx} 张（【产品参考图 ${idx + 1}/${prodList.length}】）：${nameParts || '我方产品'}（${slotLabel}）`]
+      if (Array.isArray(p.aliases) && p.aliases.length > 0) {
+        parts.push(`别名：${p.aliases.join('、')}`)
+      }
+      return `- ${parts.join('，')}`
+    })
+    prodRefNote = `\n\n## 我方产品瓶身参考图说明（重要：严禁计入本次拜访打分）\n紧随实拍图之后的第 ${prodStartIdx} 至第 ${prodEndIdx} 张图片（共 ${prodList.length} 张，已标注【产品参考图】）为【我方产品参考图】，仅用于帮你对照辨认实拍货架中的我方酒瓶包装与酒标：\n${prodLines.join('\n')}\n⚠️ 严禁将这 ${prodList.length} 张产品参考图本身当作本次门店实拍照片，严禁将其计入 photoRoles、productIdentification、排面数或任何得分！`
+  }
 
   let refNote = ''
   if (refList.length > 0) {
-    const startIdx = imageCount + 1
+    const startIdx = imageCount + prodList.length + 1
+    const endIdx = startIdx + refList.length - 1
     const refLines = refList.map((m, idx) => {
-      const parts = [`第 ${startIdx + idx} 张：标准名称「${m.materialName}」`]
+      const parts = [`第 ${startIdx + idx} 张（【横签参考图 ${idx + 1}/${refList.length}】）：标准名称「${m.materialName}」`]
       if (m.visualFeatures) parts.push(`视觉特征：${m.visualFeatures}`)
       return `- ${parts.join('，')}`
     })
-    refNote = `\n\n## 横签对照参考图说明（重要：严禁计入本次拜访打分）\n紧随在实拍照片之后的最后 ${refList.length} 张图片（第 ${startIdx} 至第 ${imageCount + refList.length} 张）为【我方横签参考图】，仅用于帮你识别实拍货架照中我方陈列上方或下方是否张贴了我方横签：\n${refLines.join('\n')}\n⚠️ 严禁将这 ${refList.length} 张参考图本身当作本次门店实拍照片，严禁将其计入 photoRoles、排面数、adMaterials 或任何得分！`
+    refNote = `\n\n## 横签对照参考图说明（重要：严禁计入本次拜访打分）\n末尾的最后 ${refList.length} 张图片（第 ${startIdx} 至第 ${endIdx} 张，已标注【横签参考图】）为【我方横签参考图】，仅用于帮你识别实拍货架照中我方陈列上方或下方是否张贴了我方横签：\n${refLines.join('\n')}\n⚠️ 严禁将这 ${refList.length} 张参考图本身当作本次门店实拍照片，严禁将其计入 photoRoles、排面数、adMaterials 或任何得分！`
   }
 
-  return basePrompt + refNote + (brandReferenceText || '') + '\n\n请严格按照 System Prompt 定义的 JSON 格式输出，只输出合法 JSON，不要输出任何其他内容。'
+  return basePrompt + prodRefNote + refNote + (brandReferenceText || '') + '\n\n请严格按照 System Prompt 定义的先观察后打分 JSON 字段顺序输出，只输出合法 JSON，不要输出任何其他内容。'
+}
+
+/**
+ * 拼装 DashScope 多模态图文交错 content 数组，避免把实拍图与参考图混成扁平数组导致串图污染。
+ * @param {object} params
+ * @param {string[]} params.visitImageUrls 实拍图片 URL / DataURL 列表
+ * @param {Array<{url:string, brandName?:string, productLine?:string, slot?:string}>} [params.productRefs]
+ * @param {Array<{url:string, materialName?:string, visualFeatures?:string}>} [params.bannerRefs]
+ * @param {string} params.userPrompt 末尾汇总指令文本
+ * @returns {Array<{text?:string, image?:string}>}
+ */
+function buildMultimodalUserContent({ visitImageUrls = [], productRefs = [], bannerRefs = [], userPrompt = '' } = {}) {
+  const content = []
+  const visits = Array.isArray(visitImageUrls) ? visitImageUrls.filter(Boolean) : []
+  const prods = Array.isArray(productRefs) ? productRefs.filter(r => r && r.url) : []
+  const banners = Array.isArray(bannerRefs) ? bannerRefs.filter(r => r && r.url) : []
+
+  if (visits.length > 0) {
+    content.push({
+      text: `=== 以下为本次门店现场实拍照片（共 ${visits.length} 张，请仅基于以下实拍图评估与打分）===`
+    })
+    visits.forEach((url, idx) => {
+      content.push({ text: `【实拍图 ${idx + 1}/${visits.length}】` })
+      content.push({ image: url })
+    })
+  }
+
+  if (prods.length > 0) {
+    const slotLabelMap = { front: '正面参考照', side: '侧面参考照', back: '背面参考照' }
+    content.push({
+      text: `=== 以下为我方产品瓶身参考图（共 ${prods.length} 张，非门店实拍！仅用于辅助对照识别实拍货架中的我方酒瓶，严禁计入实拍张数、photoRoles、排面数或任何打分）===`
+    })
+    prods.forEach((p, idx) => {
+      const name = [p.brandName, p.productLine].filter(Boolean).join(' ') || '我方产品'
+      const slotLabel = slotLabelMap[p.slot] || '瓶身参考照'
+      content.push({ text: `【产品参考图 ${idx + 1}/${prods.length}】${name}（${slotLabel}，非门店实拍）` })
+      content.push({ image: p.url })
+    })
+  }
+
+  if (banners.length > 0) {
+    content.push({
+      text: `=== 以下为我方横签对照参考图（共 ${banners.length} 张，非门店实拍！仅用于对照判断实拍货架照中是否贴了我方横签，严禁将其当作实拍发现了横签或计入 photoRoles/adMaterials/得分）===`
+    })
+    banners.forEach((b, idx) => {
+      const parts = [`标准名称「${b.materialName || '我方横签'}」`]
+      if (b.visualFeatures) parts.push(`视觉特征：${b.visualFeatures}`)
+      content.push({ text: `【横签参考图 ${idx + 1}/${banners.length}】${parts.join('，')}（非门店实拍）` })
+      content.push({ image: b.url })
+    })
+  }
+
+  if (userPrompt) {
+    content.push({ text: userPrompt })
+  }
+
+  return content
 }
 
 // ------------------------------------------------------------
@@ -309,6 +429,8 @@ function buildDailySummaryUserPrompt(inspections, aggregatedMetrics, brandRefere
       ownFacingCount: fm.ownFacingCount != null ? fm.ownFacingCount : null,
       ownSkuCount: fm.ownSkuCount != null ? fm.ownSkuCount : null,
       ownFacingShare: fm.ownFacingShare != null ? fm.ownFacingShare : null,
+      needsReview: Boolean(ar.metadata && ar.metadata.needsReview),
+      scoreReliability: (ar.metadata && ar.metadata.scoreReliability) || 'high',
       dimensions: Object.keys(dc).reduce((acc, k) => {
         if (dc[k] && typeof dc[k].score === 'number') {
           acc[k] = dc[k].maxScore ? `${dc[k].score}/${dc[k].maxScore}` : dc[k].score
@@ -335,6 +457,7 @@ module.exports = {
   SYSTEM_PROMPT,
   buildSystemPrompt,
   buildUserPrompt,
+  buildMultimodalUserContent,
   DAILY_SUMMARY_SYSTEM_PROMPT,
   buildDailySummaryUserPrompt
 }

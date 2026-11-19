@@ -42,7 +42,7 @@ Page({
     analyzeTime: '21:00',
     windowMinutes: 180,
     batchSize: 2,
-    imageMode: 'traffic', // traffic | quality
+    imageMode: 'quality', // quality | traffic
     scoringRules: {
       facingMaxScore: 50,
       facingTarget: 10,
@@ -130,7 +130,7 @@ Page({
       }
 
       // 同步到全局 + 本机缓存，供相机页读取（拍照上传策略全员统一）
-      const teamImageMode = s.imageMode === 'quality' ? 'quality' : 'traffic'
+      const teamImageMode = s.imageMode === 'traffic' ? 'traffic' : 'quality'
       app.globalData.systemConfig = {
         ...(app.globalData.systemConfig || {}),
         analyzeMode: s.analyzeMode,
@@ -306,6 +306,14 @@ Page({
     const field = e.currentTarget.dataset.field
     if (!field) return
     const next = Object.assign({}, this.data.scoringRules, { [field]: e.detail.value })
+    // 修改排面满分或目标面数时，自动同步单排面分值，避免三者口径冲突
+    if (field === 'facingMaxScore' || field === 'facingTarget') {
+      const fMax = Number(next.facingMaxScore)
+      const fTarget = Number(next.facingTarget)
+      if (Number.isFinite(fMax) && fMax >= 0 && Number.isFinite(fTarget) && fTarget > 0) {
+        next.facingPointsPerUnit = Math.round((fMax / fTarget) * 100) / 100
+      }
+    }
     const sum = (Number(next.facingMaxScore) || 0) +
       (Number(next.goldenPositionMaxScore) || 0) +
       (Number(next.labelOrientationMaxScore) || 0) +
@@ -334,6 +342,19 @@ Page({
 
     if (this.data.scoringRulesSum !== 100) {
       wx.showToast({ title: `5维满分合计须为100分（当前${this.data.scoringRulesSum}分）`, icon: 'none' })
+      return
+    }
+
+    const fMax = Number(this.data.scoringRules.facingMaxScore)
+    const fTarget = Number(this.data.scoringRules.facingTarget)
+    const fPerUnit = Number(this.data.scoringRules.facingPointsPerUnit)
+    if (!Number.isFinite(fTarget) || fTarget < 1 || fTarget > 100) {
+      wx.showToast({ title: '排面满分目标数需在 1-100 之间', icon: 'none' })
+      return
+    }
+    const expectedPerUnit = Math.round((fMax / fTarget) * 100) / 100
+    if ((fMax === 0 && fPerUnit !== 0) || (fMax > 0 && (!Number.isFinite(fPerUnit) || Math.abs(fPerUnit - fMax / fTarget) > 0.01))) {
+      wx.showToast({ title: `单排面分值须等于 ${fMax}÷${fTarget}=${expectedPerUnit} 分/面`, icon: 'none' })
       return
     }
 
@@ -536,7 +557,7 @@ Page({
 
     const parts = []
     if (failed > 0) parts.push(`${failed} 条分析失败`)
-    if (analyzing > 0) parts.push(`${analyzing} 条卡在分析中（超过 3 分钟的）`)
+    if (analyzing > 0) parts.push(`${analyzing} 条卡在分析中（超过 5 分钟的）`)
 
     const confirm = await new Promise(resolve => {
       wx.showModal({

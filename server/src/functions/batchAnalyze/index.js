@@ -64,9 +64,9 @@ const DEFAULT_SETTINGS = {
 const SOFT_DEADLINE_MS = 8 * 1000
 
 // 一条记录卡在 analyzing 超过这个时长，判定为僵尸，捞回 pending 重试。
-// 云函数最长活 60 秒，所以超过 3 分钟还停在 analyzing，一定是被硬杀了，
-// 不可能是"还在跑"。阈值不必留太长，越短用户看到自愈越快。
-const STUCK_THRESHOLD_MS = 3 * 60 * 1000
+// 自建后端开启有界思考后单条硬超时为 120 秒，因此将僵尸回收阈值设为 5 分钟，
+// 并在串行批量分析期间逐条刷新待处理批次心跳（analyzeStartedAt），避免正常排队被误回收。
+const STUCK_THRESHOLD_MS = 5 * 60 * 1000
 
 // 同一条记录最多重试几次，超过就标记失败，避免一张坏图无限占用额度
 const MAX_ATTEMPTS = 3
@@ -201,7 +201,17 @@ async function drainQueue({ settings, startedAt, ignoreDeadlineForFirst = false 
           console.log(`[batchAnalyze] 已锁定业务员(${targetOpenid})的 ${claimedCount} 条拜访记录，开始逐条执行标准单条分析...`)
 
           const succeededIds = []
-          for (const c of candidates) {
+          for (let idx = 0; idx < candidates.length; idx++) {
+            const c = candidates[idx]
+            // 逐条推进时刷新本批尚未完成记录的心跳时间，避免开启思考模式后整批耗时超过 STUCK_THRESHOLD_MS 时尾部记录被误判为僵尸重捞
+            if (idx > 0) {
+              const remainingIds = candidates.slice(idx).map(item => item._id)
+              await db.collection('inspections')
+                .where({ _id: _.in(remainingIds), status: 'analyzing' })
+                .update({ data: { analyzeStartedAt: db.serverDate() } })
+                .catch(hbErr => console.warn('[batchAnalyze] 刷新批次心跳失败:', hbErr.message || hbErr))
+            }
+
             results.processed += 1
             try {
               const singleRes = await cloud.callFunction({

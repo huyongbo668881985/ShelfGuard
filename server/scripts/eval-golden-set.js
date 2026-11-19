@@ -23,7 +23,8 @@ const fs = require('fs')
 const path = require('path')
 const {
   buildSystemPrompt,
-  buildUserPrompt
+  buildUserPrompt,
+  buildMultimodalUserContent
 } = require('../src/functions/analyzeImage/prompt')
 const {
   normalizeScoringRules,
@@ -32,22 +33,47 @@ const {
 
 const DASHSCOPE_URL = 'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation'
 
+function parseBoolFlag(raw, fallback) {
+  if (raw === undefined || raw === null || String(raw).trim() === '') return fallback
+  const s = String(raw).trim().toLowerCase()
+  if (['1', 'true', 'yes', 'on'].includes(s)) return true
+  if (['0', 'false', 'no', 'off'].includes(s)) return false
+  return fallback
+}
+
+function parseBoundedInt(raw, fallback, min, max) {
+  if (raw === undefined || raw === null || String(raw).trim() === '') return fallback
+  const n = parseInt(String(raw).trim(), 10)
+  if (!Number.isFinite(n)) return fallback
+  return Math.max(min, Math.min(max, n))
+}
+
 function parseArgs(argv) {
   const args = {
     dataset: '',
     runs: 1,
-    model: process.env.EVAL_MODEL || 'qwen3.8-flash',
+    model: process.env.EVAL_MODEL || process.env.DASHSCOPE_MODEL || 'qwen3.8-flash',
+    enableThinking: parseBoolFlag(process.env.DASHSCOPE_ENABLE_THINKING, true),
+    thinkingBudget: parseBoundedInt(process.env.DASHSCOPE_THINKING_BUDGET, 1024, 0, 8192),
+    maxTokens: parseBoundedInt(process.env.DASHSCOPE_MAX_TOKENS, 4096, 1024, 16384),
     out: '',
     dryRun: false
   }
   for (let i = 2; i < argv.length; i++) {
     const k = argv[i]
     if (k === '--dataset' && argv[i + 1]) args.dataset = argv[++i]
-    else if (k === '--runs' && argv[i + 1]) args.runs = Math.max(1, Math.min(10, parseInt(argv[++i], 10) || 1))
+    else if (k === '--runs' && argv[i + 1]) args.runs = parseBoundedInt(argv[++i], 1, 1, 10)
     else if (k === '--model' && argv[i + 1]) args.model = argv[++i]
+    else if (k === '--thinking-budget' && argv[i + 1]) {
+      args.thinkingBudget = parseBoundedInt(argv[++i], 0, 0, 8192)
+      args.enableThinking = args.thinkingBudget > 0
+    }
+    else if (k === '--no-thinking') { args.enableThinking = false; args.thinkingBudget = 0 }
+    else if (k === '--max-tokens' && argv[i + 1]) args.maxTokens = parseBoundedInt(argv[++i], 4096, 1024, 16384)
     else if (k === '--out' && argv[i + 1]) args.out = argv[++i]
     else if (k === '--dry-run') args.dryRun = true
   }
+  if (!args.enableThinking) args.thinkingBudget = 0
   return args
 }
 
@@ -60,10 +86,19 @@ function fileToDataUrl(filePath, baseDir) {
 }
 
 function isHybridThinkingModel(model) {
-  return /^qwen3(\.\d+)?[-.]/.test(model || '') && !String(model || '').startsWith('qwen-vl')
+  const m = String(model || '').trim()
+  return /^qwen3(\.\d+)?[-.]/i.test(m) && !/^qwen-vl/i.test(m)
 }
 
-async function callDashScope({ apiKey, model, imageUrls, userPrompt, systemPrompt }) {
+async function callDashScope({
+  apiKey,
+  model,
+  userContent,
+  systemPrompt,
+  enableThinking = true,
+  thinkingBudget = 1024,
+  maxTokens = 4096
+}) {
   const body = {
     model,
     input: {
@@ -71,19 +106,20 @@ async function callDashScope({ apiKey, model, imageUrls, userPrompt, systemPromp
         { role: 'system', content: [{ text: systemPrompt }] },
         {
           role: 'user',
-          content: [
-            ...imageUrls.map(url => ({ image: url })),
-            { text: userPrompt }
-          ]
+          content: userContent
         }
       ]
     },
     parameters: {
-      max_tokens: 2500,
+      max_tokens: maxTokens,
       temperature: 0.1,
       top_p: 0.5,
-      ...(model.startsWith('qwen-vl') ? { vl_high_resolution_images: true } : {}),
-      ...(isHybridThinkingModel(model) ? { enable_thinking: false, thinking_budget: 0 } : {})
+      ...(String(model).toLowerCase().startsWith('qwen-vl') ? { vl_high_resolution_images: true } : {}),
+      ...(isHybridThinkingModel(model)
+        ? (enableThinking && thinkingBudget > 0
+            ? { enable_thinking: true, thinking_budget: thinkingBudget }
+            : { enable_thinking: false, thinking_budget: 0 })
+        : {})
     }
   }
 
@@ -102,12 +138,13 @@ async function callDashScope({ apiKey, model, imageUrls, userPrompt, systemPromp
   const output = data && data.output
   if (output && Array.isArray(output.choices) && output.choices[0]) {
     const content = output.choices[0].message && output.choices[0].message.content
-    if (typeof content === 'string') return content
+    if (typeof content === 'string' && content.trim()) return content
     if (Array.isArray(content)) {
-      return content.map(p => (typeof p === 'string' ? p : p.text)).filter(Boolean).join('')
+      const text = content.map(p => (typeof p === 'string' ? p : p.text)).filter(Boolean).join('')
+      if (text) return text
     }
   }
-  if (output && typeof output.text === 'string') return output.text
+  if (output && typeof output.text === 'string' && output.text) return output.text
   throw new Error('DashScope 返回结构异常：未提取到文本')
 }
 
@@ -115,7 +152,7 @@ function parseRawJson(text) {
   let jsonStr = String(text || '').trim()
   const m = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/)
   if (m) jsonStr = m[1].trim()
-  if (!jsonStr.startsWith('{')) {
+  if (!jsonStr.startsWith('{') || !jsonStr.endsWith('}')) {
     const s = jsonStr.indexOf('{')
     const e = jsonStr.lastIndexOf('}')
     if (s !== -1 && e > s) jsonStr = jsonStr.slice(s, e + 1)
@@ -279,10 +316,19 @@ async function main() {
   const ownBrandNames = new Set((dataset.ownBrandNames || []).map(s => String(s || '').trim().toLowerCase()).filter(Boolean))
   const brandReferenceText = dataset.brandReferenceText || ''
 
-  const bannerRefMaterials = (Array.isArray(dataset.bannerRefMaterials) ? dataset.bannerRefMaterials : []).slice(0, 3)
-  const bannerRefUrls = args.dryRun
+  const productRefMaterials = (Array.isArray(dataset.productRefMaterials) ? dataset.productRefMaterials : []).slice(0, 4)
+  const productRefs = args.dryRun
     ? []
-    : bannerRefMaterials.filter(m => m.imagePath).map(m => fileToDataUrl(m.imagePath, datasetDir))
+    : productRefMaterials
+        .filter(p => p && p.imagePath)
+        .map(p => ({ ...p, url: fileToDataUrl(p.imagePath, datasetDir) }))
+
+  const bannerRefMaterials = (Array.isArray(dataset.bannerRefMaterials) ? dataset.bannerRefMaterials : []).slice(0, 3)
+  const bannerRefs = args.dryRun
+    ? []
+    : bannerRefMaterials
+        .filter(m => m && m.imagePath)
+        .map(m => ({ ...m, url: fileToDataUrl(m.imagePath, datasetDir) }))
 
   const caseReports = []
   for (const item of cases) {
@@ -292,8 +338,15 @@ async function main() {
     const userPrompt = buildUserPrompt(
       (item.images || []).length || 1,
       brandReferenceText,
-      bannerRefUrls.length > 0 ? bannerRefMaterials : []
+      bannerRefs,
+      productRefs
     )
+    const userContent = buildMultimodalUserContent({
+      visitImageUrls: visitImages,
+      productRefs,
+      bannerRefs,
+      userPrompt
+    })
 
     const runs = []
     for (let r = 0; r < args.runs; r++) {
@@ -303,14 +356,18 @@ async function main() {
           : await callDashScope({
               apiKey,
               model: args.model,
-              imageUrls: [...visitImages, ...bannerRefUrls],
-              userPrompt,
-              systemPrompt
+              userContent,
+              systemPrompt,
+              enableThinking: args.enableThinking,
+              thinkingBudget: args.thinkingBudget,
+              maxTokens: args.maxTokens
             })
         const parsedJson = parseRawJson(rawText)
         const normalized = validateAndNormalizeReport(parsedJson, rawText, {
+          activeMaterials: Array.isArray(dataset.activeMaterials) ? dataset.activeMaterials : bannerRefMaterials,
           scoringRules: rules,
-          ownBrandNames
+          ownBrandNames,
+          visitImageCount: (item.images || []).length || 1
         })
         runs.push({
           run: r + 1,

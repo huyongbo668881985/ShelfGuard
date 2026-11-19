@@ -15,12 +15,14 @@ const {
   SYSTEM_PROMPT,
   buildSystemPrompt,
   buildUserPrompt,
+  buildMultimodalUserContent,
   DAILY_SUMMARY_SYSTEM_PROMPT,
   buildDailySummaryUserPrompt
 } = require('./prompt')
 const {
   normalizeScoringRules,
   selectHorizontalBannerRefs,
+  selectProductRefs,
   normalizeAdMaterials,
   validateAndNormalizeReport,
   aggregateDailyMetrics,
@@ -34,61 +36,57 @@ cloud.init({
 const db = cloud.database()
 
 // ============================================================
-// AI 模型配置
+// AI 模型配置（支持通过环境变量 / settings.global 动态覆盖）
 // ============================================================
-//
-// 【API Key 填在哪里】（三选一，优先级从高到低）
-// 1. 【推荐】云函数环境变量：微信开发者工具 → 云开发控制台 → 云函数 →
-//    找到 analyzeImage → 版本与配置 → 环境变量 → 新增 DASHSCOPE_API_KEY = sk-xxxxxx
-//    Key 不进代码库、不经过前端，最安全。
-// 2. 小程序内「设置」页填写：会存进 settings 集合的 dashscopeApiKey 字段。
-//    方便，但 Key 会经过前端网络请求，建议只在没有云开发控制台权限时用。
-// 3. 直接写死在下面的 apiKey 里：仅限本地调试，千万别提交到 git。
-//
-// Key 从哪申请：阿里云百炼控制台 https://bailian.console.aliyun.com/
-// → 右上角头像 → API-KEY → 创建我的 API-KEY，形如 sk-xxxxxxxxxxxx
-//
+function parseBoundedIntEnv(name, fallback, min, max) {
+  const raw = process.env[name]
+  if (raw === undefined || raw === null || String(raw).trim() === '') return fallback
+  const n = parseInt(String(raw).trim(), 10)
+  if (!Number.isFinite(n)) return fallback
+  return Math.max(min, Math.min(max, n))
+}
+
+function parseBoolEnv(name, fallback) {
+  const raw = process.env[name]
+  if (raw === undefined || raw === null || String(raw).trim() === '') return fallback
+  const s = String(raw).trim().toLowerCase()
+  if (['1', 'true', 'yes', 'on'].includes(s)) return true
+  if (['0', 'false', 'no', 'off'].includes(s)) return false
+  return fallback
+}
+
+const DEFAULT_DASHSCOPE_MODEL = 'qwen3.8-flash'
+const DEFAULT_MAX_TOKENS = 4096
+const DEFAULT_ENABLE_THINKING = true
+const DEFAULT_THINKING_BUDGET = 1024
+const MAX_PRODUCT_REFS = parseBoundedIntEnv('AI_MAX_PRODUCT_REFS', 4, 0, 8)
+const MAX_BANNER_REFS = parseBoundedIntEnv('AI_MAX_BANNER_REFS', 3, 0, 5)
+const MAX_TOTAL_IMAGES = parseBoundedIntEnv('AI_MAX_TOTAL_IMAGES', 12, 4, 20)
+
 const AI_CONFIG = {
   qwen: {
-    // DashScope 多模态生成接口（qwen-vl 系列 与 Qwen3.7 系列通用，不是通用文本接口）。
-    // 注意：纯文本的 qwen-plus / qwen3.6-plus 不能放这里——它们不接收图片，
-    // 会导致整条分析链路失败。要识图必须选多模态模型：qwen-vl-plus、qwen3-vl-plus、qwen3.7-plus 等。
+    // DashScope 多模态生成接口（qwen-vl 系列与 Qwen3.x 多模态系列通用，不是纯文本接口）。
+    // 要识图必须选多模态模型：qwen3.8-flash / qwen3.7-plus / qwen3-vl-plus / qwen-vl-plus 等。
     apiUrl: 'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
-    model: 'qwen3.8-flash',
+    model: (process.env.DASHSCOPE_MODEL || '').trim() || DEFAULT_DASHSCOPE_MODEL,
     apiKey: process.env.DASHSCOPE_API_KEY || ''
   }
 }
 
-// 当前只走 qwen3.8-flash 这一个多模态通道，不再保留 OpenAI 备用通道。
 const CURRENT_MODEL = 'qwen'
 
-// 采样参数：陈列评分要的是稳定复现，不是创意，所以温度压到很低。
-// 如果发现同一张图多次分析分差还是很大，先看 PROMPT_GUIDE.md 建议 2。
+// 采样参数：陈列评分追求稳定可复现，温度压低；输出上限提升至 4096 防大货架 SKU 多时截断 JSON。
 const TEMPERATURE = 0.1
-const MAX_TOKENS = 2500
+const MAX_TOKENS = parseBoundedIntEnv('DASHSCOPE_MAX_TOKENS', DEFAULT_MAX_TOKENS, 1024, 16384)
+const ENABLE_THINKING = parseBoolEnv('DASHSCOPE_ENABLE_THINKING', DEFAULT_ENABLE_THINKING)
+const THINKING_BUDGET = parseBoundedIntEnv('DASHSCOPE_THINKING_BUDGET', DEFAULT_THINKING_BUDGET, 0, 8192)
 
-// ============================================================
-// ⚠️ 超时控制（改之前务必看懂，这里踩过坑）
-// ============================================================
-// 微信云函数单次执行**硬上限 60 秒**，到点进程直接被杀，
-// try/catch 和 finally 都不会执行 —— 也就是说记录的 status 会永远停在
-// analyzing，前端一直显示"分析中"，而 DashScope 那边其实已经跑完并计了费。
-//
-// 所以这里做两层防护：
-// 1. AI_HARD_TIMEOUT_MS：自己先掐表，到点主动抛错，把控制权交回 catch，
-//    保证能写入 analyze_failed，让用户看到失败而不是无限转圈。
-// 2. axios timeout 设得比它再小一点，让网络层先超时、错误信息更具体。
-//
-// 40 秒的余量怎么来的：本函数前后还有取图片临时链接、查产品库、写数据库这些开销
-// （合计约 3-5 秒），40 + 5 = 45 秒，距离 60 秒硬上限还剩 15 秒安全垫。
-// 另外 batchAnalyze 是同步等本函数返回的，它自己也要在 60 秒内收尾，所以不能贴太满。
-//
-// 关掉思考模式后，一次三图分析正常在 15-25 秒完成，40 秒是够用的。
-// 如果日志里频繁出现"主动中止"，说明图片太大或太多，优先压缩图片而不是调大这里
-// —— 上限是 60 秒，调不动的。
-// 自建后端没有云函数 60 秒硬上限。这里留 90 秒，避免正常偏慢的多图分析被误判失败。
-const AI_HARD_TIMEOUT_MS = 90 * 1000
-const AI_HTTP_TIMEOUT_MS = 85 * 1000
+// 自建后端已无微信云函数 60 秒硬上限，开启有界思考后留 120s 硬超时 / 110s HTTP 超时。
+const AI_HARD_TIMEOUT_MS = parseBoundedIntEnv('DASHSCOPE_HARD_TIMEOUT_MS', 120 * 1000, 30 * 1000, 300 * 1000)
+const AI_HTTP_TIMEOUT_MS = Math.min(
+  AI_HARD_TIMEOUT_MS - 5000,
+  parseBoundedIntEnv('DASHSCOPE_HTTP_TIMEOUT_MS', 110 * 1000, 25 * 1000, 290 * 1000)
+)
 
 
 // ============================================================
@@ -288,7 +286,7 @@ async function analyzeSingleInspection(inspectionDoc, idsToAnalyze, preloadedCon
       .map(f => f.tempFileURL)
     console.log('[1/5] 图片获取成功')
 
-    // 2. 加载产品库、广告物料库、横签对照参考图与评分规则配置
+    // 2. 加载产品库（含瓶身参考图）、广告物料库、横签对照参考图与评分规则配置
     console.log('[2/5] 查询产品库、物料库与评分配置...')
     const ctx = preloadedContext || await loadAnalysisContext()
     const {
@@ -296,21 +294,28 @@ async function analyzeSingleInspection(inspectionDoc, idsToAnalyze, preloadedCon
       brandReferenceText,
       ownBrandNames,
       scoringRules,
-      bannerRefMaterials,
-      bannerRefUrls
+      productRefs = [],
+      bannerRefs = [],
+      bannerRefMaterials = [],
+      bannerRefUrls = [],
+      runtimeSettings = null
     } = ctx
-    console.log(`[2/5] 上下文加载完成（横签参考图 ${bannerRefUrls.length} 张）`)
+    console.log(`[2/5] 上下文加载完成（产品参考图 ${productRefs.length} 张，横签参考图 ${bannerRefs.length} 张）`)
 
-    // 3. 调用 AI 视觉模型分析（实拍图 + 最多 3 张横签参考图）
-    console.log(`[3/5] 调用 ${CURRENT_MODEL}/${AI_CONFIG[CURRENT_MODEL].model} 视觉分析...`)
+    // 3. 调用 AI 视觉模型分析（图文交错：实拍图 + 产品参考图 + 横签参考图）
+    const runtimeConfig = resolveRuntimeAIConfig(runtimeSettings)
+    console.log(`[3/5] 调用 ${CURRENT_MODEL}/${runtimeConfig.model} 视觉分析（thinking=${runtimeConfig.enableThinking}, budget=${runtimeConfig.thinkingBudget}, maxTokens=${runtimeConfig.maxTokens}）...`)
     const analysis = await withHardTimeout(
       analyzeWithVision(imageUrls, {
         brandReferenceText,
         activeMaterials,
         ownBrandNames,
         scoringRules,
+        productRefs,
+        bannerRefs,
         bannerRefMaterials,
-        bannerRefUrls
+        bannerRefUrls,
+        runtimeSettings
       }),
       AI_HARD_TIMEOUT_MS,
       `AI 分析超过 ${AI_HARD_TIMEOUT_MS / 1000} 秒未完成，已主动中止。常见原因：单次照片过多、图片分辨率过高`
@@ -341,7 +346,7 @@ async function analyzeSingleInspection(inspectionDoc, idsToAnalyze, preloadedCon
         status: 'analyzed',
         analyzedAt: db.serverDate(),
         analyzeError: '',
-        analyzedModel: AI_CONFIG[CURRENT_MODEL].model,
+        analyzedModel: (analysis.debug && analysis.debug.model) || runtimeConfig.model,
         analyzedFileID: idsToAnalyze[0],
         analyzedFileIDs: idsToAnalyze,
         aiDebug: analysis.debug
@@ -391,10 +396,104 @@ function withHardTimeout(promise, ms, message) {
 }
 
 // ============================================================
-// API Key 解析：环境变量优先，其次读 settings 集合
+// 运行时 AI 配置与 API Key 解析：环境变量优先，其次读 settings 集合
 // ============================================================
-async function resolveApiKey(config) {
+function resolveRuntimeAIConfig(settingsDoc = null) {
+  const base = AI_CONFIG[CURRENT_MODEL]
+  const envModel = (process.env.DASHSCOPE_MODEL || '').trim()
+  const settingsModel = settingsDoc && typeof settingsDoc.aiModel === 'string' ? settingsDoc.aiModel.trim() : ''
+  const model = envModel || settingsModel || base.model || DEFAULT_DASHSCOPE_MODEL
+
+  const settingsMaxTokens = settingsDoc && Number.isFinite(Number(settingsDoc.aiMaxTokens))
+    ? Math.max(1024, Math.min(16384, Math.round(Number(settingsDoc.aiMaxTokens))))
+    : null
+  const settingsEnableThinking = settingsDoc && typeof settingsDoc.aiEnableThinking === 'boolean'
+    ? settingsDoc.aiEnableThinking
+    : null
+  const settingsThinkingBudget = settingsDoc && Number.isFinite(Number(settingsDoc.aiThinkingBudget))
+    ? Math.max(0, Math.min(8192, Math.round(Number(settingsDoc.aiThinkingBudget))))
+    : null
+
+  const maxTokens = parseBoundedIntEnv(
+    'DASHSCOPE_MAX_TOKENS',
+    settingsMaxTokens !== null ? settingsMaxTokens : MAX_TOKENS,
+    1024,
+    16384
+  )
+  const enableThinking = parseBoolEnv(
+    'DASHSCOPE_ENABLE_THINKING',
+    settingsEnableThinking !== null ? settingsEnableThinking : ENABLE_THINKING
+  )
+  const thinkingBudget = parseBoundedIntEnv(
+    'DASHSCOPE_THINKING_BUDGET',
+    settingsThinkingBudget !== null ? settingsThinkingBudget : THINKING_BUDGET,
+    0,
+    8192
+  )
+
+  return {
+    apiUrl: base.apiUrl,
+    model,
+    apiKey: process.env.DASHSCOPE_API_KEY || base.apiKey || '',
+    maxTokens,
+    enableThinking,
+    thinkingBudget
+  }
+}
+
+function buildQwenRequestParameters(config, callOptions = {}) {
+  const model = (config && config.model) || DEFAULT_DASHSCOPE_MODEL
+  const maxTokens = Number.isFinite(Number(callOptions.maxTokens))
+    ? Math.max(256, Math.round(Number(callOptions.maxTokens)))
+    : (Number.isFinite(Number(config && config.maxTokens)) ? Math.round(Number(config.maxTokens)) : MAX_TOKENS)
+  const enableThinking = callOptions.enableThinking !== undefined
+    ? Boolean(callOptions.enableThinking)
+    : Boolean(config && config.enableThinking !== undefined ? config.enableThinking : ENABLE_THINKING)
+  const rawBudget = callOptions.thinkingBudget !== undefined
+    ? Number(callOptions.thinkingBudget)
+    : Number(config && config.thinkingBudget !== undefined ? config.thinkingBudget : THINKING_BUDGET)
+  const thinkingBudget = Number.isFinite(rawBudget) ? Math.max(0, Math.min(8192, Math.round(rawBudget))) : THINKING_BUDGET
+
+  const params = {
+    max_tokens: maxTokens,
+    temperature: TEMPERATURE,
+    top_p: 0.5
+  }
+
+  // 高分辨率模式：vl_high_resolution_images 仅对老 qwen-vl 系列有效，Qwen3.x 原生支持高分辨率
+  if (String(model).toLowerCase().startsWith('qwen-vl')) {
+    params.vl_high_resolution_images = true
+  }
+
+  // Qwen3.x 混合思考模型：支持有界思考（enable_thinking: true + thinking_budget），
+  // 视觉计数/多图去重默认开启有界思考；纯文本汇总或降级重试可显式关闭或省略思考参数。
+  if (!callOptions.omitThinkingParams && isHybridThinkingModel(model)) {
+    if (enableThinking && thinkingBudget > 0) {
+      params.enable_thinking = true
+      params.thinking_budget = thinkingBudget
+    } else {
+      params.enable_thinking = false
+      params.thinking_budget = 0
+    }
+  }
+
+  return params
+}
+
+function allocateReferenceBudget(visitCount, productRefs = [], bannerRefs = [], maxTotalImages = MAX_TOTAL_IMAGES) {
+  const remainingAfterVisits = Math.max(0, maxTotalImages - Math.max(0, visitCount))
+  const banners = Array.isArray(bannerRefs) ? bannerRefs.slice(0, Math.min(MAX_BANNER_REFS, remainingAfterVisits)) : []
+  const remainingForProducts = Math.max(0, remainingAfterVisits - banners.length)
+  const products = Array.isArray(productRefs) ? productRefs.slice(0, Math.min(MAX_PRODUCT_REFS, remainingForProducts)) : []
+  return { productRefs: products, bannerRefs: banners }
+}
+
+async function resolveApiKey(config, settingsDoc = null) {
   if (config.apiKey) return config.apiKey
+  if (settingsDoc && settingsDoc.dashscopeApiKey) {
+    console.log('使用 settings 集合中配置的 API Key')
+    return settingsDoc.dashscopeApiKey
+  }
 
   // 环境变量没配时，退回读小程序设置页写入的 Key
   try {
@@ -411,14 +510,14 @@ async function resolveApiKey(config) {
 }
 
 // ============================================================
-// 评分规则 & 产品库 & 广告物料库 & 横签参考图加载
+// 评分规则 & 产品库（含瓶身参考图）& 广告物料库 & 横签参考图加载
 // ============================================================
-async function loadScoringRules() {
+async function loadGlobalSettingsDoc() {
   try {
     const res = await db.collection('settings').doc('global').get()
-    return normalizeScoringRules(res.data && res.data.scoringRules)
+    return (res && res.data) || null
   } catch (err) {
-    return normalizeScoringRules(null)
+    return null
   }
 }
 
@@ -433,16 +532,18 @@ async function loadActiveMaterials() {
 }
 
 async function loadAnalysisContext() {
-  const scoringRules = await loadScoringRules()
+  const runtimeSettings = await loadGlobalSettingsDoc()
+  const scoringRules = normalizeScoringRules(runtimeSettings && runtimeSettings.scoringRules)
   const activeMaterials = await loadActiveMaterials()
   const ownBrandNames = new Set()
   let brandReferenceText = ''
+  let activeProducts = []
 
   try {
     const res = await db.collection('products').where({ isActive: true }).get()
-    const products = res.data || []
-    if (products.length > 0) {
-      const lines = products.map(p => {
+    activeProducts = res.data || []
+    if (activeProducts.length > 0) {
+      const lines = activeProducts.map(p => {
         if (p.brandName) ownBrandNames.add(String(p.brandName).trim().toLowerCase())
         const parts = [`品牌：${p.brandName}`]
         if (p.productLine) parts.push(`产品线：${p.productLine}`)
@@ -474,8 +575,32 @@ async function loadAnalysisContext() {
     brandReferenceText += `\n\n## 本品牌广告物料库（识别画面中的广告物料时必须优先比对下列物料，并在 adMaterials[].name 中严格输出对应的「标准名称」）\n${mLines.join('\n')}`
   }
 
-  // 筛选启用且带参考图 photo 的横签，最多取 3 张作为对照图传给视觉模型
-  const candidateBannerRefs = selectHorizontalBannerRefs(activeMaterials, 3)
+  // 筛选启用且带瓶身参考图的产品（优先正面照 front），最多 MAX_PRODUCT_REFS 张
+  const candidateProductRefs = selectProductRefs(activeProducts, MAX_PRODUCT_REFS)
+  const productRefs = []
+  if (candidateProductRefs.length > 0) {
+    try {
+      const prodFileRes = await cloud.readFilesAsDataUrls({
+        fileList: candidateProductRefs.map(p => p.photo)
+      })
+      const byFileId = new Map()
+      ;(prodFileRes.fileList || []).forEach(f => {
+        if (f && f.fileID && f.tempFileURL) byFileId.set(f.fileID, f.tempFileURL)
+      })
+      candidateProductRefs.forEach(p => {
+        const url = byFileId.get(p.photo)
+        if (url) {
+          productRefs.push({ ...p, url })
+        }
+      })
+    } catch (err) {
+      console.warn('读取产品瓶身参考图失败，降级为纯文本产品资料:', err.message || err)
+    }
+  }
+
+  // 筛选启用且带参考图 photo 的横签，最多取 MAX_BANNER_REFS 张作为对照图传给视觉模型
+  const candidateBannerRefs = selectHorizontalBannerRefs(activeMaterials, MAX_BANNER_REFS)
+  const bannerRefs = []
   const bannerRefMaterials = []
   const bannerRefUrls = []
   if (candidateBannerRefs.length > 0) {
@@ -490,6 +615,7 @@ async function loadAnalysisContext() {
       candidateBannerRefs.forEach(m => {
         const url = byFileId.get(m.photo)
         if (url) {
+          bannerRefs.push({ ...m, url })
           bannerRefMaterials.push(m)
           bannerRefUrls.push(url)
         }
@@ -500,10 +626,13 @@ async function loadAnalysisContext() {
   }
 
   return {
+    runtimeSettings,
     scoringRules,
     activeMaterials,
     ownBrandNames,
     brandReferenceText,
+    productRefs,
+    bannerRefs,
     bannerRefMaterials,
     bannerRefUrls
   }
@@ -548,11 +677,11 @@ async function syncCustomerMaterials(customerId, adMaterials, inspectionId) {
 // AI 调用逻辑
 // ============================================================
 async function analyzeWithVision(imageUrls, options = {}) {
-  const config = AI_CONFIG[CURRENT_MODEL]
-  const apiKey = await resolveApiKey(config)
+  const config = resolveRuntimeAIConfig(options.runtimeSettings || null)
+  const apiKey = await resolveApiKey(config, options.runtimeSettings || null)
 
   if (!apiKey) {
-    console.warn('未配置 AI API Key，拒绝将模拟报告写入数据库（防止假数据污染统计）。配置方法见本文件顶部 AI_CONFIG 注释。')
+    console.warn('未配置 AI API Key，拒绝将模拟报告写入数据库（防止假数据污染统计）。配置方法见本文件顶部注释。')
     return {
       text: generateMockReport(options.scoringRules),
       debug: { mode: 'mock', reason: '未配置 API Key' },
@@ -565,36 +694,129 @@ async function analyzeWithVision(imageUrls, options = {}) {
     activeMaterials = [],
     ownBrandNames = new Set(),
     scoringRules = null,
+    productRefs = [],
+    bannerRefs = [],
     bannerRefMaterials = [],
     bannerRefUrls = []
   } = options
 
-  const systemPrompt = buildSystemPrompt(scoringRules)
-  const userPrompt = buildUserPrompt(imageUrls.length, brandReferenceText, bannerRefMaterials)
-  const allImages = [...imageUrls, ...bannerRefUrls]
+  // 兼容旧调用方仅传 bannerRefMaterials + bannerRefUrls 的形式
+  const rawBannerRefs = bannerRefs.length > 0
+    ? bannerRefs
+    : bannerRefMaterials.map((m, idx) => ({ ...m, url: bannerRefUrls[idx] })).filter(r => r && r.url)
 
-  const { text, debug } = await callQwen(config, apiKey, allImages, userPrompt, systemPrompt)
-  const parsed = parseAIResponse(text, { activeMaterials, scoringRules, ownBrandNames })
+  const allocated = allocateReferenceBudget(imageUrls.length, productRefs, rawBannerRefs, MAX_TOTAL_IMAGES)
+  const systemPrompt = buildSystemPrompt(scoringRules)
+  const userPrompt = buildUserPrompt(
+    imageUrls.length,
+    brandReferenceText,
+    allocated.bannerRefs,
+    allocated.productRefs
+  )
+  const userContent = buildMultimodalUserContent({
+    visitImageUrls: imageUrls,
+    productRefs: allocated.productRefs,
+    bannerRefs: allocated.bannerRefs,
+    userPrompt
+  })
+
+  const primaryCallOpts = {
+    enableThinking: config.enableThinking,
+    thinkingBudget: config.thinkingBudget,
+    maxTokens: config.maxTokens
+  }
+  const parseOpts = {
+    activeMaterials,
+    scoringRules,
+    ownBrandNames,
+    visitImageCount: imageUrls.length
+  }
+
+  let text
+  let debug
+  let thinkingFallback = ''
+  const thinkingAttempted = isHybridThinkingModel(config.model) && config.enableThinking && config.thinkingBudget > 0
+
+  try {
+    const primaryRes = await callQwen(config, apiKey, userContent, systemPrompt, primaryCallOpts)
+    text = primaryRes.text
+    debug = primaryRes.debug
+  } catch (primaryErr) {
+    const isThinkingParamErr = thinkingAttempted &&
+      /thinking/i.test(String(primaryErr && primaryErr.message || '')) &&
+      (/InvalidParameter|400|parameter/i.test(String((primaryErr && primaryErr.dashscopeCode) || (primaryErr && primaryErr.message) || '')))
+    const isReasoningOnlyErr = thinkingAttempted && primaryErr && primaryErr.code === 'REASONING_ONLY'
+
+    if (isReasoningOnlyErr || isThinkingParamErr) {
+      thinkingFallback = isReasoningOnlyErr ? 'reasoning_only' : 'unsupported_param'
+      console.warn(`[analyzeWithVision] 有界思考调用异常(${thinkingFallback})，自动降级为关闭思考重试一次:`, primaryErr.message)
+      const retryOpts = isThinkingParamErr
+        ? { omitThinkingParams: true, maxTokens: config.maxTokens }
+        : { enableThinking: false, thinkingBudget: 0, maxTokens: config.maxTokens }
+      const retryRes = await callQwen(config, apiKey, userContent, systemPrompt, retryOpts)
+      text = retryRes.text
+      debug = retryRes.debug
+    } else {
+      throw primaryErr
+    }
+  }
+
+  let parsed = parseAIResponse(text, parseOpts)
+  // 若首次响应解析失败（输出被 max_tokens 截断，或偶发未转义引号等 JSON 语法错），自动重试一次提升稳定性
+  if (!thinkingFallback && parsed.metadata && parsed.metadata.parseError) {
+    const isTruncated = Boolean(debug && debug.finishReason === 'length')
+    thinkingFallback = (thinkingAttempted && isTruncated) ? 'truncated_json' : 'json_parse_retry'
+    console.warn(
+      `[analyzeWithVision] 首次响应 JSON 解析失败(${thinkingFallback}, finishReason=${(debug && debug.finishReason) || 'unknown'})，自动重试一次`
+    )
+    const retryOpts = thinkingAttempted
+      ? { enableThinking: false, thinkingBudget: 0, maxTokens: config.maxTokens }
+      : { ...primaryCallOpts }
+    const retryRes = await callQwen(config, apiKey, userContent, systemPrompt, retryOpts)
+    text = retryRes.text
+    debug = retryRes.debug
+    parsed = parseAIResponse(text, parseOpts)
+  }
+
   debug.parsedOk = !(parsed.metadata && parsed.metadata.parseError)
   debug.visitImageCount = imageUrls.length
-  debug.bannerRefCount = bannerRefUrls.length
+  debug.productRefCount = allocated.productRefs.length
+  debug.bannerRefCount = allocated.bannerRefs.length
+  if (thinkingFallback) {
+    debug.thinkingFallback = thinkingFallback
+  }
   return { text: parsed, debug }
 }
 
 /**
- * 调用通义千问 Qwen3.7-Plus（DashScope 原生多模态接口，支持一次传入多张图片）
- * Qwen3.7-Plus 是视觉-语言一体化多模态模型，能直接接收图片做视觉理解。
- *
- * 请求体结构（图片与文本都放进同一个 content 数组）：
- * - 图片放 input.messages[].content 数组里，格式是 { image: 'https://...' }
- * - 文本放同一个数组里，格式是 { text: '...' }
- * - 采样参数在顶层 parameters 里，不是平铺在 body 上
- *
- * 图片链接用的是云存储 getTempFileURL 返回的公网临时地址（有效期 2 小时），
- * DashScope 会自己去拉取，所以云存储不能设成完全私有。
+ * 调用通义千问 DashScope 原生多模态接口（支持图文交错 content 数组，以及旧版 (imageUrls, userPrompt) 入参）
  */
-async function callQwen(config, apiKey, imageUrls, userPrompt, systemPrompt = SYSTEM_PROMPT) {
-  const imageContent = imageUrls.map(url => ({ image: url }))
+async function callQwen(config, apiKey, contentOrImageUrls, userPromptOrSystemPrompt, maybeSystemPrompt, maybeCallOptions) {
+  let userContent
+  let systemPrompt = SYSTEM_PROMPT
+  let callOptions = {}
+
+  const isInterleavedContent = Array.isArray(contentOrImageUrls) &&
+    contentOrImageUrls.length > 0 &&
+    typeof contentOrImageUrls[0] === 'object' &&
+    contentOrImageUrls[0] !== null
+
+  if (isInterleavedContent) {
+    userContent = contentOrImageUrls
+    systemPrompt = userPromptOrSystemPrompt || SYSTEM_PROMPT
+    callOptions = maybeSystemPrompt && typeof maybeSystemPrompt === 'object' ? maybeSystemPrompt : {}
+  } else {
+    const imageUrls = Array.isArray(contentOrImageUrls) ? contentOrImageUrls : []
+    const userPrompt = userPromptOrSystemPrompt || ''
+    systemPrompt = maybeSystemPrompt || SYSTEM_PROMPT
+    callOptions = maybeCallOptions && typeof maybeCallOptions === 'object' ? maybeCallOptions : {}
+    userContent = [
+      ...imageUrls.map(url => ({ image: url })),
+      { text: userPrompt }
+    ]
+  }
+
+  const parameters = buildQwenRequestParameters(config, callOptions)
 
   let response
   try {
@@ -608,35 +830,11 @@ async function callQwen(config, apiKey, imageUrls, userPrompt, systemPrompt = SY
           },
           {
             role: 'user',
-            content: [
-              ...imageContent,
-              { text: userPrompt }
-            ]
+            content: userContent
           }
         ]
       },
-      parameters: {
-        max_tokens: MAX_TOKENS,
-        temperature: TEMPERATURE,
-        top_p: 0.5,
-        // 高分辨率模式：把单图 token 上限从 1280 提到 16384，
-        // 货架上的价签、瓶标小字要靠它才看得清。代价是 token 消耗上升。
-        // 注意：vl_high_resolution_images 是 qwen-vl 老系列的专用参数，
-        // Qwen3.7 系列原生就支持高分辨率，不需要也不会接受这个参数，
-        // 传了反而可能报「参数错误」，所以只对 qwen-vl 前缀的模型开启。
-        ...(config.model.startsWith('qwen-vl') ? { vl_high_resolution_images: true } : {}),
-        // ⚠️⚠️ 千万不要删掉下面这两行 ⚠️⚠️
-        // Qwen3.x 是"混合思考"模型，**默认开启思考模式**：回答正文之前会先生成
-        // 一大段推理过程（reasoning_content）。对陈列打分这种结构化提取任务，
-        // 思考过程没有价值，却带来两个致命后果：
-        //   1. 耗时翻 2-4 倍 —— 直接把云函数顶穿 60 秒硬上限，记录卡死在"分析中"
-        //   2. 思考 token 照常计费 —— 一次简单分析能烧掉近 2 万 token
-        // 关闭后必须两个参数一起传：只设 thinking_budget=0 而不设 enable_thinking，
-        // 模型仍会输出 reasoning_content 并计费（官方文档明确说明）。
-        ...(isHybridThinkingModel(config.model)
-          ? { enable_thinking: false, thinking_budget: 0 }
-          : {})
-      }
+      parameters
     }, {
       headers: {
         'Content-Type': 'application/json',
@@ -645,78 +843,81 @@ async function callQwen(config, apiKey, imageUrls, userPrompt, systemPrompt = SY
       timeout: AI_HTTP_TIMEOUT_MS
     })
   } catch (err) {
-    // DashScope 的报错信息藏在 response.data 里，直接抛 axios 原始错误会丢掉
-    // "Invalid API-key" / "模型不存在" 这类关键提示，排查时非常痛苦
     const data = err.response && err.response.data
     if (data && (data.message || data.code)) {
-      throw new Error(`DashScope 调用失败[${data.code || err.response.status}]: ${data.message || '未知错误'}`)
+      const apiErr = new Error(`DashScope 调用失败[${data.code || err.response.status}]: ${data.message || '未知错误'}`)
+      apiErr.dashscopeCode = data.code || String(err.response.status || '')
+      throw apiErr
     }
-    // 网络层超时：说明模型生成太慢（图片太大／太多，或思考模式没关掉）
     if (err.code === 'ECONNABORTED') {
-      throw new Error(`AI 响应超过 ${AI_HTTP_TIMEOUT_MS / 1000} 秒未返回，已中止。建议减少单次照片数量或压缩图片`)
+      throw new Error(`AI 响应超过 ${AI_HTTP_TIMEOUT_MS / 1000} 秒未返回，已中止。建议减少单次照片数量或适当调小 DASHSCOPE_THINKING_BUDGET`)
     }
     throw err
   }
 
-  // 构造一份诊断快照，无论解析成功与否都透传给调用方写进数据库，
-  // 方便在云开发控制台直接看"模型到底回了什么、思考模式到底关没关"，而不用再靠猜。
+  // 构造一份诊断快照，无论解析成功与否都透传给调用方写进数据库
   const output = response.data && response.data.output
-  const msg = output && output.choices && output.choices[0] && output.choices[0].message
+  const choice = output && Array.isArray(output.choices) && output.choices[0]
+  const msg = choice && choice.message
   const contentType = msg ? (Array.isArray(msg.content) ? 'array' : typeof msg.content) : 'none'
-  const hasReasoning = !!(msg && (msg.reasoning_content || msg.reasoning))
+  const reasoningText = msg && (msg.reasoning_content || msg.reasoning || '')
+  const hasReasoning = Boolean(reasoningText)
   const reasoningOnly = hasReasoning && (
     contentType === 'none' ||
-    (Array.isArray(msg.content) && msg.content.every(p => !p.text))
+    (typeof msg.content === 'string' && !msg.content.trim()) ||
+    (Array.isArray(msg.content) && msg.content.every(p => !p || !p.text))
   )
   const debug = {
     model: config.model,
-    enableThinkingSent: isHybridThinkingModel(config.model),
+    enableThinking: Boolean(parameters.enable_thinking),
+    thinkingBudget: parameters.thinking_budget != null ? parameters.thinking_budget : 0,
+    maxTokens: parameters.max_tokens,
+    finishReason: (choice && choice.finish_reason) || (output && output.finish_reason) || '',
     hasOutput: !!output,
     hasChoices: !!(output && Array.isArray(output.choices) && output.choices.length > 0),
     contentType,
     hasReasoning,
-    reasoningOnly,        // true = 模型只吐了思考过程、没吐正文，说明 enable_thinking 没关成功
+    reasoningLength: typeof reasoningText === 'string' ? reasoningText.length : 0,
+    reasoningOnly,
     dashscopeCode: response.data && response.data.code,
     dashscopeMessage: response.data && response.data.message,
     requestId: response.data && response.data.request_id
   }
 
   try {
-    const text = extractQwenText(response.data)
+    const text = extractQwenText(response.data, { enableThinking: Boolean(parameters.enable_thinking) })
     return { text, debug }
   } catch (extractErr) {
-    // 把诊断一并带上去，让 catch 上游能把 reasoningOnly 这类关键信号落库
     extractErr.debug = debug
     throw extractErr
   }
 }
 
 /**
- * 判断是否为 Qwen3.x 混合思考模型（需要显式关闭思考模式）
+ * 判断是否为 Qwen3.x 混合思考模型
  *
  * 命中的模型：qwen3.5-* / qwen3.6-* / qwen3.7-* / qwen3.8-* 全系（plus / max / flash）
  * 不命中的：qwen-vl-plus 等老 VL 系列（不认识 enable_thinking 参数，传了会报参数错误）
  */
 function isHybridThinkingModel(model) {
-  return /^qwen3(\.\d+)?[-.]/.test(model || '') && !model.startsWith('qwen-vl')
+  const m = String(model || '').trim()
+  return /^qwen3(\.\d+)?[-.]/i.test(m) && !/^qwen-vl/i.test(m)
 }
 
 /**
  * 从 DashScope 响应里取出文本
- * 官方对不同模型/不同时期返回过两种结构，这里都兼容一下，
- * 免得哪天换个模型名就整条链路静默返回 undefined。
  */
-function extractQwenText(data) {
+function extractQwenText(data, options = {}) {
   if (!data || !data.output) {
     throw new Error('DashScope 返回结构异常：缺少 output 字段')
   }
 
   const output = data.output
 
-  // 结构一（qwen-vl 系列多模态接口）：output.choices[0].message.content 是数组
+  // 结构一（qwen-vl / qwen3 多模态接口）：output.choices[0].message.content 是数组或字符串
   if (Array.isArray(output.choices) && output.choices.length > 0) {
     const content = output.choices[0].message && output.choices[0].message.content
-    if (typeof content === 'string') return content
+    if (typeof content === 'string' && content.trim()) return content
     if (Array.isArray(content)) {
       const text = content
         .map(part => (typeof part === 'string' ? part : part.text))
@@ -731,12 +932,13 @@ function extractQwenText(data) {
     return output.text
   }
 
-  // 走到这里通常意味着：模型只输出了思考过程（reasoning_content）没输出正文，
-  // 说明 enable_thinking 没关成功。把这个判断单独拎出来，免得又被
-  // "返回结构异常"这种万金油报错掩盖掉真正原因。
   const msg = output.choices && output.choices[0] && output.choices[0].message
   if (msg && (msg.reasoning_content || msg.reasoning)) {
-    throw new Error('模型只返回了思考过程、没有正文，请确认 enable_thinking 参数已生效')
+    const err = options.enableThinking
+      ? new Error('模型思考耗尽输出预算未能生成正文，请适当调小 DASHSCOPE_THINKING_BUDGET 或调大 DASHSCOPE_MAX_TOKENS')
+      : new Error('模型只返回了思考过程、没有正文，请确认 enable_thinking 参数已生效')
+    err.code = 'REASONING_ONLY'
+    throw err
   }
 
   throw new Error('DashScope 返回结构异常：未能提取到文本内容')
@@ -755,8 +957,8 @@ function parseAIResponse(responseText, options = {}) {
       jsonStr = jsonMatch[1].trim()
     }
 
-    // 兜底：截取第一个 { 到最后一个 } 之间的内容再解析
-    if (!jsonStr.startsWith('{')) {
+    // 兜底：截取第一个 { 到最后一个 } 之间的内容再解析（兼容前后带解释文字的情况）
+    if (!jsonStr.startsWith('{') || !jsonStr.endsWith('}')) {
       const start = jsonStr.indexOf('{')
       const end = jsonStr.lastIndexOf('}')
       if (start !== -1 && end > start) {
@@ -926,7 +1128,7 @@ function parseDailySummaryNarrative(responseText) {
   let jsonStr = (responseText || '').trim()
   const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/)
   if (jsonMatch) jsonStr = jsonMatch[1].trim()
-  if (!jsonStr.startsWith('{')) {
+  if (!jsonStr.startsWith('{') || !jsonStr.endsWith('}')) {
     const start = jsonStr.indexOf('{')
     const end = jsonStr.lastIndexOf('}')
     if (start !== -1 && end > start) jsonStr = jsonStr.slice(start, end + 1)
@@ -988,8 +1190,9 @@ async function handleDailySummary(event, wxContext) {
     return { success: false, error: '今日暂无拜访记录可供汇总' }
   }
 
-  const config = AI_CONFIG[CURRENT_MODEL]
-  const apiKey = await resolveApiKey(config)
+  const sharedCtx = await loadAnalysisContext()
+  const config = resolveRuntimeAIConfig(sharedCtx.runtimeSettings)
+  const apiKey = await resolveApiKey(config, sharedCtx.runtimeSettings)
   if (!apiKey) {
     const noKeyError = '未配置 AI API Key，未生成真实汇总报告。请管理员在服务器环境变量 DASHSCOPE_API_KEY 或「分析设置」中配置。'
     console.warn('[dailySummary]', noKeyError)
@@ -1013,7 +1216,6 @@ async function handleDailySummary(event, wxContext) {
   }
 
   // 2. 逐条补齐尚未执行标准单条分析的记录（确保单条与批量口径完全一致）
-  const sharedCtx = await loadAnalysisContext()
   const readyInspections = []
   let singleFailedCount = 0
 
@@ -1050,13 +1252,16 @@ async function handleDailySummary(event, wxContext) {
     return { success: false, error: '所选拜访记录均未完成单条分析，无法生成今日综合日报' }
   }
 
-  // 3. 基于真实单条结构化结果精确汇总大盘指标
+  // 3. 基于真实单条结构化结果精确汇总大盘指标（纯文本汇总无需开启视觉思考）
   const aggregated = aggregateDailyMetrics(readyInspections)
   let narrative
   try {
     const userPrompt = buildDailySummaryUserPrompt(readyInspections, aggregated, sharedCtx.brandReferenceText)
     const { text } = await withHardTimeout(
-      callQwen(config, apiKey, [], userPrompt, DAILY_SUMMARY_SYSTEM_PROMPT),
+      callQwen(config, apiKey, [], userPrompt, DAILY_SUMMARY_SYSTEM_PROMPT, {
+        enableThinking: false,
+        thinkingBudget: 0
+      }),
       AI_HARD_TIMEOUT_MS,
       '今日拜访综合日报汇总超时'
     )
@@ -1175,4 +1380,16 @@ async function handleDailySummary(event, wxContext) {
     analyzedCount: readyInspections.length,
     failedCount: singleFailedCount
   }
+}
+
+exports._internal = {
+  resolveRuntimeAIConfig,
+  buildQwenRequestParameters,
+  allocateReferenceBudget,
+  isHybridThinkingModel,
+  extractQwenText,
+  parseAIResponse,
+  DEFAULT_MAX_TOKENS,
+  DEFAULT_ENABLE_THINKING,
+  DEFAULT_THINKING_BUDGET
 }

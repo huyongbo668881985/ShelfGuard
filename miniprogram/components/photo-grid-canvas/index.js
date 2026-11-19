@@ -1,11 +1,8 @@
 // components/photo-grid-canvas/index.js
-// 把 1~6 张照片拼接成一张网格大图（离屏 canvas，用法跟 watermark-canvas 一致）
+// 把 1~6 张照片按原图比例完整拼接成一张网格大图（离屏 canvas，用法跟 watermark-canvas 一致）
 //
-// 取舍说明：拼成一张图之后，每张原图在最终图里只占一个格子，分辨率会被压缩，
-// 如果货架上文字/价签比较密集，AI 识别精度可能会比"多张原图各自全分辨率
-// 分析"要差一些。如果实测发现精度不够用，不需要重新开发——analyzeImage
-// 云函数本来就支持一次传多张原图、AI 自动合并成一份报告，把这一步"拼图"
-// 跳过、直接把 photos 数组原样传给上传流程即可切换回那条路径。
+// 关键原则：绝不使用 cover 裁剪，改用自适应格子比例 + contain 完整绘制，
+// 防止横拍货架左右两侧排面或竖拍顶/底层被硬裁成正方形丢掉关键酒瓶。
 
 // 固定的网格布局表：无论多少张照片（2~6张），固定每排 2 张合成
 const GRID_LAYOUTS = {
@@ -17,8 +14,72 @@ const GRID_LAYOUTS = {
   6: { cols: 2, rows: 3 }  // 2 + 2 + 2
 }
 
-const CELL_SIZE = 900 // 每个格子的边长（px），固定方形格子，跟原图比例无关
-const GAP = 6         // 格子之间的缝隙（px）
+const CELL_LONG_EDGE = 1000 // 单格长边目标像素（按照片比例自适应宽/高，避免裁边）
+const MAX_CANVAS_DIM = 3600 // 小程序 Canvas 单边安全上限，防止部分机型导出失败
+const GAP = 8               // 格子之间的缝隙（px）
+const MIN_CELL_RATIO = 0.56 // 9:16 竖图下限
+const MAX_CELL_RATIO = 1.78 // 16:9 横图上限
+
+/**
+ * 根据待拼接图片的实际宽高计算零裁边网格尺寸
+ * @param {Array<{width: number, height: number}>} images
+ * @returns {{ cols: number, rows: number, cellWidth: number, cellHeight: number, width: number, height: number }}
+ */
+function computeGridLayout(images) {
+  const count = Math.max(1, Array.isArray(images) ? images.length : 1)
+  const layout = GRID_LAYOUTS[count] || { cols: 2, rows: Math.ceil(count / 2) }
+  const { cols, rows } = layout
+
+  // 取各张图宽高比的中位数作为格子比例，兼顾纯横拍、纯竖拍及混合拍摄
+  const ratios = (images || [])
+    .map(img => (img && img.width > 0 && img.height > 0 ? img.width / img.height : 1))
+    .sort((a, b) => a - b)
+  const mid = ratios.length > 0
+    ? (ratios.length % 2 === 1
+        ? ratios[(ratios.length - 1) / 2]
+        : (ratios[ratios.length / 2 - 1] + ratios[ratios.length / 2]) / 2)
+    : 1
+  const cellRatio = Math.max(MIN_CELL_RATIO, Math.min(MAX_CELL_RATIO, mid))
+
+  let cellWidth
+  let cellHeight
+  if (cellRatio >= 1) {
+    cellWidth = CELL_LONG_EDGE
+    cellHeight = Math.round(CELL_LONG_EDGE / cellRatio)
+  } else {
+    cellHeight = CELL_LONG_EDGE
+    cellWidth = Math.round(CELL_LONG_EDGE * cellRatio)
+  }
+
+  let width = cols * cellWidth + (cols + 1) * GAP
+  let height = rows * cellHeight + (rows + 1) * GAP
+
+  // 防止总尺寸超过小程序 Canvas 安全上限
+  const maxDim = Math.max(width, height)
+  if (maxDim > MAX_CANVAS_DIM) {
+    const shrink = (MAX_CANVAS_DIM - (Math.max(cols, rows) + 1) * GAP) / Math.max(cols * cellWidth, rows * cellHeight)
+    cellWidth = Math.max(100, Math.floor(cellWidth * shrink))
+    cellHeight = Math.max(100, Math.floor(cellHeight * shrink))
+    width = cols * cellWidth + (cols + 1) * GAP
+    height = rows * cellHeight + (rows + 1) * GAP
+  }
+
+  return { cols, rows, cellWidth, cellHeight, width, height }
+}
+
+/**
+ * 计算 contain 绘制矩形：完整保留 100% 画面，不裁切任何边缘，不拉伸变形
+ */
+function computeContainRect(imgWidth, imgHeight, x, y, w, h) {
+  const safeW = imgWidth > 0 ? imgWidth : w
+  const safeH = imgHeight > 0 ? imgHeight : h
+  const scale = Math.min(w / safeW, h / safeH)
+  const drawWidth = safeW * scale
+  const drawHeight = safeH * scale
+  const drawX = x + (w - drawWidth) / 2
+  const drawY = y + (h - drawHeight) / 2
+  return { drawX, drawY, drawWidth, drawHeight }
+}
 
 Component({
   properties: {
@@ -63,25 +124,21 @@ Component({
           imagePaths.map(path => this._loadImage(canvas, path))
         )
 
-        const layout = GRID_LAYOUTS[images.length] || GRID_LAYOUTS[6]
-        const { cols, rows } = layout
-
-        const width = cols * CELL_SIZE + (cols + 1) * GAP
-        const height = rows * CELL_SIZE + (rows + 1) * GAP
+        const { cols, cellWidth, cellHeight, width, height } = computeGridLayout(images)
 
         canvas.width = width
         canvas.height = height
 
-        // 缝隙背景色
-        ctx.fillStyle = '#000000'
+        // 缝隙及留白背景色
+        ctx.fillStyle = '#111111'
         ctx.fillRect(0, 0, width, height)
 
         images.forEach((img, index) => {
           const col = index % cols
           const row = Math.floor(index / cols)
-          const x = GAP + col * (CELL_SIZE + GAP)
-          const y = GAP + row * (CELL_SIZE + GAP)
-          this._drawCover(ctx, img, x, y, CELL_SIZE, CELL_SIZE)
+          const x = GAP + col * (cellWidth + GAP)
+          const y = GAP + row * (cellHeight + GAP)
+          this._drawContain(ctx, img, x, y, cellWidth, cellHeight)
         })
 
         // 等待一帧渲染缓冲后再导出，避免部分机型导出空白图
@@ -124,16 +181,13 @@ Component({
       })
     },
 
-    // "cover" 方式绘制：铺满目标格子，超出部分居中裁剪，不拉伸变形
-    // （跟 CSS 的 object-fit: cover 是一个道理）
-    _drawCover(ctx, img, x, y, w, h) {
-      const scale = Math.max(w / img.width, h / img.height)
-      const drawWidth = img.width * scale
-      const drawHeight = img.height * scale
-      const drawX = x + (w - drawWidth) / 2
-      const drawY = y + (h - drawHeight) / 2
+    // "contain" 方式绘制：完整保留原图 100% 画面，绝不裁切货架左右或上下边缘，不拉伸变形
+    _drawContain(ctx, img, x, y, w, h) {
+      const { drawX, drawY, drawWidth, drawHeight } = computeContainRect(img.width, img.height, x, y, w, h)
 
       ctx.save()
+      ctx.fillStyle = '#000000'
+      ctx.fillRect(x, y, w, h)
       ctx.beginPath()
       ctx.rect(x, y, w, h)
       ctx.clip()
@@ -142,3 +196,8 @@ Component({
     }
   }
 })
+
+// 便于纯 Node 单元测试直接复用几何布局函数（小程序运行时自动忽略）
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports._layout = { computeGridLayout, computeContainRect }
+}

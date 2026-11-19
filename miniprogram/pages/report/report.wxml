@@ -3,7 +3,7 @@
   function getComplianceColor(score) {
     if (!score && score !== 0) return '#4caf50';
     if (score >= 80) return '#2e7d32';
-    if (score >= 60) return '#ff9800';
+    if (score >= 50) return '#ff9800';
     return '#f44336';
   }
   module.exports = {

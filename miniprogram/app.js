@@ -19,7 +19,7 @@ const hideLoading = () => {
 
 // 团队统一的拍照上传策略缓存（服务端 settings.global.imageMode 的本机副本）
 const TEAM_IMAGE_MODE_KEY = 'shelfguard_teamImageMode'
-const DEFAULT_IMAGE_MODE = 'traffic'
+const DEFAULT_IMAGE_MODE = 'quality'
 const NAME_MAX_LEN = 20
 
 function normalizeName(raw) {
@@ -129,9 +129,9 @@ App({
     systemConfig: {
       analyzeMode: 'batch',
       analyzeTime: '21:00',
-      // traffic=拼图省流量；quality=多图直传提高识别精度。
+      // quality=多图高清直传（默认推荐，不裁边、识别更准）；traffic=原比例拼图省流量。
       // 由管理员在「管理」里统一设置，登录后从服务端刷新（refreshClientConfig）
-      imageMode: 'traffic'
+      imageMode: 'quality'
     },
 
     // 全局配置
@@ -269,7 +269,7 @@ App({
       const r = res && res.result
       if (!r || !r.success || !r.settings) return this.globalData.systemConfig
       const s = r.settings
-      const imageMode = s.imageMode === 'quality' ? 'quality' : DEFAULT_IMAGE_MODE
+      const imageMode = s.imageMode === 'traffic' ? 'traffic' : (s.imageMode === 'quality' ? 'quality' : DEFAULT_IMAGE_MODE)
       this.globalData.systemConfig = {
         ...(this.globalData.systemConfig || {}),
         analyzeMode: s.analyzeMode,
@@ -283,7 +283,7 @@ App({
     return this.globalData.systemConfig
   },
 
-  // 团队统一的拍照上传策略：内存 → 本机缓存 → 默认 traffic
+  // 团队统一的拍照上传策略：内存 → 本机缓存 → 默认 quality
   getImageMode() {
     const cfg = this.globalData.systemConfig || {}
     if (cfg.imageMode === 'quality' || cfg.imageMode === 'traffic') return cfg.imageMode

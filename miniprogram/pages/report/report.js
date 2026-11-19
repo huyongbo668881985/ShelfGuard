@@ -24,8 +24,15 @@ const LEGACY_DIMENSIONS = [
 
 function ratioColor(ratio) {
   if (ratio >= 0.8) return '#2e7d32'
-  if (ratio >= 0.6) return '#ff9800'
+  if (ratio >= 0.5) return '#ff9800'
   return '#f44336'
+}
+
+function statusColor(status, ratio) {
+  if (status === 'good') return '#2e7d32'
+  if (status === 'medium') return '#ff9800'
+  if (status === 'poor') return '#f44336'
+  return ratioColor(ratio)
 }
 
 function buildReportViewModel(aiReport) {
@@ -73,7 +80,7 @@ function buildReportViewModel(aiReport) {
       maxScore,
       scoreText: isV2 ? `${entry.score}/${maxScore}分` : `${entry.score}分`,
       percent: pct,
-      color: ratioColor(entry.score / maxScore),
+      color: statusColor(entry.status, entry.score / maxScore),
       detail: entry.detail || ''
     })
   })
@@ -108,15 +115,22 @@ function buildReportViewModel(aiReport) {
     }
   }
 
-  // 照片质量与局部取景温和提醒（不阻断）
+  // 照片质量、局部取景控制与复核提示（不阻断）
   const qualityNotices = []
   const meta = aiReport.metadata && typeof aiReport.metadata === 'object' ? aiReport.metadata : {}
-  if (meta.imageQuality === 'poor') {
-    const reason = meta.imageQualityReason ? `（${meta.imageQualityReason}）` : ''
-    qualityNotices.push(`照片偏模糊/反光${reason}，可能影响排面计数与价签识别，可清晰重拍或重新分析。`)
-  }
-  if (meta.framingType === 'closeup') {
-    qualityNotices.push('当前仅拍到货架局部特写，排面数与黄金位评估可能不完整，建议下次补充货架全景照。')
+  if (Array.isArray(meta.reviewReasons) && meta.reviewReasons.length > 0) {
+    meta.reviewReasons.forEach(r => {
+      const text = String(r || '').trim()
+      if (text && !qualityNotices.includes(text)) qualityNotices.push(text)
+    })
+  } else {
+    if (meta.imageQuality === 'poor') {
+      const reason = meta.imageQualityReason ? `（${meta.imageQualityReason}）` : ''
+      qualityNotices.push(`照片偏模糊/反光${reason}，可能影响排面计数与价签识别，可清晰重拍或重新分析。`)
+    }
+    if (meta.framingType === 'closeup') {
+      qualityNotices.push('当前仅拍到货架局部特写，黄金位得分已防虚高封顶且排面占比不计入统计，建议下次补充货架全景照。')
+    }
   }
 
   return {
@@ -253,7 +267,7 @@ Page({
       clearInterval(this.data.refreshTimer)
     }
     let attempts = 0
-    const maxAttempts = 30 // 最多轮询 30 次（约 90 秒）
+    const maxAttempts = 45 // 最多轮询 45 次（约 135 秒，匹配服务端 120 秒有界思考超时）
 
     const timer = setInterval(async () => {
       attempts++

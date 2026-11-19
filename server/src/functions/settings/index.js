@@ -35,8 +35,8 @@ const DEFAULT_SETTINGS = {
   analyzeTime: '21:00',
   windowMinutes: 180,
   batchSize: 2,
-  // traffic = 多图拼成一张再传（省流量）；quality = 多图各自全分辨率直传（识别更准）
-  imageMode: 'traffic',
+  // quality = 多图各自全分辨率直传（默认，不裁边、识别更准）；traffic = 多图按原比例拼成一张再传（省流量）
+  imageMode: 'quality',
   scoringRules: { ...DEFAULT_SCORING_RULES }
 }
 
@@ -166,7 +166,7 @@ async function handleGet(openid) {
       analyzeTime: settings.analyzeTime,
       windowMinutes: settings.windowMinutes,
       batchSize: settings.batchSize,
-      imageMode: settings.imageMode === 'quality' ? 'quality' : 'traffic',
+      imageMode: settings.imageMode === 'traffic' ? 'traffic' : 'quality',
       scoringRules: normalizeScoringRules(settings.scoringRules),
       // API Key 只回掩码，明文不出服务端
       hasApiKey: !!settings.dashscopeApiKey,
@@ -325,7 +325,7 @@ async function handleSave(openid, input) {
  * 两类都要把 analyzeAttempts 清零，否则重排回队列后一旦再失败一次，
  * 就会因为累计次数超限被直接判死，等于只给了一次机会。
  */
-const STUCK_THRESHOLD_MS = 3 * 60 * 1000
+const STUCK_THRESHOLD_MS = 5 * 60 * 1000
 
 async function handleRetryFailed(openid) {
   if (!(await isAdmin(openid))) {

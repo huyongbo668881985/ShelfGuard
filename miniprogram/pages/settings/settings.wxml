@@ -142,19 +142,19 @@
     <!-- 识别精度 vs 流量 -->
     <view class="card">
       <view class="section-title">拍照上传策略</view>
+      <view class="mode-option {{imageMode === 'quality' ? 'active' : ''}}" data-mode="quality" bindtap="onSelectImageMode">
+        <view class="mode-head">
+          <text class="mode-name">识别精度优先（默认推荐）</text>
+          <text class="mode-check" wx:if="{{imageMode === 'quality'}}">✓</text>
+        </view>
+        <text class="mode-desc">自动拼合 1 张完整网格图方便存相册与发微信，同时后台将多张高清原图分别上传供 AI 逐张识别（不裁边、价签与排面更准）。</text>
+      </view>
       <view class="mode-option {{imageMode === 'traffic' ? 'active' : ''}}" data-mode="traffic" bindtap="onSelectImageMode">
         <view class="mode-head">
           <text class="mode-name">流量优先</text>
           <text class="mode-check" wx:if="{{imageMode === 'traffic'}}">✓</text>
         </view>
-        <text class="mode-desc">多张照片拼成一张网格图再上传，省流量、省 AI 调用成本。默认推荐。</text>
-      </view>
-      <view class="mode-option {{imageMode === 'quality' ? 'active' : ''}}" data-mode="quality" bindtap="onSelectImageMode">
-        <view class="mode-head">
-          <text class="mode-name">识别精度优先</text>
-          <text class="mode-check" wx:if="{{imageMode === 'quality'}}">✓</text>
-        </view>
-        <text class="mode-desc">自动拼合 1 张大图方便存相册与发微信，同时后台将多张高清原图分别上传供 AI 识别（自动区分门头/陈列/物料），识别更准。</text>
+        <text class="mode-desc">多张照片按原比例完整拼成一张网格图再上传（不裁边），省流量、省 AI 调用成本，但单张分辨率低于精度优先。</text>
       </view>
       <text class="form-tip" style="padding: 0 8rpx;">由管理员统一设置，点「保存设置」后对全员生效，业务员下次打开拍照页自动使用。</text>
     </view>

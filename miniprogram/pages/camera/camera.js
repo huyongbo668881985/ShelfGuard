@@ -55,7 +55,7 @@ Page({
     maxPhotos: 6,
 
     // traffic=拼图；quality=多图各自打水印后直传
-    imageMode: 'traffic',
+    imageMode: 'quality',
 
     // 记录类型：visit（门店拜访）| clock_in（上班打卡）| clock_out（下班打卡）
     recordType: 'visit'
@@ -343,7 +343,7 @@ Page({
 
 
   // 拍照上传策略：由管理员在「管理」里统一设置、全员生效（不再有本机偏好）。
-  // 先用 app 里缓存的团队设置（没有就默认 traffic），再后台刷新一次服务端最新值。
+  // 先用 app 里缓存的团队设置（没有就默认 quality），再后台刷新一次服务端最新值。
   loadImageMode() {
     this.setData({ imageMode: app.getImageMode() })
     app.refreshClientConfig().then(() => {

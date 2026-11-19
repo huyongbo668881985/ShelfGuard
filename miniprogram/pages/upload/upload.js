@@ -181,10 +181,14 @@ Page({
       })
       if (res.result && res.result.success) {
         const s = res.result.settings
+        const imageMode = s.imageMode === 'traffic' ? 'traffic' : (s.imageMode === 'quality' ? 'quality' : (app.globalData.systemConfig && app.globalData.systemConfig.imageMode) || 'quality')
         app.globalData.systemConfig = {
+          ...(app.globalData.systemConfig || {}),
           analyzeMode: s.analyzeMode,
-          analyzeTime: s.analyzeTime
+          analyzeTime: s.analyzeTime,
+          imageMode
         }
+        try { wx.setStorageSync('shelfguard_teamImageMode', imageMode) } catch (_) {}
         this.setData({
           analyzeMode: s.analyzeMode,
           analyzeTime: s.analyzeTime
