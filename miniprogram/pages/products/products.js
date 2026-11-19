@@ -39,6 +39,7 @@ Page({
       brandName: '',
       productLine: '',
       aliasesText: '', // 输入框里是逗号分隔的文本，提交时再拆成数组
+      visualFeatures: '',
       photos: {
         front: '',
         back: '',
@@ -164,6 +165,7 @@ Page({
         brandName: '',
         productLine: '',
         aliasesText: '',
+        visualFeatures: '',
         photos: { front: '', back: '', side: '' },
         photoURLs: { front: '', back: '', side: '' }
       }
@@ -184,6 +186,7 @@ Page({
         brandName: item.brandName || '',
         productLine: item.productLine || '',
         aliasesText: (item.aliases || []).join('，'),
+        visualFeatures: item.visualFeatures || '',
         photos: {
           front: (item.photos && item.photos.front) || '',
           back: (item.photos && item.photos.back) || '',
@@ -213,6 +216,10 @@ Page({
 
   onAliasesInput(e) {
     this.setData({ 'form.aliasesText': e.detail.value })
+  },
+
+  onVisualFeaturesInput(e) {
+    this.setData({ 'form.visualFeatures': e.detail.value })
   },
 
   // 选择参考照：先存本地路径，保存时再 uploadFile，避免未保存就造孤儿云文件
@@ -289,6 +296,7 @@ Page({
         brandName,
         productLine: form.productLine.trim(),
         aliases,
+        visualFeatures: (form.visualFeatures || '').trim(),
         photos
       }
       const res = await api.callFunction({

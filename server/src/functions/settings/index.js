@@ -106,11 +106,14 @@ async function loadSettings() {
   }
 }
 
-async function countByStatus(status, openidFilter) {
+async function countByStatus(status, openidFilter, extraWhere = null) {
   try {
     const where = openidFilter
       ? { status, _openid: openidFilter }
       : { status }
+    if (extraWhere && typeof extraWhere === 'object') {
+      Object.assign(where, extraWhere)
+    }
     const res = await db.collection('inspections').where(where).count()
     return res.total
   } catch (err) {
@@ -150,10 +153,14 @@ async function handleGet(openid) {
   // 队列统计按角色：admin/manager 看团队级；sales 只看自己的（或不暴露团队数字）
   const canSeeTeamQueue = MANAGER_ROLES.includes(role)
   const openidFilter = canSeeTeamQueue ? null : openid
+  // 原图已清理（originPrunedAt 存在）的陈旧失败记录不可再重排，不计入可重试失败队列
+  const retryableFailedExtra = typeof _.exists === 'function'
+    ? { originPrunedAt: _.exists(false) }
+    : null
   const [pending, analyzing, failed] = await Promise.all([
     countByStatus('pending', openidFilter),
     countByStatus('analyzing', openidFilter),
-    countByStatus('analyze_failed', openidFilter)
+    countByStatus('analyze_failed', openidFilter, retryableFailedExtra)
   ])
 
   return {
@@ -339,9 +346,24 @@ async function handleRetryFailed(openid) {
   }
 
   // updateMany 在云函数里可以直接用 where().update()
+  // 跳过原图已归档清理（originPrunedAt 存在）的陈旧失败记录，避免无原图进入死循环失败
+  const failedWhere = { status: 'analyze_failed' }
+  if (typeof _.exists === 'function') {
+    failedWhere.originPrunedAt = _.exists(false)
+  }
   const failedRes = await db.collection('inspections')
-    .where({ status: 'analyze_failed' })
+    .where(failedWhere)
     .update({ data: resetData })
+
+  let skippedPruned = 0
+  if (typeof _.exists === 'function') {
+    try {
+      const prunedRes = await db.collection('inspections')
+        .where({ status: 'analyze_failed', originPrunedAt: _.exists(true) })
+        .count()
+      skippedPruned = (prunedRes && prunedRes.total) || 0
+    } catch (_) {}
+  }
 
   const stuckRes = await db.collection('inspections')
     .where({
@@ -353,7 +375,7 @@ async function handleRetryFailed(openid) {
   const failed = failedRes.stats.updated
   const stuck = stuckRes.stats.updated
 
-  return { success: true, updated: failed + stuck, failed, stuck }
+  return { success: true, updated: failed + stuck, failed, stuck, skippedPruned }
 }
 
 // ============================================================

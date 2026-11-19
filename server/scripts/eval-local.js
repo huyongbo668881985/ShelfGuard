@@ -232,6 +232,7 @@ function loadLocalEvalConfig(evalDir, options = {}) {
         brandName: String(p.brandName).trim(),
         productLine: String(p.productLine || '').trim(),
         aliases,
+        visualFeatures: String(p.visualFeatures || '').trim(),
         photos,
         isActive: p.isActive !== false
       }
@@ -260,6 +261,7 @@ function loadLocalEvalConfig(evalDir, options = {}) {
       const parts = [`品牌：${p.brandName}`]
       if (p.productLine) parts.push(`产品线：${p.productLine}`)
       if (p.aliases.length > 0) parts.push(`别名/简称：${p.aliases.join('、')}`)
+      if (p.visualFeatures) parts.push(`视觉特征：${p.visualFeatures}`)
       return `- ${parts.join('，')}`
     })
     brandReferenceText += `\n\n## 本品牌产品资料（识别时优先参考，遇到下列品牌/别名要统一按标准品牌名归类并标注 isOwn: true，其余品牌视为竞品 isOwn: false）\n${lines.join('\n')}`

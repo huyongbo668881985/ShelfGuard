@@ -52,6 +52,7 @@ user prompt 末尾可能会附上一份「本品牌产品资料」。那些品�
 ## 排面计数与跨图去重口径（必须严格遵守）
 
 - **只数最前排正面可见的独立展示单元/瓶数**：前后纵深叠放的不重复计数；礼盒/整箱正面朝外各算 1 个排面。
+- **侧摆/背标朝外识别**：即使部分我方酒瓶侧摆或背标朝外，也请结合产品资料里的瓶型、瓶盖/瓶颈套颜色、背标与颈挂价签等视觉特征辨认并计入我方排面（不要直接漏认），同时在 \`labelOrientation\`（正标朝向）中如实扣分。
 - **先逐图逐层盘点，再跨图去重累加**：
   - 必须在 \`shelfObservations.photoFacings\` 中先逐张实拍图写明每层看到的我方产品与排面数（\`ownFacingsInPhoto\`），并显式标出与前面照片重叠拍到的排面数（\`overlapWithPrevious\`），再在 \`dedupNote\` 写明去重依据。
   - 然后在 \`productIdentification\` 中按去重后的最终排面数逐个 SKU 列出；顶层 \`facingMetrics.ownFacingCount\` 和 \`displayCompliance.facingCount.observedFacings\` 必须严格等于 \`productIdentification\` 中全部我方 SKU（\`isOwn: true\`）的 \`facingCount\` 之和（服务端也会按明细强校验）。
@@ -290,6 +291,9 @@ function buildUserPrompt(imageCount, brandReferenceText, bannerRefMaterials = []
       if (Array.isArray(p.aliases) && p.aliases.length > 0) {
         parts.push(`别名：${p.aliases.join('、')}`)
       }
+      if (p.visualFeatures) {
+        parts.push(`视觉特征：${p.visualFeatures}`)
+      }
       return `- ${parts.join('，')}`
     })
     prodRefNote = `\n\n## 我方产品瓶身参考图说明（重要：严禁计入本次拜访打分）\n紧随实拍图之后的第 ${prodStartIdx} 至第 ${prodEndIdx} 张图片（共 ${prodList.length} 张，已标注【产品参考图】）为【我方产品参考图】，仅用于帮你对照辨认实拍货架中的我方酒瓶包装与酒标：\n${prodLines.join('\n')}\n⚠️ 严禁将这 ${prodList.length} 张产品参考图本身当作本次门店实拍照片，严禁将其计入 photoRoles、productIdentification、排面数或任何得分！`
@@ -343,7 +347,8 @@ function buildMultimodalUserContent({ visitImageUrls = [], productRefs = [], ban
     prods.forEach((p, idx) => {
       const name = [p.brandName, p.productLine].filter(Boolean).join(' ') || '我方产品'
       const slotLabel = slotLabelMap[p.slot] || '瓶身参考照'
-      content.push({ text: `【产品参考图 ${idx + 1}/${prods.length}】${name}（${slotLabel}，非门店实拍）` })
+      const featSuffix = p.visualFeatures ? `；视觉特征：${p.visualFeatures}` : ''
+      content.push({ text: `【产品参考图 ${idx + 1}/${prods.length}】${name}（${slotLabel}，非门店实拍${featSuffix}）` })
       content.push({ image: p.url })
     })
   }

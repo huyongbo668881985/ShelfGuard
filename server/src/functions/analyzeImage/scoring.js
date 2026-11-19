@@ -330,6 +330,7 @@ function selectProductRefs(activeProducts = [], maxRefs = 4) {
         brandName: String(p.brandName || '').trim(),
         productLine: String(p.productLine || '').trim(),
         aliases: Array.isArray(p.aliases) ? p.aliases.filter(Boolean) : [],
+        visualFeatures: String(p.visualFeatures || '').trim(),
         photo: pickedPhoto,
         slot: pickedSlot
       })

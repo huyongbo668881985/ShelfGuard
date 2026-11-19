@@ -2031,6 +2031,29 @@ test('回归5：颈挂价签 Prompt 声明、JSON 语法错自动重试(json_par
   assert.equal(byMatName.get('永丰疑似旧海报').isOwn, false)
   assert.equal(byMatName.get('永丰特8方形灯箱').isOwn, true)
   assert.match(sys, /严禁强行归属我方或脑补改名/)
+
+  // 5. 产品 visualFeatures 透传：selectProductRefs -> buildUserPrompt -> buildMultimodalUserContent
+  const prodRefs = selectProductRefs([
+    {
+      brandName: '永丰',
+      productLine: '特8红标',
+      aliases: ['红特8'],
+      visualFeatures: '金色旋盖+深红瓶颈套+白底红框背标',
+      photos: { front: 'sg://products/red-front.jpg' },
+      isActive: true
+    }
+  ], 4)
+  assert.equal(prodRefs.length, 1)
+  assert.equal(prodRefs[0].visualFeatures, '金色旋盖+深红瓶颈套+白底红框背标')
+  const upWithFeat = buildUserPrompt(1, '', [], prodRefs)
+  assert.match(upWithFeat, /金色旋盖\+深红瓶颈套\+白底红框背标/)
+  const mmWithFeat = buildMultimodalUserContent({
+    visitImageUrls: ['data:image/jpeg;base64,V1'],
+    productRefs: [{ ...prodRefs[0], url: 'data:image/jpeg;base64,P1' }],
+    userPrompt: upWithFeat
+  })
+  assert.ok(mmWithFeat.some(p => p.text && p.text.includes('金色旋盖+深红瓶颈套+白底红框背标')))
+  assert.match(sys, /侧摆\/背标朝外识别/)
 })
 
 

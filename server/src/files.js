@@ -35,7 +35,7 @@ function getSharp() {
 const inflightVariants = new Map()
 
 function filesRoot() {
-  return path.join(require('./docdb')._internal.dataDir(), 'files')
+  return path.join(db._internal.dataDir(), 'files')
 }
 
 function normalizeVariant(raw) {
@@ -44,11 +44,39 @@ function normalizeVariant(raw) {
   return Object.prototype.hasOwnProperty.call(VARIANTS, v) ? v : null
 }
 
+function isNonEmptyFile(filePath) {
+  if (!filePath) return false
+  try {
+    const stat = fs.statSync(filePath)
+    return stat.isFile() && stat.size > 0
+  } catch (_) {
+    return false
+  }
+}
+
 function variantPath(rel, variant) {
   const root = path.resolve(filesRoot(), '.thumbs', variant)
   const abs = path.resolve(root, `${rel}.jpg`)
   if (abs !== root && !abs.startsWith(root + path.sep)) return null
   return abs
+}
+
+function existingVariantPath(rel, variant) {
+  const vp = variantPath(rel, variant)
+  return isNonEmptyFile(vp) ? vp : null
+}
+
+function hasReadableFile(rel, variant = '') {
+  const abs = rel && absPath(rel)
+  if (!abs) return false
+  if (variant) {
+    if (existingVariantPath(rel, variant)) return true
+    return fs.existsSync(abs)
+  }
+  if (fs.existsSync(abs)) return true
+  if (existingVariantPath(rel, 'preview')) return true
+  if (existingVariantPath(rel, 'thumb')) return true
+  return false
 }
 
 function removeVariants(rel) {
@@ -219,14 +247,87 @@ async function getTempFileURL({ fileList, variant } = {}) {
   return {
     fileList: list.map(fileID => {
       const rel = safeRel(fileID)
-      const abs = rel && absPath(rel)
-      const ok = !!(abs && fs.existsSync(abs))
+      const ok = !!(rel && hasReadableFile(rel, safeVariant))
       return {
         fileID,
         tempFileURL: ok ? signedUrl(rel, safeVariant) : '',
         status: ok ? 0 : -1
       }
     })
+  }
+}
+
+function isSharpAvailable() {
+  return !!getSharp()
+}
+
+/**
+ * 安全清理单张巡检原图：
+ * - 白名单保护：仅允许删除 inspections/ 路径下的原图，绝不触碰 products/ 等参考图目录
+ * - 强前置条件：删除前必须确保 thumb 与 preview 均生成成功且文件大小 > 0
+ * - 失败降级：若 sharp 不可用或任一变体生成失败，保留原图不删
+ */
+async function pruneInspectionOriginal(fileID, deps = {}) {
+  const rel = safeRel(fileID)
+  if (!rel || !rel.startsWith('inspections/')) {
+    return { status: 'skipped_non_inspection', rel: rel || '', freedBytes: 0 }
+  }
+  const origAbs = absPath(rel)
+  if (!origAbs) {
+    return { status: 'skipped_invalid', rel, freedBytes: 0 }
+  }
+
+  const origExists = fs.existsSync(origAbs)
+  if (!origExists) {
+    const hasThumb = !!existingVariantPath(rel, 'thumb')
+    const hasPreview = !!existingVariantPath(rel, 'preview')
+    if (hasThumb && hasPreview) {
+      return { status: 'already_pruned', rel, freedBytes: 0 }
+    }
+    if (hasThumb || hasPreview) {
+      return { status: 'already_pruned_partial', rel, freedBytes: 0 }
+    }
+    return { status: 'missing', rel, freedBytes: 0 }
+  }
+
+  const ensureFn = typeof deps.ensureVariant === 'function' ? deps.ensureVariant : ensureVariant
+  const hasSharp = typeof deps.isSharpAvailable === 'function' ? deps.isSharpAvailable() : isSharpAvailable()
+  if (!hasSharp) {
+    return { status: 'sharp_unavailable', rel, freedBytes: 0 }
+  }
+
+  let thumbDest = null
+  let previewDest = null
+  try {
+    ;[thumbDest, previewDest] = await Promise.all([
+      ensureFn(rel, origAbs, 'thumb'),
+      ensureFn(rel, origAbs, 'preview')
+    ])
+  } catch (err) {
+    console.warn(`[prune] 生成缩略图异常，保留原图: ${rel}`, err && err.message ? err.message : err)
+    return { status: 'variant_failed', rel, freedBytes: 0 }
+  }
+
+  if (!isNonEmptyFile(thumbDest) || !isNonEmptyFile(previewDest)) {
+    console.warn(`[prune] 缩略图变体未就绪，保留原图: ${rel}`)
+    return { status: 'variant_failed', rel, freedBytes: 0 }
+  }
+
+  let freedBytes = 0
+  try {
+    const stat = fs.statSync(origAbs)
+    freedBytes = stat.size || 0
+  } catch (_) {}
+
+  try {
+    fs.unlinkSync(origAbs)
+    return { status: 'pruned', rel, freedBytes }
+  } catch (err) {
+    if (err && err.code === 'ENOENT') {
+      return { status: 'already_pruned', rel, freedBytes: 0 }
+    }
+    console.warn(`[prune] 删除原图失败: ${rel}`, err && err.message ? err.message : err)
+    return { status: 'unlink_failed', rel, freedBytes: 0 }
   }
 }
 
@@ -346,10 +447,14 @@ async function handleDownload(req, res, relRaw) {
   }
   if (!rel) return res.status(404).json({ success: false, error: '文件不存在' })
   const abs = absPath(rel)
-  if (!abs || !fs.existsSync(abs)) return res.status(404).json({ success: false, error: '文件不存在' })
+  if (!abs) return res.status(404).json({ success: false, error: '文件不存在' })
 
   const variant = normalizeVariant(req.query.v)
   if (variant === null) return res.status(404).json({ success: false, error: '不支持的图片尺寸' })
+
+  if (!hasReadableFile(rel, variant)) {
+    return res.status(404).json({ success: false, error: '文件不存在' })
+  }
 
   const exp = parseInt(req.query.exp, 10)
   const sig = req.query.sig ? String(req.query.sig) : ''
@@ -366,14 +471,47 @@ async function handleDownload(req, res, relRaw) {
   }
   if (!allowed) return res.status(401).json({ success: false, error: '无权访问该照片' })
 
-  let targetAbs = abs
+  const origExists = fs.existsSync(abs)
+  let targetAbs = null
   let contentType = mimeOf(rel)
+
   if (variant) {
-    const generated = await ensureVariant(rel, abs, variant)
-    if (generated) {
-      targetAbs = generated
+    if (origExists) {
+      const generated = await ensureVariant(rel, abs, variant)
+      if (generated && isNonEmptyFile(generated)) {
+        targetAbs = generated
+        contentType = 'image/jpeg'
+      } else if (fs.existsSync(abs)) {
+        targetAbs = abs
+        contentType = mimeOf(rel)
+      } else {
+        const cached = existingVariantPath(rel, variant)
+        if (cached) {
+          targetAbs = cached
+          contentType = 'image/jpeg'
+        }
+      }
+    } else {
+      const cached = existingVariantPath(rel, variant)
+      if (cached) {
+        targetAbs = cached
+        contentType = 'image/jpeg'
+      }
+    }
+  } else if (origExists) {
+    targetAbs = abs
+    contentType = mimeOf(rel)
+  } else {
+    // 原图已清理时静默降级：优先返回 preview，其次 thumb
+    const fallback = existingVariantPath(rel, 'preview') || existingVariantPath(rel, 'thumb')
+    if (fallback) {
+      targetAbs = fallback
       contentType = 'image/jpeg'
     }
+  }
+
+  if (!targetAbs) {
+    return res.status(404).json({ success: false, error: '文件不存在' })
   }
 
   res.setHeader('Content-Type', contentType)
@@ -388,6 +526,12 @@ module.exports = {
   handleUpload,
   handleDownload,
   ensureVariant,
+  pruneInspectionOriginal,
+  isSharpAvailable,
+  hasReadableFile,
+  variantPath,
+  absPath,
+  isNonEmptyFile,
   safeRel,
   fileIdOf,
   VARIANTS

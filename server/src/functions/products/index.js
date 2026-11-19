@@ -15,7 +15,7 @@ const ADMIN_ROLES = ['admin']
 const DEFAULT_PAGE_SIZE = 50
 const MAX_PAGE_SIZE = 100
 
-const EDITABLE_FIELDS = ['brandName', 'productLine', 'aliases', 'photos', 'isActive']
+const EDITABLE_FIELDS = ['brandName', 'productLine', 'aliases', 'visualFeatures', 'photos', 'isActive']
 const MATERIAL_EDITABLE_FIELDS = ['materialName', 'category', 'aliases', 'visualFeatures', 'photo', 'isActive']
 const MATERIAL_CATEGORIES = [
   '灯箱',
@@ -232,6 +232,7 @@ exports.main = async (event, context) => {
             brandName: product.brandName,
             productLine: product.productLine || '',
             aliases: Array.isArray(product.aliases) ? product.aliases : [],
+            visualFeatures: String(product.visualFeatures || '').trim(),
             photos,
             isActive: true,
             createdAt: db.serverDate(),
@@ -252,6 +253,9 @@ exports.main = async (event, context) => {
         const updateData = {
           ...pickEditableFields(product),
           updatedAt: db.serverDate()
+        }
+        if (updateData.visualFeatures !== undefined) {
+          updateData.visualFeatures = String(updateData.visualFeatures || '').trim()
         }
         let oldPhotos = {}
         try {

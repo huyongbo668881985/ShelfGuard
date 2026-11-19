@@ -53,6 +53,10 @@
             <text class="card-line" wx:if="{{item.productLine}}">{{item.productLine}}</text>
           </view>
 
+          <view class="card-features" wx:if="{{item.visualFeatures}}">
+            <text>{{item.visualFeatures}}</text>
+          </view>
+
           <view class="card-aliases" wx:if="{{item.aliases.length > 0}}">
             <text class="alias-tag" wx:for="{{item.aliases}}" wx:key="*this" wx:for-item="alias">{{alias}}</text>
           </view>
@@ -191,6 +195,18 @@
           bindinput="onAliasesInput"
         />
         <text class="form-tip">AI 识别时可能用不同名字描述同一产品，填写别名有助于统计时正确归类</text>
+      </view>
+
+      <view class="form-item">
+        <text class="form-label">瓶身视觉特征（可选，辅助 AI 识别侧摆/背标与区分竞品）</text>
+        <textarea
+          class="form-textarea"
+          placeholder="如：透明竖棱玻璃瓶、金色螺纹盖、深红瓶颈套，正面红底金边盾形标写「北京二锅头」，背面为白底红框条码标，瓶脖常挂黄色圆形价签牌"
+          placeholder-style="color: #999;"
+          value="{{form.visualFeatures}}"
+          bindinput="onVisualFeaturesInput"
+          maxlength="300"
+        ></textarea>
       </view>
 
       <view class="form-item">

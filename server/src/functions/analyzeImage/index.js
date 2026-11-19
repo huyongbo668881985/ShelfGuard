@@ -252,6 +252,15 @@ exports.main = async (event, context) => {
     return { success: false, error: '提交的图片不属于该拜访记录' }
   }
 
+  // 原图已归档清理的记录无法重新分析：在扣配额前拦截，且不覆写已有状态与报告
+  if (inspectionDoc.originPrunedAt) {
+    return {
+      success: false,
+      error: '该记录原图已归档清理，仅保留缩略图，无法重新进行 AI 分析',
+      code: 'ORIGIN_PRUNED'
+    }
+  }
+
   // 配额：归属/照片校验通过后再扣，避免无效请求烧额度
   if (!isInternalCall) {
     const quota = await checkAndIncAnalyzeQuota(callerOpenid)
@@ -273,6 +282,13 @@ exports.main = async (event, context) => {
  */
 async function analyzeSingleInspection(inspectionDoc, idsToAnalyze, preloadedContext = null) {
   const inspectionId = inspectionDoc._id
+  if (inspectionDoc.originPrunedAt) {
+    return {
+      success: false,
+      error: '该记录原图已归档清理，仅保留缩略图，无法重新进行 AI 分析',
+      code: 'ORIGIN_PRUNED'
+    }
+  }
   try {
     // 1. 获取实拍图片数据
     console.log(`[1/5] 获取 ${idsToAnalyze.length} 张实拍图片...`)
@@ -554,6 +570,7 @@ async function loadAnalysisContext() {
           })
           parts.push(`别名/简称：${p.aliases.join('、')}`)
         }
+        if (p.visualFeatures) parts.push(`视觉特征：${String(p.visualFeatures).trim()}`)
         return `- ${parts.join('，')}`
       })
       brandReferenceText += `\n\n## 本品牌产品资料（识别时优先参考，遇到下列品牌/别名要统一按标准品牌名归类并标注 isOwn: true，其余品牌视为竞品 isOwn: false）\n${lines.join('\n')}`
@@ -1231,7 +1248,7 @@ async function handleDailySummary(event, wxContext) {
     }
 
     const fileIDs = Array.isArray(item.photoFileIDs) ? item.photoFileIDs : []
-    if (fileIDs.length === 0) {
+    if (fileIDs.length === 0 || item.originPrunedAt) {
       singleFailedCount += 1
       continue
     }

@@ -36,12 +36,13 @@ function decideJobs(parts, state) {
   if (parts.minute % 2 === 0 && state.lastBatch !== minuteKey) jobs.push({ name: 'batchAnalyze', key: minuteKey })
   if (parts.minute % 30 === 0 && state.lastJxc !== minuteKey) jobs.push({ name: 'syncJxc', key: minuteKey })
   if (parts.hour === 3 && parts.minute === 0 && state.lastStats !== dateKey) jobs.push({ name: 'shelfStats', key: dateKey })
+  if (parts.hour === 3 && parts.minute >= 30 && state.lastPrune !== dateKey) jobs.push({ name: 'pruneOriginals', key: dateKey })
   return jobs
 }
 
 function createScheduler() {
-  const state = { lastBatch: '', lastJxc: '', lastStats: '' }
-  const running = { batchAnalyze: false, syncJxc: false, shelfStats: false }
+  const state = { lastBatch: '', lastJxc: '', lastStats: '', lastPrune: '' }
+  const running = { batchAnalyze: false, syncJxc: false, shelfStats: false, pruneOriginals: false }
   let timer = null
   let warnedJxc = false
 
@@ -85,6 +86,17 @@ function createScheduler() {
           overallDocs: result && result.overallDocs,
           error: result && result.error
         }))
+      } else if (name === 'pruneOriginals') {
+        const { pruneOriginals } = require('./prune-originals')
+        const result = await pruneOriginals()
+        console.log('[cron] pruneOriginals', JSON.stringify({
+          scanned: result && result.scanned,
+          prunedRecords: result && result.prunedRecords,
+          prunedFiles: result && result.prunedFiles,
+          freedBytes: result && result.freedBytes,
+          skippedFailed: result && result.skippedFailed,
+          sharpAvailable: result && result.sharpAvailable
+        }))
       }
     } catch (err) {
       console.error(`[cron] ${name} 失败:`, err)
@@ -99,6 +111,7 @@ function createScheduler() {
       if (job.name === 'batchAnalyze') state.lastBatch = job.key
       if (job.name === 'syncJxc') state.lastJxc = job.key
       if (job.name === 'shelfStats') state.lastStats = job.key
+      if (job.name === 'pruneOriginals') state.lastPrune = job.key
       await runJob(job.name)
     }
   }
@@ -110,7 +123,7 @@ function createScheduler() {
         tick().catch(err => console.error('[cron] tick 失败:', err))
       }, 20 * 1000)
       if (typeof timer.unref === 'function') timer.unref()
-      console.log('[cron] 已启动：批量分析每 2 分钟，进销存每 30 分钟，排面统计每天 03:00（Asia/Shanghai）')
+      console.log('[cron] 已启动：批量分析每 2 分钟，进销存每 30 分钟，排面统计每天 03:00，原图分级清理每天 03:30（Asia/Shanghai）')
     },
     stop() {
       if (timer) clearInterval(timer)
