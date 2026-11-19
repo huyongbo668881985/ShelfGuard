@@ -7,6 +7,10 @@
 // 这是微信云开发的常规做法；本函数只负责"写一条巡检记录"，并带上 _openid 归属。
 
 const cloud = require('../../cloud-shim')
+const { isCoordinateAddress, distanceInKm } = require('../../utils/coord')
+
+// 老客户地址自愈的最大允许距离（公里）：仅当打卡点在门店原坐标 500 米内时才用打卡地址补全，防止异地补传写错门店地址
+const ADDRESS_HEAL_MAX_KM = 0.5
 
 cloud.init({
   env: cloud.DYNAMIC_CURRENT_ENV
@@ -188,6 +192,27 @@ exports.main = async (event, context) => {
                   latitude: safeLocation.latitude,
                   longitude: safeLocation.longitude,
                   address: safeLocation.address || cust.address || ''
+                },
+                updatedAt: db.serverDate()
+              }
+            })
+          } else if (
+            isCoordinateAddress(cust.location.address) &&
+            safeLocation.address &&
+            !isCoordinateAddress(safeLocation.address) &&
+            distanceInKm(
+              Number(cust.location.latitude),
+              Number(cust.location.longitude),
+              safeLocation.latitude,
+              safeLocation.longitude
+            ) <= ADDRESS_HEAL_MAX_KM
+          ) {
+            // 过渡自愈：保留老客户原有经纬度不变，仅当本次打卡在门店 500 米内时补全空缺或纯坐标字符串的地址文本
+            await db.collection('customers').doc(safeCustomerId).update({
+              data: {
+                location: {
+                  ...cust.location,
+                  address: safeLocation.address
                 },
                 updatedAt: db.serverDate()
               }

@@ -58,12 +58,13 @@ function showLocationAuth() {
 }
 
 /**
- * 逆地理编码（腾讯地图）
+ * 逆地理编码（由服务端 geocode 接口统一解析，默认天地图为主、腾讯地图过渡兜底）
  * 注意：微信小程序没有内置的 wx.reverseGeocoder 这样的原生 API，
- * 必须走腾讯地图（调用 geocode 云函数，避免在前端暴露 Key、也避免配置域名白名单）。
+ * 必须走服务端接口（避免在前端暴露 Key、也避免配置域名白名单）；
+ * 前端仍保持采集 gcj02 坐标，与微信 map 和网页高德地图一致，服务端会在请求天地图前自动做坐标转换。
  * @param {number} lat
  * @param {number} lng
- * @returns {Promise<string>} 地址文本
+ * @returns {Promise<{address: string, reason: string}>} 地址文本与诊断原因
  */
 function reverseGeocode(lat, lng) {
   return api.callFunction({

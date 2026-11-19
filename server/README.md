@@ -33,7 +33,7 @@ server/
 ## 环境
 
 - Node.js 22.5 或更高（使用内置 `node:sqlite`，不用另装数据库）
-- 服务器能访问：`api.weixin.qq.com`、`dashscope.aliyuncs.com`；用到地图时还要访问 `apis.map.qq.com`；进销存同步还要能访问进销存服务
+- 服务器能访问：`api.weixin.qq.com`、`dashscope.aliyuncs.com`；用到地图时还要访问 `api.tianditu.gov.cn`（如启用腾讯兜底还需访问 `apis.map.qq.com`）；进销存同步还要能访问进销存服务
 
 ```bash
 cd server
@@ -61,7 +61,9 @@ npm start         # 默认 0.0.0.0:3100
 | `FILE_URL_SECRET` | 否 | 照片 URL 签名密钥。不填则用 `JWT_SECRET` |
 | `TOKEN_TTL_DAYS` | 否 | 登录 token 天数，默认 30。小程序每次打开都会重新登录 |
 | `DASHSCOPE_API_KEY` | 否 | 通义千问 Key。不填也可以在小程序「分析设置」里保存，环境变量优先 |
-| `TENCENT_MAP_KEY` | 否 | 腾讯位置服务 WebService Key。不填时水印退回经纬度 |
+| `TIANDITU_KEY` | 否 | 天地图 Web 服务 API Key（逆地理编码主服务）。不填时若配置了 `TENCENT_MAP_KEY` 会兜底，均未填时水印退回经纬度 |
+| `TENCENT_MAP_KEY` | 否 | 腾讯位置服务 WebService Key（可选过渡兜底） |
+| `GEOCODE_PROVIDER` | 否 | `auto`（默认，天地图优先 + 腾讯兜底）/ `tianditu` / `tencent` |
 | `JXC_BASE_URL` / `JXC_API_KEY` | 否 | 进销存同步。不填也可以在「分析设置」里保存，环境变量优先 |
 | `SHELFGUARD_TEST_LOGIN` | 禁止 | 只用于本机测试。设为 `1` 时可用 `testOpenid` 冒充任意用户。生产环境不要设置 |
 | `DISABLE_CRON` | 否 | 设为 `1` 关闭进程内定时任务 |
@@ -178,3 +180,15 @@ API 根地址在 `miniprogram/utils/config.js` 的 `apiBase`，目前是 `https:
 - 云函数 60 秒硬超时没有了。单次 AI 等待放到 90 秒；夜间统计和进销存同步允许跑完，不再卡在 45 秒。
 - 批量分析仍是每 2 分钟处理一批（默认先做一位业务员的当日汇总），避免一次堆太多图。
 - 旧的 `cloudfunctions/` 目录已删除，后端逻辑全部在 `server/src/functions/`。
+
+## 存量已定位客户地址过渡补刷
+
+切换天地图后，已有客户的 GCJ-02 经纬度保持不变；若部分老客户 `location.address` 为空或仅为数字坐标，可在配好 `TIANDITU_KEY` 后执行预览与补刷：
+
+```bash
+# 1. 仅预览待补全客户（默认 --mode missing，不改库）
+node server/scripts/backfill-customer-addresses.js --dry-run
+
+# 2. 确认无误后正式写入（仅补全 location.address，不动经纬度）
+node server/scripts/backfill-customer-addresses.js --apply
+```

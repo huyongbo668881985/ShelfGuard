@@ -16,6 +16,8 @@ process.env.BASE_PATH = '/shelfguard'
 process.env.PUBLIC_BASE_URL = 'http://127.0.0.1'
 process.env.WECHAT_APPID = ''
 process.env.WECHAT_SECRET = ''
+process.env.TIANDITU_KEY = ''
+process.env.TENCENT_MAP_KEY = ''
 
 const { createApp } = require('../src/app')
 const db = require('../src/docdb')
