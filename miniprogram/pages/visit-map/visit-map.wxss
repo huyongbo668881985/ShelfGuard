@@ -166,8 +166,29 @@
   margin: 0 18rpx;
 }
 
-.ov-fit-btn {
+.ov-actions {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+}
+
+.ov-anim-btn {
+  padding: 6rpx 16rpx;
+  font-size: 22rpx;
+  color: #627D98;
+  background: #F4F6F9;
+  border-radius: 20rpx;
+  font-weight: 500;
+}
+
+.ov-anim-btn.playing {
+  color: #C2933B;
+  background: #FFF8EB;
+  font-weight: 600;
+}
+
+.ov-fit-btn {
   padding: 6rpx 18rpx;
   font-size: 22rpx;
   color: #1C3D5A;
@@ -226,8 +247,19 @@
   background: #fff;
   border-radius: 24rpx 24rpx 0 0;
   box-shadow: 0 -4rpx 20rpx rgba(0, 0, 0, 0.08);
-  padding: 16rpx 24rpx 28rpx;
+  padding: 14rpx 24rpx 20rpx;
   z-index: 10;
+}
+
+.bottom-sheet.expanded {
+  padding-bottom: 28rpx;
+}
+
+.idle-tip-bar {
+  padding-top: 12rpx;
+  text-align: center;
+  font-size: 22rpx;
+  color: #829AB1;
 }
 
 .timeline-scroll {
@@ -354,11 +386,16 @@
 }
 
 .step-btn {
-  padding: 6rpx 16rpx;
+  padding: 6rpx 14rpx;
   font-size: 22rpx;
   background: #EEF2F7;
   color: #1C3D5A;
   border-radius: 20rpx;
+}
+
+.step-btn.close-btn {
+  background: #F4F6F9;
+  color: #627D98;
 }
 
 .step-btn.disabled {

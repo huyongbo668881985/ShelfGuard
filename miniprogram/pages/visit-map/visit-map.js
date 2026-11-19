@@ -9,6 +9,15 @@ const app = getApp()
 const WEEK_NAMES = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
 // 默认地图中心（北京天安门兜底，有实际坐标时会自动缩放至轨迹区域）
 const DEFAULT_CENTER = { latitude: 39.908823, longitude: 116.39747 }
+const CURSOR_MARKER_ID = 999999
+
+function calcSegmentDuration(from, to) {
+  const dLat = (to.lat - from.lat) * 111000
+  const dLng = (to.lng - from.lng) * 95000
+  const meters = Math.hypot(dLat, dLng)
+  // 慢速平稳移动：每段 2.4s ~ 4.2s，避免过快眼花缭乱
+  return Math.round(Math.max(2400, Math.min(4200, 2200 + meters * 0.35)))
+}
 
 function pad(n) {
   return String(n).padStart(2, '0')
@@ -52,9 +61,13 @@ Page({
     noCoordCount: 0,
     hasValidCoords: false,
 
-    // 当前选中的轨迹点
-    activeIndex: 0,
+    // 当前选中的轨迹点（默认 -1 不展开图片详情，优先展示全览轨迹）
+    activeIndex: -1,
     activePoint: null,
+
+    // 轨迹动画控制
+    canAnimate: false,
+    animPlaying: true,
 
     // 地图组件数据
     mapCenter: DEFAULT_CENTER,
@@ -65,6 +78,7 @@ Page({
   },
 
   onLoad(options) {
+    this._numIconCache = {}
     const todayStr = toDateStr(new Date())
     const initDate = (options && options.date) ? decodeURIComponent(options.date) : todayStr
     const initUserId = (options && options.userId) ? decodeURIComponent(options.userId) : ''
@@ -76,6 +90,20 @@ Page({
     })
     this.updateDateLabel(initDate)
     this.loadRoute()
+  },
+
+  onShow() {
+    if (this.data.canAnimate && this.data.animPlaying && !this.data.loading) {
+      this.startRouteAnimation()
+    }
+  },
+
+  onHide() {
+    this.stopRouteAnimation()
+  },
+
+  onUnload() {
+    this.stopRouteAnimation()
   },
 
   updateDateLabel(dateStr) {
@@ -170,12 +198,12 @@ Page({
 
         if (recordType === 'clock_in') {
           typeLabel = '上班打卡'
-          badgeText = '起'
+          badgeText = '☀️'
           displayTitle = '上班打卡'
           shortTitle = '上班打卡'
         } else if (recordType === 'clock_out') {
           typeLabel = '下班打卡'
-          badgeText = '终'
+          badgeText = '🌙'
           displayTitle = '下班打卡'
           shortTitle = '下班打卡'
         } else {
@@ -243,14 +271,15 @@ Page({
 
       const coordPoints = points.filter(p => p.hasCoord)
       const hasValidCoords = coordPoints.length > 0
-      const activeIndex = points.length > 0 ? 0 : -1
-      const activePoint = activeIndex >= 0 ? points[activeIndex] : null
+      const canAnimate = coordPoints.length >= 2
+      const activeIndex = -1
+      const activePoint = null
 
       const polyline = coordPoints.length >= 2
         ? [{
             points: coordPoints.map(p => ({ latitude: p.lat, longitude: p.lng })),
             color: '#1C3D5A',
-            width: 5,
+            width: 6,
             arrowLine: true,
             borderColor: '#FFFFFF',
             borderWidth: 1
@@ -266,7 +295,8 @@ Page({
         ? { latitude: coordPoints[0].lat, longitude: coordPoints[0].lng }
         : DEFAULT_CENTER
 
-      const markers = this.buildMarkers(points, activeIndex)
+      this.stopRouteAnimation()
+      const markers = this.buildMarkers(points, activeIndex, coordPoints)
 
       this.setData({
         isManager: !!result.isManager,
@@ -279,6 +309,7 @@ Page({
         clockOutPoint,
         noCoordCount,
         hasValidCoords,
+        canAnimate,
         activeIndex,
         activePoint,
         mapCenter,
@@ -289,7 +320,12 @@ Page({
       })
 
       if (includePoints.length > 0) {
-        setTimeout(() => this.fitAllPoints(), 150)
+        setTimeout(() => {
+          this.fitAllPoints()
+          if (canAnimate && this.data.animPlaying) {
+            this.startRouteAnimation()
+          }
+        }, 180)
       }
     } catch (err) {
       console.error('加载拜访地图失败:', err)
@@ -304,65 +340,276 @@ Page({
     }
   },
 
-  buildMarkers(points, activeIndex) {
-    return (points || [])
+  getNumberDotIcon(badgeText, isActive) {
+    const key = `${badgeText}_${isActive ? 1 : 0}`
+    if (!this._numIconCache) this._numIconCache = {}
+    if (this._numIconCache[key]) return this._numIconCache[key]
+
+    try {
+      if (typeof wx.createOffscreenCanvas !== 'function' || !wx.env || !wx.env.USER_DATA_PATH) {
+        return ''
+      }
+      const size = 64
+      const canvas = wx.createOffscreenCanvas({ type: '2d', width: size, height: size })
+      const ctx = canvas.getContext('2d')
+      if (!ctx || typeof canvas.toDataURL !== 'function') return ''
+
+      ctx.clearRect(0, 0, size, size)
+      // 柔和阴影
+      ctx.beginPath()
+      ctx.arc(32, 33, 27, 0, Math.PI * 2)
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.18)'
+      ctx.fill()
+
+      // 圆点底色与白色外环
+      ctx.beginPath()
+      ctx.arc(32, 32, 26, 0, Math.PI * 2)
+      ctx.fillStyle = isActive ? '#C2933B' : '#1C3D5A'
+      ctx.fill()
+      ctx.lineWidth = 5
+      ctx.strokeStyle = '#FFFFFF'
+      ctx.stroke()
+
+      // 居中数字
+      const text = String(badgeText || '')
+      const fontSize = text.length >= 3 ? 19 : (text.length === 2 ? 23 : 28)
+      ctx.fillStyle = '#FFFFFF'
+      ctx.font = `bold ${fontSize}px sans-serif`
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(text, 32, 33)
+
+      const dataUrl = canvas.toDataURL('image/png')
+      const base64 = dataUrl.replace(/^data:image\/\w+;base64,/, '')
+      const safeName = text.replace(/[^a-zA-Z0-9]/g, '_')
+      const filePath = `${wx.env.USER_DATA_PATH}/sg_dot_${safeName}_${isActive ? 1 : 0}.png`
+      wx.getFileSystemManager().writeFileSync(filePath, base64, 'base64')
+      this._numIconCache[key] = filePath
+      return filePath
+    } catch (e) {
+      return ''
+    }
+  },
+
+  buildPointMarker(p, isSelected) {
+    let iconPath = ''
+    let width = isSelected ? 34 : 28
+    let height = isSelected ? 34 : 28
+    let useFallbackCallout = false
+
+    if (p.recordType === 'clock_in') {
+      iconPath = isSelected ? '/images/map-sun-active.png' : '/images/map-sun.png'
+      width = isSelected ? 36 : 30
+      height = isSelected ? 36 : 30
+    } else if (p.recordType === 'clock_out') {
+      iconPath = isSelected ? '/images/map-moon-active.png' : '/images/map-moon.png'
+      width = isSelected ? 36 : 30
+      height = isSelected ? 36 : 30
+    } else {
+      iconPath = this.getNumberDotIcon(p.badgeText, isSelected)
+      if (!iconPath) {
+        iconPath = isSelected ? '/images/map-dot-active.png' : '/images/map-dot.png'
+        useFallbackCallout = true
+      }
+    }
+
+    const marker = {
+      id: p.index,
+      latitude: p.lat,
+      longitude: p.lng,
+      iconPath,
+      width,
+      height,
+      anchor: { x: 0.5, y: 0.5 },
+      zIndex: isSelected ? 99 : p.index + 1
+    }
+
+    if (isSelected) {
+      const bgColor = p.recordType === 'clock_in'
+        ? '#059669'
+        : (p.recordType === 'clock_out' ? '#D97706' : '#C2933B')
+      const content = p.isClock
+        ? `${p.displayTitle} ${p.timeText}`
+        : `${p.typeLabel} · ${p.shortTitle} ${p.timeText}`
+      marker.callout = {
+        content,
+        color: '#FFFFFF',
+        fontSize: 12,
+        borderRadius: 12,
+        bgColor,
+        padding: 6,
+        display: 'ALWAYS',
+        textAlign: 'center'
+      }
+    } else if (useFallbackCallout) {
+      marker.callout = {
+        content: p.badgeText,
+        color: '#FFFFFF',
+        fontSize: 11,
+        borderRadius: 12,
+        bgColor: '#1C3D5A',
+        padding: 5,
+        display: 'ALWAYS',
+        textAlign: 'center'
+      }
+    }
+
+    return marker
+  },
+
+  buildMarkers(points, activeIndex, coordPoints) {
+    const list = (points || [])
       .filter(p => p.hasCoord)
-      .map(p => {
-        const isSelected = p.index === activeIndex
-        let bgColor = '#1C3D5A'
-        let prefix = `${p.badgeText}. `
-        if (p.recordType === 'clock_in') {
-          bgColor = '#059669'
-          prefix = '🌅 起·'
-        } else if (p.recordType === 'clock_out') {
-          bgColor = '#D97706'
-          prefix = '🌙 终·'
-        }
-        if (isSelected) {
-          bgColor = '#C2933B'
-        }
+      .map(p => this.buildPointMarker(p, p.index === activeIndex))
 
-        const content = `${prefix}${p.shortTitle} ${p.timeText}`
-
-        return {
-          id: p.index,
-          latitude: p.lat,
-          longitude: p.lng,
-          width: isSelected ? 28 : 22,
-          height: isSelected ? 28 : 22,
-          zIndex: isSelected ? 99 : p.index + 1,
-          callout: {
-            content,
-            color: '#FFFFFF',
-            fontSize: isSelected ? 13 : 11,
-            borderRadius: 14,
-            bgColor,
-            padding: 7,
-            display: 'ALWAYS',
-            textAlign: 'center'
-          }
-        }
+    const coords = coordPoints || (points || []).filter(p => p.hasCoord)
+    if (coords.length >= 2) {
+      list.push({
+        id: CURSOR_MARKER_ID,
+        latitude: coords[0].lat,
+        longitude: coords[0].lng,
+        iconPath: '/images/map-arrow.png',
+        width: 24,
+        height: 24,
+        anchor: { x: 0.5, y: 0.5 },
+        zIndex: 60
       })
+    }
+    return list
+  },
+
+  stopRouteAnimation() {
+    this._animToken = (this._animToken || 0) + 1
+    if (this._animTimer) {
+      clearTimeout(this._animTimer)
+      this._animTimer = null
+    }
+  },
+
+  startRouteAnimation() {
+    this.stopRouteAnimation()
+    if (!this.data.animPlaying) return
+    const coordPoints = (this.data.points || []).filter(p => p.hasCoord)
+    if (coordPoints.length < 2) return
+
+    const token = this._animToken
+    const mapCtx = wx.createMapContext('visitMap', this)
+    let stepIdx = 0
+
+    const resetCursorToStart = (cb) => {
+      const markers = this.data.markers || []
+      const cursorIdx = markers.findIndex(m => m.id === CURSOR_MARKER_ID)
+      if (cursorIdx >= 0) {
+        this.setData({
+          [`markers[${cursorIdx}].latitude`]: coordPoints[0].lat,
+          [`markers[${cursorIdx}].longitude`]: coordPoints[0].lng
+        }, () => {
+          if (token !== this._animToken) return
+          this._animTimer = setTimeout(cb, 260)
+        })
+      }
+    }
+
+    const runNextHop = () => {
+      if (token !== this._animToken || !this.data.animPlaying) return
+      if (stepIdx >= coordPoints.length - 1) {
+        stepIdx = 0
+        resetCursorToStart(runNextHop)
+        return
+      }
+      const from = coordPoints[stepIdx]
+      const to = coordPoints[stepIdx + 1]
+      const duration = calcSegmentDuration(from, to)
+
+      try {
+        mapCtx.translateMarker({
+          markerId: CURSOR_MARKER_ID,
+          destination: { latitude: to.lat, longitude: to.lng },
+          autoRotate: true,
+          moveWithRotate: true,
+          duration,
+          animationEnd: () => {
+            if (token !== this._animToken || !this.data.animPlaying) return
+            stepIdx += 1
+            const dwell = stepIdx >= coordPoints.length - 1 ? 1500 : 750
+            this._animTimer = setTimeout(runNextHop, dwell)
+          },
+          fail: () => {
+            // 如果某次移动被系统取消，温和退避后重试
+            if (token !== this._animToken || !this.data.animPlaying) return
+            this._animTimer = setTimeout(runNextHop, 1200)
+          }
+        })
+      } catch (e) {}
+    }
+
+    resetCursorToStart(runNextHop)
+  },
+
+  toggleAnimation() {
+    const next = !this.data.animPlaying
+    this.setData({ animPlaying: next })
+    if (next) {
+      this.startRouteAnimation()
+    } else {
+      this.stopRouteAnimation()
+    }
   },
 
   selectPointByIndex(idx) {
     const points = this.data.points || []
     if (idx < 0 || idx >= points.length) return
+    const prevIdx = this.data.activeIndex
     const pt = points[idx]
-    const markers = this.buildMarkers(points, idx)
-    const nextState = {
+    const markers = this.data.markers || []
+    const updates = {
       activeIndex: idx,
-      activePoint: pt,
-      markers
+      activePoint: pt
     }
+
+    // 仅局部更新旧点与新点 marker，避免整体替换 markers 打断移动光标动画
+    if (prevIdx >= 0 && prevIdx !== idx) {
+      const oldMarkerPos = markers.findIndex(m => m.id === prevIdx)
+      if (oldMarkerPos >= 0 && points[prevIdx]) {
+        updates[`markers[${oldMarkerPos}]`] = this.buildPointMarker(points[prevIdx], false)
+      }
+    }
+    const newMarkerPos = markers.findIndex(m => m.id === idx)
+    if (newMarkerPos >= 0) {
+      updates[`markers[${newMarkerPos}]`] = this.buildPointMarker(pt, true)
+    }
+
     if (pt.hasCoord) {
-      nextState.mapCenter = { latitude: pt.lat, longitude: pt.lng }
+      updates.mapCenter = { latitude: pt.lat, longitude: pt.lng }
     }
-    this.setData(nextState)
+    this.setData(updates)
+  },
+
+  clearSelection() {
+    const prevIdx = this.data.activeIndex
+    if (prevIdx < 0 && !this.data.activePoint) return
+    const points = this.data.points || []
+    const markers = this.data.markers || []
+    const updates = {
+      activeIndex: -1,
+      activePoint: null
+    }
+    if (prevIdx >= 0 && points[prevIdx]) {
+      const oldMarkerPos = markers.findIndex(m => m.id === prevIdx)
+      if (oldMarkerPos >= 0) {
+        updates[`markers[${oldMarkerPos}]`] = this.buildPointMarker(points[prevIdx], false)
+      }
+    }
+    this.setData(updates)
+  },
+
+  onMapTap() {
+    this.clearSelection()
   },
 
   onMarkerTap(e) {
     const markerId = e && e.detail ? Number(e.detail.markerId) : -1
+    if (markerId === CURSOR_MARKER_ID) return
     if (Number.isFinite(markerId) && markerId >= 0) {
       this.selectPointByIndex(markerId)
     }
@@ -386,7 +633,8 @@ Page({
 
   stepNode(e) {
     const delta = Number(e.currentTarget.dataset.delta) || 0
-    const nextIdx = this.data.activeIndex + delta
+    const baseIdx = this.data.activeIndex < 0 ? 0 : this.data.activeIndex
+    const nextIdx = this.data.activeIndex < 0 ? 0 : baseIdx + delta
     if (nextIdx < 0 || nextIdx >= this.data.points.length) return
     this.selectPointByIndex(nextIdx)
   },

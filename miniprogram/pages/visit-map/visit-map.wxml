@@ -51,7 +51,10 @@
         <text class="ov-label">下班：</text>
         <text class="ov-val {{clockOutPoint ? 'done' : ''}}" data-id="{{clockOutPoint._id}}" bindtap="onQuickSelectById">{{clockOutPoint ? clockOutPoint.timeText : '未打卡'}}</text>
       </view>
-      <view class="ov-fit-btn" wx:if="{{hasValidCoords}}" bindtap="fitAllPoints">全览</view>
+      <view class="ov-actions">
+        <view class="ov-anim-btn {{animPlaying ? 'playing' : ''}}" wx:if="{{canAnimate}}" bindtap="toggleAnimation">{{animPlaying ? '⏸ 动画' : '▶ 动画'}}</view>
+        <view class="ov-fit-btn" wx:if="{{hasValidCoords}}" bindtap="fitAllPoints">全览</view>
+      </view>
     </view>
   </view>
 
@@ -67,6 +70,7 @@
       polyline="{{polyline}}"
       include-points="{{includePoints}}"
       show-location="{{false}}"
+      bindtap="onMapTap"
       bindmarkertap="onMarkerTap"
       bindcallouttap="onMarkerTap"
     ></map>
@@ -83,10 +87,10 @@
     </view>
   </view>
 
-  <!-- 底部：轨迹时间轴节点 + 当前选中点位照片与详情 -->
-  <view class="bottom-sheet" wx:if="{{points.length > 0}}">
-    <!-- 横向路线节点条：点选任意节点切换详情并移动地图中心 -->
-    <scroll-view class="timeline-scroll" scroll-x scroll-into-view="node-{{activeIndex}}">
+  <!-- 底部：轨迹序号节点 + 点击后展开点位客户名与照片 -->
+  <view class="bottom-sheet {{activePoint ? 'expanded' : ''}}" wx:if="{{points.length > 0}}">
+    <!-- 横向路线节点条：仅显示太阳/数字/月亮与时间，点击后展开客户名和现场照片 -->
+    <scroll-view class="timeline-scroll" scroll-x scroll-into-view="{{activeIndex >= 0 ? 'node-' + activeIndex : ''}}">
       <view class="timeline-row">
         <block wx:for="{{points}}" wx:key="_id">
           <view
@@ -96,7 +100,6 @@
             bindtap="onSelectNode"
           >
             <text class="node-badge">{{item.badgeText}}</text>
-            <text class="node-title">{{item.shortTitle}}</text>
             <text class="node-time">{{item.timeText}}</text>
           </view>
           <view class="timeline-arrow" wx:if="{{index < points.length - 1}}">→</view>
@@ -104,7 +107,12 @@
       </view>
     </scroll-view>
 
-    <!-- 当前点位详情与照片卡片 -->
+    <!-- 未点击点位时仅提示，保持地图大视野展示整体轨迹 -->
+    <view class="idle-tip-bar" wx:if="{{!activePoint}}">
+      <text>👆 点击地图圆点或上方序号，查看客户名称与现场照片</text>
+    </view>
+
+    <!-- 当前点位详情与照片卡片（点击后展示） -->
     <view class="point-detail-card" wx:if="{{activePoint}}">
       <view class="detail-head">
         <view class="detail-title-wrap">
@@ -112,8 +120,9 @@
           <text class="detail-store-name">{{activePoint.displayTitle}}</text>
         </view>
         <view class="detail-step-btns">
-          <view class="step-btn {{activeIndex <= 0 ? 'disabled' : ''}}" data-delta="-1" bindtap="stepNode">‹ 上一点</view>
-          <view class="step-btn {{activeIndex >= points.length - 1 ? 'disabled' : ''}}" data-delta="1" bindtap="stepNode">下一点 ›</view>
+          <view class="step-btn {{activeIndex <= 0 ? 'disabled' : ''}}" data-delta="-1" bindtap="stepNode">‹ 上点</view>
+          <view class="step-btn {{activeIndex >= points.length - 1 ? 'disabled' : ''}}" data-delta="1" bindtap="stepNode">下点 ›</view>
+          <view class="step-btn close-btn" bindtap="clearSelection">收起</view>
         </view>
       </view>
 

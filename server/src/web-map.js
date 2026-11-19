@@ -1036,43 +1036,108 @@ function renderHtml(prefix) {
     }
     .map-tool-btn:hover { background: #F8FAFC; }
 
-    /* Custom Map Marker Pin */
-    .sg-pin-wrap {
+    /* Custom Circular Map Marker Dots */
+    .sg-custom-div-icon {
+      background: transparent;
+      border: none;
+    }
+    .sg-dot-wrap {
       position: relative;
-      transform: translate(-50%, -100%);
+      transform: translate(-50%, -50%);
       display: inline-flex;
-      flex-direction: column;
       align-items: center;
+      justify-content: center;
       cursor: pointer;
     }
-    .sg-pin-bubble {
+    .sg-dot {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      background: var(--navy);
+      color: #fff;
+      font-size: 13px;
+      font-weight: 700;
+      border: 2.5px solid #fff;
+      box-shadow: 0 3px 10px rgba(0,0,0,0.28);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform 0.16s ease, box-shadow 0.16s ease;
+      user-select: none;
+      line-height: 1;
+    }
+    .sg-dot.is-clock {
+      width: 32px;
+      height: 32px;
+    }
+    .sg-dot-wrap:hover .sg-dot {
+      transform: scale(1.14);
+    }
+    .sg-dot-wrap.active .sg-dot {
+      transform: scale(1.22);
+      box-shadow: 0 0 0 4px rgba(194,147,59,0.42), 0 4px 14px rgba(0,0,0,0.34);
+    }
+    .sg-dot-wrap.active .sg-dot.is-visit {
+      background: var(--gold) !important;
+    }
+    .sg-dot-wrap.active .sg-dot.is-clock {
+      border-color: #FCD34D;
+    }
+    .sg-dot-label {
+      display: none;
+      position: absolute;
+      bottom: calc(100% + 9px);
+      left: 50%;
+      transform: translateX(-50%);
       white-space: nowrap;
-      padding: 5px 10px;
-      border-radius: 16px;
+      padding: 5px 11px;
+      border-radius: 14px;
+      background: rgba(28, 61, 90, 0.95);
       color: #fff;
       font-size: 12px;
       font-weight: 600;
-      background: var(--navy);
-      box-shadow: 0 3px 10px rgba(0,0,0,0.22);
-      border: 2px solid #fff;
+      border: 1.5px solid #fff;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.24);
+      pointer-events: none;
+    }
+    .sg-dot-label::after {
+      content: '';
+      position: absolute;
+      top: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      border-left: 5px solid transparent;
+      border-right: 5px solid transparent;
+      border-top: 6px solid rgba(28, 61, 90, 0.95);
+    }
+    .sg-dot-wrap.active .sg-dot-label {
+      display: block;
+    }
+
+    /* Static Directional Arrow & Slow Animated Route Cursor */
+    .sg-line-arrow {
+      transform: translate(-50%, -50%);
+      pointer-events: none;
       display: flex;
       align-items: center;
-      gap: 5px;
-      transition: transform 0.15s;
+      justify-content: center;
     }
-    .sg-pin-wrap:hover .sg-pin-bubble,
-    .sg-pin-wrap.active .sg-pin-bubble {
-      transform: scale(1.1);
-      background: var(--gold) !important;
-      z-index: 999;
+    .sg-anim-cursor {
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: var(--gold);
+      border: 2px solid #fff;
+      box-shadow: 0 2px 10px rgba(194,147,59,0.6), 0 0 0 5px rgba(194,147,59,0.22);
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
-    .sg-pin-arrow {
-      width: 0;
-      height: 0;
-      border-left: 6px solid transparent;
-      border-right: 6px solid transparent;
-      border-top: 7px solid #fff;
-      margin-top: -1px;
+    .sg-anim-arrow-svg {
+      display: block;
+      transition: transform 0.12s linear;
     }
 
     /* Right/Floating Detail Drawer */
@@ -1419,6 +1484,7 @@ function renderHtml(prefix) {
     <main class="map-stage">
       <div id="map"></div>
       <div class="map-toolbar">
+        <button class="map-tool-btn" id="toggleAnimBtn" style="display:none">⏸ 暂停轨迹</button>
         <button class="map-tool-btn" id="fitBoundsBtn">🎯 全览当前轨迹</button>
       </div>
 
@@ -1508,6 +1574,11 @@ function renderHtml(prefix) {
           .replace(/"/g, '&quot;');
       }
 
+      const SUN_SVG = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="#FFFBEB" stroke-width="2.1" stroke-linecap="round"><circle cx="12" cy="12" r="4.4" fill="#FEF3C7" stroke="none"/><line x1="12" y1="2.5" x2="12" y2="5.2"/><line x1="12" y1="18.8" x2="12" y2="21.5"/><line x1="2.5" y1="12" x2="5.2" y2="12"/><line x1="18.8" y1="12" x2="21.5" y2="12"/><line x1="5.3" y1="5.3" x2="7.2" y2="7.2"/><line x1="16.8" y1="16.8" x2="18.7" y2="18.7"/><line x1="18.7" y1="5.3" x2="16.8" y2="7.2"/><line x1="7.2" y1="16.8" x2="5.3" y2="18.7"/></svg>';
+      const MOON_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="#FFFBEB"><path d="M19.2 14.9A7.8 7.8 0 0 1 9.1 4.8a8.2 8.2 0 1 0 10.1 10.1Z"/></svg>';
+      const STATIC_ARROW_SVG = '<svg viewBox="0 0 16 16" width="14" height="14" style="display:block"><path d="M8 2L13 12L8 9.2L3 12Z" fill="#FFFFFF" stroke="COLOR_PLACEHOLDER" stroke-width="1.6" stroke-linejoin="round"/></svg>';
+      const CURSOR_ARROW_SVG = '<svg class="sg-anim-arrow-svg" viewBox="0 0 16 16" width="14" height="14"><path d="M8 2L13 12L8 9.3L3 12Z" fill="#FFFFFF"/></svg>';
+
       const todayStr = toDateStr(new Date());
       let selectedDate = todayStr;
       let selectedUserId = '';
@@ -1517,7 +1588,13 @@ function renderHtml(prefix) {
       let map = null;
       let markersLayer = null;
       let linesLayer = null;
+      let arrowsLayer = null;
+      let animLayer = null;
       let markerInstances = [];
+      let routeSegmentsByUser = [];
+      let animPaused = false;
+      let animRafId = 0;
+      let animToken = 0;
 
       // Lightbox state
       let lbUrls = [];
@@ -1548,7 +1625,18 @@ function renderHtml(prefix) {
         }).addTo(map);
 
         linesLayer = L.layerGroup().addTo(map);
+        arrowsLayer = L.layerGroup().addTo(map);
         markersLayer = L.layerGroup().addTo(map);
+        animLayer = L.layerGroup().addTo(map);
+
+        map.on('zoomend', () => {
+          renderStaticArrows();
+        });
+        map.on('click', () => {
+          if (activeIndex !== -1) {
+            closeDrawer();
+          }
+        });
 
         loadRoute();
       }
@@ -1599,17 +1687,13 @@ function renderHtml(prefix) {
 
           usersList = data.usersList || [];
           selectedUserId = data.selectedUserId || '';
+          activeIndex = -1;
           processPoints(data.points || []);
           renderUsers();
           renderSummary();
           renderTimeline();
           renderMapLayers(true);
-
-          if (points.length > 0) {
-            selectPoint(0, false);
-          } else {
-            closeDrawer();
-          }
+          closeDrawer();
         } catch (err) {
           console.error('加载轨迹失败:', err);
         }
@@ -1767,8 +1851,12 @@ function renderHtml(prefix) {
             ? '<img class="tl-thumb" loading="lazy" decoding="async" src="' + escapeHtml(p.thumbnailURL) + '" alt="缩略图" />'
             : '';
 
+          const badgeHtml = p.recordType === 'clock_in'
+            ? SUN_SVG
+            : (p.recordType === 'clock_out' ? MOON_SVG : escapeHtml(p.badgeText));
+
           html += '<div class="tl-item ' + (isAct ? 'active' : '') + '" id="tl-item-' + idx + '" data-idx="' + idx + '">' +
-            '<div class="tl-badge ' + p.recordType + '">' + escapeHtml(p.badgeText) + '</div>' +
+            '<div class="tl-badge ' + p.recordType + '">' + badgeHtml + '</div>' +
             '<div class="tl-body">' +
               '<div class="tl-head">' +
                 '<span class="tl-title">' + escapeHtml(p.displayTitle) + '</span>' +
@@ -1793,11 +1881,148 @@ function renderHtml(prefix) {
         });
       }
 
+      function stopRouteAnimation() {
+        animToken += 1;
+        if (animRafId) {
+          cancelAnimationFrame(animRafId);
+          animRafId = 0;
+        }
+        if (animLayer) animLayer.clearLayers();
+      }
+
+      function updateAnimToggleBtn() {
+        const btn = document.getElementById('toggleAnimBtn');
+        if (!btn) return;
+        const coordPoints = points.filter(p => p.hasCoord);
+        const canAnimate = selectedUserId !== '__ALL__' && coordPoints.length >= 2;
+        btn.style.display = canAnimate ? '' : 'none';
+        btn.textContent = animPaused ? '▶ 播放轨迹' : '⏸ 暂停轨迹';
+      }
+
+      function renderStaticArrows() {
+        if (!map || !arrowsLayer) return;
+        arrowsLayer.clearLayers();
+        routeSegmentsByUser.forEach(group => {
+          const pts = group.points;
+          const color = group.color;
+          for (let i = 0; i < pts.length - 1; i++) {
+            const p1 = pts[i];
+            const p2 = pts[i + 1];
+            const pt1 = map.latLngToLayerPoint([p1.lat, p1.lng]);
+            const pt2 = map.latLngToLayerPoint([p2.lat, p2.lng]);
+            const dx = pt2.x - pt1.x;
+            const dy = pt2.y - pt1.y;
+            const dist = Math.hypot(dx, dy);
+            if (dist < 36) continue;
+            const deg = Math.atan2(dx, -dy) * 180 / Math.PI;
+            const ratios = dist > 240 ? [0.35, 0.65] : [0.5];
+            ratios.forEach(t => {
+              const midLayerPt = L.point(pt1.x + dx * t, pt1.y + dy * t);
+              const midLatLng = map.layerPointToLatLng(midLayerPt);
+              const svg = STATIC_ARROW_SVG.replace('COLOR_PLACEHOLDER', color);
+              const icon = L.divIcon({
+                className: 'sg-custom-div-icon',
+                html: '<div class="sg-line-arrow" style="transform:translate(-50%,-50%) rotate(' + deg.toFixed(1) + 'deg)">' + svg + '</div>',
+                iconSize: [0, 0],
+                iconAnchor: [0, 0]
+              });
+              L.marker(midLatLng, { icon, interactive: false, zIndexOffset: 200 }).addTo(arrowsLayer);
+            });
+          }
+        });
+      }
+
+      function startRouteAnimation() {
+        stopRouteAnimation();
+        updateAnimToggleBtn();
+        if (!map || !animLayer || animPaused || selectedUserId === '__ALL__') return;
+        const coordPoints = points.filter(p => p.hasCoord);
+        if (coordPoints.length < 2) return;
+
+        const token = animToken;
+        const cursorIcon = L.divIcon({
+          className: 'sg-custom-div-icon',
+          html: '<div class="sg-anim-cursor">' + CURSOR_ARROW_SVG + '</div>',
+          iconSize: [0, 0],
+          iconAnchor: [0, 0]
+        });
+        const cursorMarker = L.marker([coordPoints[0].lat, coordPoints[0].lng], {
+          icon: cursorIcon,
+          interactive: false,
+          zIndexOffset: 850
+        }).addTo(animLayer);
+
+        // Precompute Mercator points at zoom 16 for linear glide & exact bearing
+        const projPts = coordPoints.map(p => map.project([p.lat, p.lng], 16));
+        let segIdx = 0;
+        let phase = 'move'; // 'move' | 'dwell'
+        let phaseStart = performance.now();
+        let segDuration = 2800;
+        let dwellDuration = 850;
+
+        function prepareSegment(idx) {
+          const p1 = map.latLngToLayerPoint([coordPoints[idx].lat, coordPoints[idx].lng]);
+          const p2 = map.latLngToLayerPoint([coordPoints[idx + 1].lat, coordPoints[idx + 1].lng]);
+          const pxDist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+          // Slow, calm movement: 2.4s to 4.8s per leg depending on visual distance
+          segDuration = Math.max(2400, Math.min(4800, 2200 + pxDist * 7));
+          const m1 = projPts[idx];
+          const m2 = projPts[idx + 1];
+          const deg = Math.atan2(m2.x - m1.x, -(m2.y - m1.y)) * 180 / Math.PI;
+          const el = cursorMarker.getElement();
+          const svgEl = el ? el.querySelector('.sg-anim-arrow-svg') : null;
+          if (svgEl) {
+            svgEl.style.transform = 'rotate(' + deg.toFixed(1) + 'deg)';
+          }
+        }
+
+        prepareSegment(0);
+
+        function tick(now) {
+          if (token !== animToken) return;
+          if (phase === 'move') {
+            const elapsed = now - phaseStart;
+            const t = Math.min(1, elapsed / segDuration);
+            // Smooth ease-in-out sine curve
+            const eased = 0.5 - 0.5 * Math.cos(Math.PI * t);
+            const m1 = projPts[segIdx];
+            const m2 = projPts[segIdx + 1];
+            const curProj = L.point(
+              m1.x + (m2.x - m1.x) * eased,
+              m1.y + (m2.y - m1.y) * eased
+            );
+            cursorMarker.setLatLng(map.unproject(curProj, 16));
+            if (t >= 1) {
+              phase = 'dwell';
+              phaseStart = now;
+              dwellDuration = (segIdx >= coordPoints.length - 2) ? 1600 : 850;
+            }
+          } else {
+            if (now - phaseStart >= dwellDuration) {
+              segIdx += 1;
+              if (segIdx >= coordPoints.length - 1) {
+                segIdx = 0;
+                cursorMarker.setLatLng([coordPoints[0].lat, coordPoints[0].lng]);
+              }
+              prepareSegment(segIdx);
+              phase = 'move';
+              phaseStart = now;
+            }
+          }
+          animRafId = requestAnimationFrame(tick);
+        }
+
+        animRafId = requestAnimationFrame(tick);
+      }
+
       function renderMapLayers(shouldFit) {
         if (!map) return;
         linesLayer.clearLayers();
+        arrowsLayer.clearLayers();
         markersLayer.clearLayers();
+        stopRouteAnimation();
         markerInstances = [];
+        routeSegmentsByUser = [];
 
         const coordPoints = points.filter(p => p.hasCoord);
 
@@ -1815,31 +2040,37 @@ function renderHtml(prefix) {
           const latlngs = uPoints.map(p => [p.lat, p.lng]);
           L.polyline(latlngs, {
             color: color,
-            weight: 4,
-            opacity: 0.85
+            weight: 3.5,
+            opacity: 0.8
           }).addTo(linesLayer);
+          routeSegmentsByUser.push({ color, points: uPoints });
         });
 
-        // 绘制每个点位的自定义气泡图标
+        // 绘制每个点位的纯圆点图标（默认仅数字或太阳/月亮，点击后再展示客户名称与照片）
         coordPoints.forEach(p => {
           let bg = getUserColor(p.userId);
-          let prefix = p.badgeText + '. ';
+          let dotClass = 'is-visit';
+          let dotInner = escapeHtml(p.badgeText);
           if (p.recordType === 'clock_in') {
             bg = '#059669';
-            prefix = '🌅 起·';
+            dotClass = 'is-clock';
+            dotInner = SUN_SVG;
           } else if (p.recordType === 'clock_out') {
             bg = '#D97706';
-            prefix = '🌙 终·';
+            dotClass = 'is-clock';
+            dotInner = MOON_SVG;
           }
           const userPrefix = selectedUserId === '__ALL__' ? ('[' + p.userName + '] ') : '';
-          const shortStore = p.displayTitle.length > 8 ? p.displayTitle.slice(0, 8) + '…' : p.displayTitle;
-          const label = userPrefix + prefix + shortStore + ' ' + p.timeText;
+          const shortStore = p.displayTitle.length > 10 ? p.displayTitle.slice(0, 10) + '…' : p.displayTitle;
+          const activeLabel = p.isClock
+            ? (userPrefix + p.displayTitle + ' ' + p.timeText)
+            : (userPrefix + p.typeLabel + ' · ' + shortStore + ' ' + p.timeText);
 
           const icon = L.divIcon({
             className: 'sg-custom-div-icon',
-            html: '<div class="sg-pin-wrap ' + (p.index === activeIndex ? 'active' : '') + '" id="pin-' + p.index + '">' +
-              '<div class="sg-pin-bubble" style="background:' + bg + '">' + escapeHtml(label) + '</div>' +
-              '<div class="sg-pin-arrow"></div>' +
+            html: '<div class="sg-dot-wrap ' + (p.index === activeIndex ? 'active' : '') + '" id="pin-' + p.index + '">' +
+              '<div class="sg-dot-label">' + escapeHtml(activeLabel) + '</div>' +
+              '<div class="sg-dot ' + dotClass + '" style="background:' + bg + '">' + dotInner + '</div>' +
             '</div>',
             iconSize: [0, 0],
             iconAnchor: [0, 0]
@@ -1860,6 +2091,8 @@ function renderHtml(prefix) {
         if (shouldFit && coordPoints.length > 0) {
           fitBounds();
         }
+        renderStaticArrows();
+        startRouteAnimation();
       }
 
       function fitBounds() {
@@ -1887,11 +2120,14 @@ function renderHtml(prefix) {
           activeTl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
 
-        document.querySelectorAll('.sg-pin-wrap').forEach(el => {
+        document.querySelectorAll('.sg-dot-wrap').forEach(el => {
           el.classList.remove('active');
         });
         const pinEl = document.getElementById('pin-' + idx);
         if (pinEl) pinEl.classList.add('active');
+        markerInstances.forEach(m => {
+          m.marker.setZIndexOffset(m.index === idx ? 1000 : m.index * 10);
+        });
 
         if (panToMarker && pt.hasCoord && map) {
           map.panTo([pt.lat, pt.lng], { animate: true });
@@ -1974,7 +2210,13 @@ function renderHtml(prefix) {
       }
 
       function closeDrawer() {
+        activeIndex = -1;
         document.getElementById('detailDrawer').classList.remove('open');
+        document.querySelectorAll('.tl-item').forEach(el => el.classList.remove('active'));
+        document.querySelectorAll('.sg-dot-wrap').forEach(el => el.classList.remove('active'));
+        markerInstances.forEach(m => {
+          m.marker.setZIndexOffset(m.index * 10);
+        });
       }
 
       // Lightbox functions
@@ -2103,6 +2345,15 @@ function renderHtml(prefix) {
         }
       });
       document.getElementById('fitBoundsBtn').addEventListener('click', () => fitBounds());
+      document.getElementById('toggleAnimBtn').addEventListener('click', () => {
+        animPaused = !animPaused;
+        if (animPaused) {
+          stopRouteAnimation();
+          updateAnimToggleBtn();
+        } else {
+          startRouteAnimation();
+        }
+      });
       document.getElementById('drawerCloseBtn').addEventListener('click', () => closeDrawer());
 
       document.getElementById('prevPointBtn').addEventListener('click', () => {
