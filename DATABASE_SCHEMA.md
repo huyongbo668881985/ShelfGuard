@@ -594,3 +594,32 @@ db.collection('shelfMonthlyOverall').createIndex({
 ```
 
 > 两集合均需在云开发控制台**手动创建**后，再上传部署 `shelfStats` 云函数（含定时触发器 `0 0 3 * * *`，每天 03:00 北京时间重建近 14 个月）。
+
+---
+
+## AI 识别人工校正与定期复盘扩展
+
+### `inspections` 新增复核与校正字段
+
+- `reviewLevel`: `'low' | 'mid' | 'high'`（分析完成时按置信度阈值、画质、取景计算）
+- `spotCheck`: `boolean`（对高置信记录按 `spotCheckRate` 稳定哈希抽样打标，默认 10%）
+- `reviewStatus`: `'unreviewed' | 'confirmed' | 'corrected'`
+- `reviewRevision`: `number`（乐观锁版本号，每次确认或校正递增）
+- `reviewedAt` / `reviewedBy` / `reviewedByName`: 最近一次复核时间与管理员信息
+- `aiReportOriginal`: `object`（首次人工校正前自动备份的 AI 原始报告，永不覆盖）
+- `narrativeStatus`: `'pending' | 'done' | 'fallback'`（校正后后台纯文本重写状态）
+- `keepOriginal`: `boolean`（复核/校正过的记录永久保留原图，不被 `pruneOriginals` 清理）
+
+### 集合：`reviewLogs`（人工复核与结构化错误样本）
+
+每次管理员确认无误（`action: 'confirm'`）或保存校正（`action: 'correct'`）写入一条，含 `aiMeta`（模型、提示词版本、知识库版本、置信度、画质、取景）、`beforeFacts`、`afterFacts` 以及逐项 `changes[]`（`false_own` / `missed_own` / `own_as_competitor` / `wrong_sku` / `facing_count` / `golden` / `label` / `price_tag` / `banner` / `presence`，含原因与真实酒名 `actualProduct`）。
+
+### 集合：`confusableProducts`（易混淆竞品库）
+
+维护容易被 AI 误认为我方产品的竞品酒水（`competitorName`、`competitorBrand`、`lookalikeProductId`、`distinguishingFeatures`、`hitCount`、`isActive`）。每次分析时自动注入提示词警示区块，并在服务端 `validateAndNormalizeReport` 中执行硬拦截。
+
+### 集合：`reflectionReports` 与 `knowledgeChanges`
+
+- `reflectionReports`：存储每次定期/手动 AI 复盘的完整统计（`stats`）、错误聚类与根因（`clusters`）、限定在 `fixType` 白名单内的修正提案（`proposals`，含回放验证结果 `replayResult`）及过往修正效果追踪（`effectTracking`）。
+- `knowledgeChanges`：管理员采纳提案后的变更审计记录，包含 `undoSnapshot` 支持一键撤销及递增 `settings.global.knowledgeVersion`。
+

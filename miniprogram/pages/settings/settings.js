@@ -80,7 +80,8 @@ Page({
     showActivate: false,
     hasAdmin: false,
     activateCode: '',
-    activating: false
+    activating: false,
+    reviewPendingCount: 0
   },
 
   onLoad() {
@@ -173,6 +174,9 @@ Page({
       })
       if (isManager) {
         this.loadUnassigned(this.data.unassignedPage || 1)
+      }
+      if (result.canEdit) {
+        this.loadReviewQueueStats()
       }
     } catch (err) {
       console.error('读取设置失败:', err)
@@ -501,12 +505,12 @@ Page({
     }
 
     this.setData({ running: true })
-    wx.showLoading({ title: '分析中...', mask: true })
+    wx.showLoading({ title: '正在启动...', mask: true })
 
     try {
       const res = await api.callFunction({
         name: 'batchAnalyze',
-        data: { action: 'runNow' }
+        data: { action: 'runNow', async: true }
       })
       wx.hideLoading()
 
@@ -515,12 +519,29 @@ Page({
         throw new Error(r.error || '触发失败')
       }
 
-      wx.showModal({
-        title: '本轮完成',
-        content: `成功 ${r.succeeded} 条，失败 ${r.failed} 条，还剩 ${r.remaining} 条待分析。\n\n` +
-          (r.remaining > 0 ? '本轮只处理了一部分，可以再点一次继续处理剩余记录。' : '队列已清空。'),
-        showCancel: false
-      })
+      if (r.alreadyRunning) {
+        wx.showModal({
+          title: '后台分析运行中',
+          content: r.message || '后台已有分析任务正在运行中，无需重复点击，请稍后下拉刷新查看最新进度。',
+          showCancel: false
+        })
+      } else if (r.started === false) {
+        wx.showToast({ title: r.message || '没有待分析的记录', icon: 'none' })
+      } else if (r.async) {
+        const queued = Number(r.queued) || 0
+        const reclaimedText = r.reclaimed > 0 ? `（含回收卡死 ${r.reclaimed} 条）` : ''
+        wx.showModal({
+          title: '已启动全量分析',
+          content: `已开始在后台连续分析全部 ${queued > 0 ? queued + ' 条' : ''}待处理记录${reclaimedText}。\n\n无需停留等待，可随时下拉刷新查看最新进度。`,
+          showCancel: false
+        })
+      } else {
+        wx.showModal({
+          title: '全量分析完成',
+          content: `成功 ${r.succeeded} 条，失败 ${r.failed} 条，还剩 ${r.remaining} 条待分析。`,
+          showCancel: false
+        })
+      }
       this.loadSettings()
     } catch (err) {
       wx.hideLoading()
@@ -629,5 +650,25 @@ Page({
       return
     }
     wx.navigateTo({ url: '/pages/admin/admin' })
+  },
+
+  goReflection() {
+    if (!this.data.canEdit) {
+      wx.showToast({ title: '只有管理员可以访问', icon: 'none' })
+      return
+    }
+    wx.navigateTo({ url: '/pages/reflection/reflection' })
+  },
+
+  async loadReviewQueueStats() {
+    try {
+      const res = await api.callFunction({
+        name: 'reviewReport',
+        data: { action: 'queueStats' }
+      })
+      if (res.result && res.result.success && res.result.stats) {
+        this.setData({ reviewPendingCount: res.result.stats.totalPending || 0 })
+      }
+    } catch (_) {}
   }
 })

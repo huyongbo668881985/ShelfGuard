@@ -182,6 +182,11 @@ Page({
   },
 
   onShow() {
+    if (this._needReloadOnShow && this.data.inspectionId) {
+      this._needReloadOnShow = false
+      this.loadDetail(this.data.inspectionId)
+      return
+    }
     if (!this.data._shouldResumePolling) return
     const detail = this.data.detail
     const id = this.data.inspectionId
@@ -310,6 +315,21 @@ Page({
     const { detail, inspectionId } = this.data
     if (!detail) return
 
+    let forceDiscardCorrection = false
+    if (detail.reviewStatus === 'corrected' && detail.isAdminViewer) {
+      const confirmRes = await new Promise(resolve => {
+        wx.showModal({
+          title: '该报告已人工校正',
+          content: '重新进行 AI 分析将覆盖管理员人工校正的结果，确定继续吗？',
+          confirmText: '放弃校正',
+          confirmColor: '#d32f2f',
+          success: resolve
+        })
+      })
+      if (!confirmRes || !confirmRes.confirm) return
+      forceDiscardCorrection = true
+    }
+
     const prevAnalyzedAt = detail.analyzedAt || ''
     wx.showLoading({ title: '正在重新分析...', mask: true })
     try {
@@ -327,7 +347,8 @@ Page({
         name: 'analyzeImage',
         data: {
           inspectionId,
-          fileIDs: detail.photoFileIDs || []
+          fileIDs: detail.photoFileIDs || [],
+          forceDiscardCorrection
         }
       })
       if (this.data.refreshTimer) {
@@ -341,6 +362,44 @@ Page({
     } catch (err) {
       wx.hideLoading()
       console.error('后台分析请求异常（轮询将继续兜底）:', err)
+    }
+  },
+
+  // 管理员：进入人工校正页
+  goToReview() {
+    const id = this.data.inspectionId
+    if (!id) return
+    this._needReloadOnShow = true
+    wx.navigateTo({
+      url: `/pages/review/review?id=${id}`
+    })
+  },
+
+  // 管理员：一键确认当前报告识别无误
+  async confirmReportAccurate() {
+    const { inspectionId, detail } = this.data
+    if (!inspectionId || !detail) return
+    wx.showLoading({ title: '提交确认...', mask: true })
+    try {
+      const res = await api.callFunction({
+        name: 'reviewReport',
+        data: {
+          action: 'confirm',
+          inspectionId,
+          expectedRevision: detail.reviewRevision || 0
+        }
+      })
+      wx.hideLoading()
+      if (res.result && res.result.success) {
+        getApp().globalData.listVersion = ((getApp().globalData.listVersion) || 0) + 1
+        wx.showToast({ title: '已标记为确认无误', icon: 'success' })
+        this.loadDetail(inspectionId)
+      } else {
+        wx.showToast({ title: (res.result && res.result.error) || '操作失败', icon: 'none' })
+      }
+    } catch (err) {
+      wx.hideLoading()
+      wx.showToast({ title: err.message || '操作失败', icon: 'none' })
     }
   },
 

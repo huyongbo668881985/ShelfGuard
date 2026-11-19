@@ -10,6 +10,54 @@
 
 const { normalizeScoringRules } = require('./scoring')
 
+const PROMPT_VERSION = 'v2.2-reflection'
+const MAX_CONFUSABLE_PROMPT_ITEMS = 10
+const MAX_LEARNED_RULE_ITEMS = 12
+
+/**
+ * 拼装「易混淆竞品」提示词区块（按 hitCount 降序，上限 MAX_CONFUSABLE_PROMPT_ITEMS 条）
+ */
+function buildConfusableSection(confusables = [], products = []) {
+  const list = Array.isArray(confusables)
+    ? confusables.filter(c => c && c.isActive !== false && (c.competitorName || c.competitorBrand))
+    : []
+  if (list.length === 0) return ''
+
+  const prodMap = new Map()
+  ;(Array.isArray(products) ? products : []).forEach(p => {
+    if (p && p._id) {
+      const label = [p.brandName, p.productLine].filter(Boolean).join(' ') || p.brandName || '我方产品'
+      prodMap.set(String(p._id), label)
+    }
+  })
+
+  const sorted = [...list].sort((a, b) => (Number(b.hitCount) || 0) - (Number(a.hitCount) || 0))
+  const picked = sorted.slice(0, MAX_CONFUSABLE_PROMPT_ITEMS)
+  const lines = picked.map(c => {
+    const compName = [c.competitorBrand, c.competitorName].filter(Boolean).join(' ').trim() || c.competitorName || c.competitorBrand
+    const lookalike = (c.lookalikeProductId && prodMap.get(String(c.lookalikeProductId))) || c.lookalikeProductName || '我方产品'
+    const feat = String(c.distinguishingFeatures || '').trim()
+    const parts = [`竞品「${compName}」（易与我方「${lookalike}」混淆）`]
+    if (feat) parts.push(`区分要点：${feat}`)
+    return `- ${parts.join('，')}`
+  })
+
+  return `\n\n## 易混淆竞品警示（重要：遇到下列竞品或命中其区分要点时，必须准确标注为竞品 isOwn: false，严禁误认作我方产品！）\n${lines.join('\n')}`
+}
+
+/**
+ * 拼装「近期复盘规则补丁」提示词区块（仅取启用项，上限 MAX_LEARNED_RULE_ITEMS 条）
+ */
+function buildLearnedRulesSection(learnedRules = []) {
+  const list = Array.isArray(learnedRules)
+    ? learnedRules.filter(r => r && r.isActive !== false && typeof r.rule === 'string' && r.rule.trim())
+    : []
+  if (list.length === 0) return ''
+  const picked = list.slice(0, MAX_LEARNED_RULE_ITEMS)
+  const lines = picked.map((r, idx) => `${idx + 1}. ${String(r.rule).trim()}`)
+  return `\n\n## 近期复盘规则补丁（来自历史人工复核纠偏，请严格遵守）\n${lines.join('\n')}`
+}
+
 // ------------------------------------------------------------
 // System Prompt：定义 AI 的身份、5 维量化评估标准、输出格式
 // ------------------------------------------------------------
@@ -295,6 +343,9 @@ function buildUserPrompt(imageCount, brandReferenceText, bannerRefMaterials = []
       if (p.visualFeatures) {
         parts.push(`视觉特征：${p.visualFeatures}`)
       }
+      if (p.confusionNotes) {
+        parts.push(`区分要点：${p.confusionNotes}`)
+      }
       return `- ${parts.join('，')}`
     })
     prodRefNote = `\n\n## 我方产品瓶身参考图说明（重要：严禁计入本次拜访打分）\n紧随实拍图之后的第 ${prodStartIdx} 至第 ${prodEndIdx} 张图片（共 ${prodList.length} 张，已标注【产品参考图】）为【我方产品参考图】，仅用于帮你对照辨认实拍货架中的我方酒瓶包装与酒标：\n${prodLines.join('\n')}\n⚠️ 严禁将这 ${prodList.length} 张产品参考图本身当作本次门店实拍照片，严禁将其计入 photoRoles、productIdentification、排面数或任何得分！`
@@ -349,7 +400,8 @@ function buildMultimodalUserContent({ visitImageUrls = [], productRefs = [], ban
       const name = [p.brandName, p.productLine].filter(Boolean).join(' ') || '我方产品'
       const slotLabel = slotLabelMap[p.slot] || '瓶身参考照'
       const featSuffix = p.visualFeatures ? `；视觉特征：${p.visualFeatures}` : ''
-      content.push({ text: `【产品参考图 ${idx + 1}/${prods.length}】${name}（${slotLabel}，非门店实拍${featSuffix}）` })
+      const confSuffix = p.confusionNotes ? `；区分要点：${p.confusionNotes}` : ''
+      content.push({ text: `【产品参考图 ${idx + 1}/${prods.length}】${name}（${slotLabel}，非门店实拍${featSuffix}${confSuffix}）` })
       content.push({ image: p.url })
     })
   }
@@ -459,11 +511,177 @@ function buildDailySummaryUserPrompt(inspections, aggregatedMetrics, brandRefere
   return `以下是系统已精确统计的今日拜访大盘指标：\n${overviewText}\n\n以下是各门店单条深度分析的结构化结果（共 ${storePayload.length} 条）：\n${JSON.stringify(storePayload, null, 2)}${brandReferenceText || ''}\n\n请基于以上真实结构化数据，输出今日拜访综合陈列评估日报 JSON（仅输出合法 JSON）。`
 }
 
+// ------------------------------------------------------------
+// Correction Narrative Prompt：管理员人工校正观测事实后，基于确定性重算分数的纯文本报告重写
+// ------------------------------------------------------------
+const CORRECTION_NARRATIVE_SYSTEM_PROMPT = `你是一位资深白酒终端陈列评估专家。管理员刚刚对一份货架陈列报告的「观测事实」（我方在架品规、排面数、黄金位排面数、正标朝外排面数、价签档位、横签档位）进行了人工校正，系统已经根据校正后的事实重新算出了权威的 5 维得分与总分。
+
+## 你的核心原则（极其重要）
+1. **绝对服从人工校正后的事实与分数**：输入中的所有数字（总分、各维度分数、我方排面数、品规数、黄金位占比、正标占比、价签与横签得分）均为不可更改的既定事实，**严禁在输出的文字中改动、质疑或编造任何不一致的数字**。
+2. **建议落地**：问题（issues）与改进建议（suggestions）必须紧扣得分未满的短板维度（例如排面不足目标数、黄金位占比偏低、部分酒瓶侧摆、缺少价签、缺少横签），落在业务员当场能动手改进的动作上。
+3. **未上柜处理**：若 ownBrandPresent === false，summary 第一句必须写明“货架未发现我方品牌（未上柜）”，issues 與 suggestions 聚焦及时铺货上柜。
+4. **只输出合法 JSON**，不要输出任何 markdown 代码块标记或多余解释。
+
+## 输出 JSON 格式
+\`\`\`json
+{
+  "summary": "一句话总结我方排面数、品规、优势维度与核心短板，数字必须与输入完全一致",
+  "competitiveInsight": "一句话总结我方与竞品在排面和位置上的对比洞察",
+  "issues": [
+    {
+      "severity": "high",
+      "category": "横签露出",
+      "description": "具体问题描述",
+      "impact": "对终端拦截力或动销的影响"
+    }
+  ],
+  "suggestions": [
+    {
+      "priority": "high",
+      "action": "业务员当场可执行的具体动作",
+      "expectedEffect": "预期提升效果（如：横签项直接+10分）",
+      "deadline": "当日"
+    }
+  ]
+}
+\`\`\``
+
+function buildCorrectionNarrativeUserPrompt(correctedReport, storeName = '') {
+  const ar = correctedReport || {}
+  const fm = ar.facingMetrics || {}
+  const dc = ar.displayCompliance || {}
+  const ownProducts = (Array.isArray(ar.productIdentification) ? ar.productIdentification : []).filter(p => p && p.isOwn === true)
+  const compProducts = (Array.isArray(ar.productIdentification) ? ar.productIdentification : []).filter(p => p && p.isOwn === false)
+
+  const payload = {
+    storeName: storeName || '当前门店',
+    hasShelfPhoto: ar.hasShelfPhoto !== false,
+    ownBrandPresent: ar.ownBrandPresent,
+    score: ar.score,
+    scoreLevel: ar.scoreLevel,
+    facingMetrics: {
+      ownFacingCount: fm.ownFacingCount,
+      ownSkuCount: fm.ownSkuCount,
+      totalShelfFacingCount: fm.totalShelfFacingCount,
+      ownFacingShare: fm.ownFacingShare
+    },
+    ownProducts: ownProducts.map(p => ({
+      brand: p.brand,
+      productLine: p.productLine,
+      facingCount: p.facingCount,
+      position: p.position
+    })),
+    competitorProducts: compProducts.map(p => ({
+      brand: p.brand,
+      productLine: p.productLine,
+      facingCount: p.facingCount,
+      position: p.position
+    })),
+    displayCompliance: Object.keys(dc).reduce((acc, k) => {
+      const d = dc[k]
+      if (d && typeof d === 'object') {
+        acc[k] = {
+          score: d.score,
+          maxScore: d.maxScore,
+          status: d.status,
+          detail: d.detail
+        }
+      }
+      return acc
+    }, {})
+  }
+
+  return `以下是管理员人工校正并由系统重算后的权威陈列数据：\n${JSON.stringify(payload, null, 2)}\n\n请严格依据上述数据，输出重写后的 summary、competitiveInsight、issues、suggestions JSON（只输出合法 JSON）。`
+}
+
+// ------------------------------------------------------------
+// Reflection Attribution Prompt：周期性 AI 复盘归因与修正提案生成
+// ------------------------------------------------------------
+const ALLOWED_REFLECTION_FIX_TYPES = Object.freeze([
+  'confusable_add',
+  'confusable_update',
+  'product_confusion_notes',
+  'product_visual_features',
+  'product_ref_photo',
+  'product_add_todo',
+  'ref_priority',
+  'alias_remove',
+  'material_visual_features',
+  'learned_rule_add',
+  'learned_rule_retire',
+  'confusable_retire',
+  'threshold_adjust',
+  'sales_tip',
+  'needs_dev'
+])
+
+const REFLECTION_ATTRIBUTION_SYSTEM_PROMPT = `你是一位白酒视觉识别系统的算法调优与知识工程专家。你的任务是分析管理员在现场复核中纠正的一组「同类 AI 识别错误样本」（含实拍图、AI 原始识别、人工校正结果及当前知识库配置），找出为什么会把其他酒误认为我方产品、或为什么漏认我方产品的根本原因，并给出**落到具体配置项**的可执行修正提案。
+
+## 核心原则（极其重要）
+1. **绝不输出空泛建议**：禁止提出“提升模型精度”这类无法直接执行的空话。每一条提案的 \`fixType\` 必须严格从下列白名单中选择，并提供完整可直接写入数据库的 \`target\` 和 \`payload\`：
+   - \`confusable_add\`：新增易混淆竞品。\`target: { lookalikeProductId }\`，\`payload: { competitorName, competitorBrand, distinguishingFeatures }\`（写清与我方瓶型/瓶盖/颈标/主文字的直观视觉区分点）。
+   - \`confusable_update\`：更新已有易混淆竞品的区分特征。\`target: { confusableId }\`，\`payload: { distinguishingFeatures }\`。
+   - \`product_confusion_notes\`：为我方产品补充/更新「区分要点」。\`target: { productId }\`，\`payload: { confusionNotes }\`（≤120字，突出易混点与防误认特征）。
+   - \`product_visual_features\`：为我方产品补充瓶身/瓶盖/侧摆/背标/礼盒等视觉特征。\`target: { productId }\`，\`payload: { visualFeatures }\`（≤140字）。
+   - \`product_ref_photo\`：建议管理员为某产品补拍侧面/背面/新包装参考照（待办）。\`target: { productId }\`，\`payload: { slot: "side"|"back"|"front", reason }\`。
+   - \`product_add_todo\`：疑似新品或新包装未入产品库，提醒管理员新增。\`target: {}\`，\`payload: { suggestedBrand, suggestedProductLine, reason }\`。
+   - \`ref_priority\`：某我方产品频繁漏认且因参考图名额（上限4张）未被选中，提升其参考图优先级。\`target: { productId }\`，\`payload: { refPriority: 10, reason }\`。
+   - \`alias_remove\`：我方产品的某个别名过于宽泛导致竞品被兜底误判为我方，移除该别名。\`target: { productId }\`，\`payload: { alias }\`。
+   - \`material_visual_features\`：补充广告物料（如横签）的视觉特征。\`target: { materialId }\`，\`payload: { visualFeatures }\`。
+   - \`learned_rule_add\`：新增一条简短通用的识别/计数规则补丁（≤90字，仅用于排面计数口径、礼盒口径、价签/横签判别等共性规则）。\`target: {}\`，\`payload: { category, rule }\`。
+   - \`learned_rule_retire\`：下线一条无效或引起副作用的规则补丁。\`target: { ruleId }\`，\`payload: { reason }\`。
+   - \`confusable_retire\`：下线一条易混淆竞品。\`target: { confusableId }\`，\`payload: { reason }\`。
+   - \`threshold_adjust\`：当高置信抽检发现较多错误或低置信阈值不合理时，微调复核阈值。\`target: {}\`，\`payload: { lowCountingConfidence, midCountingConfidence, lowSkuConfidence, midSkuConfidence }\`。
+   - \`sales_tip\`：纯因拍摄模糊/反光/过远/遮挡导致，AI 客观无法看清，给出给业务员的拍照规范提醒。\`target: {}\`，\`payload: { tip }\`。
+   - \`needs_dev\`：需要修改服务端代码逻辑才能解决的问题。\`target: {}\`，\`payload: { suggestion }\`。
+2. **优先使用知识库修正**：竞品误认优先用 \`confusable_add\` + \`product_confusion_notes\`；我方漏认优先用 \`product_visual_features\` / \`ref_priority\` / \`product_ref_photo\`；不要把单个产品的特征塞进全局 \`learned_rule_add\`。
+3. **只输出合法 JSON**，不要输出任何 markdown 代码块标记。
+
+## 输出 JSON 格式
+\`\`\`json
+{
+  "rootCause": "look_alike | similar_name | alias_too_broad | side_or_back_facing | missing_ref_photo | new_package | occlusion_or_blur | depth_double_count | banner_or_pricetag_confusion | threshold_miscalibration | other",
+  "explanation": "用 1-2 句中文说清楚为什么 AI 会犯这类错（指出具体视觉特征或规则盲区）",
+  "proposals": [
+    {
+      "fixType": "confusable_add",
+      "target": { "lookalikeProductId": "产品_id" },
+      "payload": {
+        "competitorBrand": "竞品品牌",
+        "competitorName": "竞品名称",
+        "distinguishingFeatures": "具体视觉区分要点"
+      },
+      "rationale": "为什么这个改动能在下次避免同类错误"
+    }
+  ]
+}
+\`\`\``
+
+function buildReflectionClusterUserPrompt({ cluster, knowledgeSnapshot }) {
+  return `## 待归因的错误聚类
+${JSON.stringify(cluster, null, 2)}
+
+## 当前线上知识库快照（products / confusableProducts / adMaterials / learnedRules / reviewThresholds）
+${JSON.stringify(knowledgeSnapshot, null, 2)}
+
+请结合随附的典型错误现场照片（如有）与上述对比明细，分析根本原因并输出 1~2 条最有效的修正提案 JSON（只输出合法 JSON，target 中的 productId / confusableId / materialId / ruleId 必须取自上方知识库快照中的真实 _id / id）。`
+}
+
 module.exports = {
+  PROMPT_VERSION,
+  MAX_CONFUSABLE_PROMPT_ITEMS,
+  MAX_LEARNED_RULE_ITEMS,
+  ALLOWED_REFLECTION_FIX_TYPES,
   SYSTEM_PROMPT,
   buildSystemPrompt,
   buildUserPrompt,
   buildMultimodalUserContent,
+  buildConfusableSection,
+  buildLearnedRulesSection,
   DAILY_SUMMARY_SYSTEM_PROMPT,
-  buildDailySummaryUserPrompt
+  buildDailySummaryUserPrompt,
+  CORRECTION_NARRATIVE_SYSTEM_PROMPT,
+  buildCorrectionNarrativeUserPrompt,
+  REFLECTION_ATTRIBUTION_SYSTEM_PROMPT,
+  buildReflectionClusterUserPrompt
 }

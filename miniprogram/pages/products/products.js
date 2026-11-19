@@ -40,6 +40,7 @@ Page({
       productLine: '',
       aliasesText: '', // 输入框里是逗号分隔的文本，提交时再拆成数组
       visualFeatures: '',
+      confusionNotes: '',
       photos: {
         front: '',
         back: '',
@@ -52,6 +53,22 @@ Page({
       }
     },
     saving: false,
+
+    // 易混淆竞品列表与编辑面板状态
+    confusableLoading: false,
+    confusableList: [],
+    confusableTotal: 0,
+    showConfusableEditor: false,
+    editingConfusableId: '',
+    confusableForm: {
+      competitorBrand: '',
+      competitorName: '',
+      lookalikeProductName: '',
+      distinguishingFeatures: '',
+      photo: '',
+      photoURL: ''
+    },
+    savingConfusable: false,
 
     // 物料编辑面板状态
     showMaterialEditor: false,
@@ -72,10 +89,13 @@ Page({
   onLoad(options) {
     const app = getApp()
     const role = (app.globalData.userInfo && app.globalData.userInfo.role) || app.globalData.userRole || 'sales'
-    const activeTab = (options && options.tab === 'materials') ? 'materials' : 'products'
+    const activeTab = (options && options.tab === 'materials')
+      ? 'materials'
+      : ((options && options.tab === 'confusables') ? 'confusables' : 'products')
     this.setData({ isAdmin: role === 'admin', activeTab })
     this.loadProducts()
     this.loadMaterials()
+    this.loadConfusables()
   },
 
   onShow() {
@@ -87,7 +107,7 @@ Page({
   onPullDownRefresh() {
     const p = this.data.activeTab === 'materials'
       ? this.loadMaterials()
-      : this.loadProducts({ reset: true })
+      : (this.data.activeTab === 'confusables' ? this.loadConfusables() : this.loadProducts({ reset: true }))
     p.finally(() => wx.stopPullDownRefresh())
   },
 
@@ -103,12 +123,16 @@ Page({
     this.setData({ activeTab: tab })
     if (tab === 'materials' && this.data.materialList.length === 0) {
       this.loadMaterials()
+    } else if (tab === 'confusables' && this.data.confusableList.length === 0) {
+      this.loadConfusables()
     }
   },
 
   onTapFab() {
     if (this.data.activeTab === 'materials') {
       this.onAddMaterial()
+    } else if (this.data.activeTab === 'confusables') {
+      this.onAddConfusable()
     } else {
       this.onAddProduct()
     }
@@ -166,6 +190,7 @@ Page({
         productLine: '',
         aliasesText: '',
         visualFeatures: '',
+        confusionNotes: '',
         photos: { front: '', back: '', side: '' },
         photoURLs: { front: '', back: '', side: '' }
       }
@@ -187,6 +212,7 @@ Page({
         productLine: item.productLine || '',
         aliasesText: (item.aliases || []).join('，'),
         visualFeatures: item.visualFeatures || '',
+        confusionNotes: item.confusionNotes || '',
         photos: {
           front: (item.photos && item.photos.front) || '',
           back: (item.photos && item.photos.back) || '',
@@ -220,6 +246,10 @@ Page({
 
   onVisualFeaturesInput(e) {
     this.setData({ 'form.visualFeatures': e.detail.value })
+  },
+
+  onConfusionNotesInput(e) {
+    this.setData({ 'form.confusionNotes': e.detail.value })
   },
 
   // 选择参考照：先存本地路径，保存时再 uploadFile，避免未保存就造孤儿云文件
@@ -297,6 +327,7 @@ Page({
         productLine: form.productLine.trim(),
         aliases,
         visualFeatures: (form.visualFeatures || '').trim(),
+        confusionNotes: (form.confusionNotes || '').trim(),
         photos
       }
       const res = await api.callFunction({
@@ -576,6 +607,145 @@ Page({
         } catch (err) {
           console.error('下架广告物料失败:', err)
           wx.showToast({ title: '操作失败，请重试', icon: 'none' })
+        }
+      }
+    })
+  },
+
+  // ==================== 易混淆竞品库管理 ====================
+  async loadConfusables() {
+    this.setData({ confusableLoading: true })
+    try {
+      const res = await api.callFunction({
+        name: 'products',
+        data: { action: 'listConfusables', limit: 100 }
+      })
+      if (res.result && res.result.success) {
+        this.setData({
+          confusableList: res.result.list || [],
+          confusableTotal: res.result.total || 0,
+          confusableLoading: false
+        })
+      } else {
+        this.setData({ confusableLoading: false })
+      }
+    } catch (_) {
+      this.setData({ confusableLoading: false })
+    }
+  },
+
+  onAddConfusable() {
+    if (!this.data.isAdmin) {
+      wx.showToast({ title: '仅管理员可维护易混淆竞品库', icon: 'none' })
+      return
+    }
+    this.setData({
+      showConfusableEditor: true,
+      editingConfusableId: '',
+      confusableForm: {
+        competitorBrand: '',
+        competitorName: '',
+        lookalikeProductName: '',
+        distinguishingFeatures: '',
+        photo: '',
+        photoURL: ''
+      }
+    })
+  },
+
+  onEditConfusable(e) {
+    if (!this.data.isAdmin) {
+      wx.showToast({ title: '仅管理员可维护易混淆竞品库', icon: 'none' })
+      return
+    }
+    const item = e.currentTarget.dataset.item
+    this.setData({
+      showConfusableEditor: true,
+      editingConfusableId: item._id,
+      confusableForm: {
+        competitorBrand: item.competitorBrand || '',
+        competitorName: item.competitorName || '',
+        lookalikeProductName: item.lookalikeProductName || '',
+        distinguishingFeatures: item.distinguishingFeatures || '',
+        photo: item.photo || '',
+        photoURL: item.photoURL || item.photo || ''
+      }
+    })
+  },
+
+  closeConfusableEditor() {
+    if (this.data.savingConfusable) return
+    this.setData({ showConfusableEditor: false })
+  },
+
+  onConfusableBrandInput(e) {
+    this.setData({ 'confusableForm.competitorBrand': e.detail.value })
+  },
+
+  onConfusableNameInput(e) {
+    this.setData({ 'confusableForm.competitorName': e.detail.value })
+  },
+
+  onConfusableLookalikeInput(e) {
+    this.setData({ 'confusableForm.lookalikeProductName': e.detail.value })
+  },
+
+  onConfusableFeaturesInput(e) {
+    this.setData({ 'confusableForm.distinguishingFeatures': e.detail.value })
+  },
+
+  async onSaveConfusable() {
+    const { confusableForm, editingConfusableId } = this.data
+    const competitorName = (confusableForm.competitorName || '').trim()
+    if (!competitorName) {
+      wx.showToast({ title: '请填写易混淆竞品名称', icon: 'none' })
+      return
+    }
+    this.setData({ savingConfusable: true })
+    try {
+      wx.showLoading({ title: '保存中...', mask: true })
+      const payload = {
+        competitorBrand: (confusableForm.competitorBrand || '').trim(),
+        competitorName,
+        lookalikeProductName: (confusableForm.lookalikeProductName || '').trim(),
+        distinguishingFeatures: (confusableForm.distinguishingFeatures || '').trim()
+      }
+      const res = await api.callFunction({
+        name: 'products',
+        data: editingConfusableId
+          ? { action: 'updateConfusable', confusableId: editingConfusableId, confusable: payload }
+          : { action: 'addConfusable', confusable: payload }
+      })
+      if (res.result && res.result.success) {
+        wx.showToast({ title: '已保存', icon: 'success' })
+        this.setData({ showConfusableEditor: false })
+        this.loadConfusables()
+      } else {
+        wx.showToast({ title: (res.result && res.result.error) || '保存失败', icon: 'none' })
+      }
+    } catch (err) {
+      wx.showToast({ title: '保存失败', icon: 'none' })
+    } finally {
+      wx.hideLoading()
+      this.setData({ savingConfusable: false })
+    }
+  },
+
+  onRemoveConfusable(e) {
+    if (!this.data.isAdmin) return
+    const item = e.currentTarget.dataset.item
+    wx.showModal({
+      title: '下线易混淆竞品',
+      content: `确定要下线「${item.competitorName}」吗？`,
+      success: async (res) => {
+        if (!res.confirm) return
+        const result = await api.callFunction({
+          name: 'products',
+          data: { action: 'removeConfusable', confusableId: item._id }
+        })
+        if (result.result && result.result.success) {
+          wx.showToast({ title: '已下线', icon: 'success' })
+          this.loadConfusables()
         }
       }
     })

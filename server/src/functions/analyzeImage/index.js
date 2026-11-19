@@ -12,15 +12,22 @@
 const cloud = require('../../cloud-shim')
 const axios = require('axios')
 const {
+  PROMPT_VERSION,
   SYSTEM_PROMPT,
   buildSystemPrompt,
   buildUserPrompt,
   buildMultimodalUserContent,
+  buildConfusableSection,
+  buildLearnedRulesSection,
   DAILY_SUMMARY_SYSTEM_PROMPT,
   buildDailySummaryUserPrompt
 } = require('./prompt')
 const {
   normalizeScoringRules,
+  normalizeReviewThresholds,
+  computeReviewLevel,
+  computeSpotCheck,
+  DEFAULT_SPOT_CHECK_RATE,
   selectHorizontalBannerRefs,
   selectProductRefs,
   normalizeAdMaterials,
@@ -261,6 +268,18 @@ exports.main = async (event, context) => {
     }
   }
 
+  // 已人工校正记录保护：防止重新分析意外覆盖管理员校正结果
+  if (inspectionDoc.reviewStatus === 'corrected') {
+    const callerRole = callerUser ? callerUser.role : 'sales'
+    if (!event.forceDiscardCorrection || (!isInternalCall && callerRole !== 'admin')) {
+      return {
+        success: false,
+        error: '该报告已由管理员人工校正并锁定，如需重新分析请由管理员确认放弃人工校正',
+        code: 'CORRECTED_LOCKED'
+      }
+    }
+  }
+
   // 配额：归属/照片校验通过后再扣，避免无效请求烧额度
   if (!isInternalCall) {
     const quota = await checkAndIncAnalyzeQuota(callerOpenid)
@@ -310,6 +329,10 @@ async function analyzeSingleInspection(inspectionDoc, idsToAnalyze, preloadedCon
       brandReferenceText,
       ownBrandNames,
       scoringRules,
+      reviewThresholds,
+      spotCheckRate = DEFAULT_SPOT_CHECK_RATE,
+      knowledgeVersion = 1,
+      confusables = [],
       productRefs = [],
       bannerRefs = [],
       bannerRefMaterials = [],
@@ -327,6 +350,9 @@ async function analyzeSingleInspection(inspectionDoc, idsToAnalyze, preloadedCon
         activeMaterials,
         ownBrandNames,
         scoringRules,
+        reviewThresholds,
+        knowledgeVersion,
+        confusables,
         productRefs,
         bannerRefs,
         bannerRefMaterials,
@@ -352,6 +378,14 @@ async function analyzeSingleInspection(inspectionDoc, idsToAnalyze, preloadedCon
     }
 
     const aiReport = analysis.text
+    const reviewLevel = computeReviewLevel(aiReport, reviewThresholds)
+    const spotCheck = computeSpotCheck(inspectionId, spotCheckRate, reviewLevel)
+    if (aiReport && aiReport.metadata && typeof aiReport.metadata === 'object') {
+      aiReport.metadata.knowledgeVersion = knowledgeVersion
+      aiReport.metadata.promptVersion = PROMPT_VERSION
+      aiReport.metadata.reviewLevel = reviewLevel
+      aiReport.metadata.spotCheck = spotCheck
+    }
     console.log('[3/5] AI 分析完成')
 
     // 4. 更新巡检记录
@@ -365,7 +399,10 @@ async function analyzeSingleInspection(inspectionDoc, idsToAnalyze, preloadedCon
         analyzedModel: (analysis.debug && analysis.debug.model) || runtimeConfig.model,
         analyzedFileID: idsToAnalyze[0],
         analyzedFileIDs: idsToAnalyze,
-        aiDebug: analysis.debug
+        aiDebug: analysis.debug,
+        reviewLevel,
+        spotCheck,
+        reviewStatus: 'unreviewed'
       }
     })
     if (inspectionDoc.customerId && Array.isArray(aiReport.adMaterials) && aiReport.adMaterials.length > 0) {
@@ -547,17 +584,55 @@ async function loadActiveMaterials() {
   }
 }
 
-async function loadAnalysisContext() {
-  const runtimeSettings = await loadGlobalSettingsDoc()
-  const scoringRules = normalizeScoringRules(runtimeSettings && runtimeSettings.scoringRules)
-  const activeMaterials = await loadActiveMaterials()
+async function loadActiveConfusables() {
+  try {
+    const res = await db.collection('confusableProducts').where({ isActive: true }).get()
+    return res.data || []
+  } catch (err) {
+    return []
+  }
+}
+
+async function loadAnalysisContext(overrides = {}) {
+  const runtimeSettings = overrides.runtimeSettings !== undefined
+    ? overrides.runtimeSettings
+    : await loadGlobalSettingsDoc()
+  const scoringRules = normalizeScoringRules(
+    overrides.scoringRules || (runtimeSettings && runtimeSettings.scoringRules)
+  )
+  const reviewThresholds = normalizeReviewThresholds(
+    overrides.reviewThresholds || (runtimeSettings && runtimeSettings.reviewThresholds)
+  )
+  const spotCheckRate = Number.isFinite(Number(
+    overrides.spotCheckRate !== undefined ? overrides.spotCheckRate : (runtimeSettings && runtimeSettings.spotCheckRate)
+  ))
+    ? Math.max(0, Math.min(100, Math.round(Number(
+        overrides.spotCheckRate !== undefined ? overrides.spotCheckRate : runtimeSettings.spotCheckRate
+      ))))
+    : DEFAULT_SPOT_CHECK_RATE
+  const knowledgeVersion = Number.isFinite(Number(runtimeSettings && runtimeSettings.knowledgeVersion))
+    ? Math.max(1, Math.round(Number(runtimeSettings.knowledgeVersion)))
+    : 1
+  const learnedRules = Array.isArray(overrides.learnedRules)
+    ? overrides.learnedRules
+    : (runtimeSettings && Array.isArray(runtimeSettings.learnedRules) ? runtimeSettings.learnedRules : [])
+  const activeMaterials = Array.isArray(overrides.activeMaterials)
+    ? overrides.activeMaterials
+    : await loadActiveMaterials()
+  const confusables = Array.isArray(overrides.confusables)
+    ? overrides.confusables
+    : await loadActiveConfusables()
   const ownBrandNames = new Set()
   let brandReferenceText = ''
   let activeProducts = []
 
   try {
-    const res = await db.collection('products').where({ isActive: true }).get()
-    activeProducts = res.data || []
+    if (Array.isArray(overrides.activeProducts)) {
+      activeProducts = overrides.activeProducts
+    } else {
+      const res = await db.collection('products').where({ isActive: true }).get()
+      activeProducts = res.data || []
+    }
     if (activeProducts.length > 0) {
       const lines = activeProducts.map(p => {
         if (p.brandName) ownBrandNames.add(String(p.brandName).trim().toLowerCase())
@@ -571,12 +646,17 @@ async function loadAnalysisContext() {
           parts.push(`别名/简称：${p.aliases.join('、')}`)
         }
         if (p.visualFeatures) parts.push(`视觉特征：${String(p.visualFeatures).trim()}`)
+        if (p.confusionNotes) parts.push(`区分要点：${String(p.confusionNotes).trim()}`)
         return `- ${parts.join('，')}`
       })
       brandReferenceText += `\n\n## 本品牌产品资料（识别时优先参考，遇到下列品牌/别名要统一按标准品牌名归类并标注 isOwn: true，其余品牌视为竞品 isOwn: false）\n${lines.join('\n')}`
     }
   } catch (err) {
     console.error('查询产品库失败，本次分析不带品牌参考:', err)
+  }
+
+  if (confusables.length > 0) {
+    brandReferenceText += buildConfusableSection(confusables, activeProducts)
   }
 
   if (activeMaterials.length > 0) {
@@ -592,7 +672,11 @@ async function loadAnalysisContext() {
     brandReferenceText += `\n\n## 本品牌广告物料库（识别画面中的广告物料时必须优先比对下列物料，并在 adMaterials[].name 中严格输出对应的「标准名称」）\n${mLines.join('\n')}`
   }
 
-  // 筛选启用且带瓶身参考图的产品（优先正面照 front），最多 MAX_PRODUCT_REFS 张
+  if (learnedRules.length > 0) {
+    brandReferenceText += buildLearnedRulesSection(learnedRules)
+  }
+
+  // 筛选启用且带瓶身参考图的产品（按 refPriority 降序，优先正面照 front），最多 MAX_PRODUCT_REFS 张
   const candidateProductRefs = selectProductRefs(activeProducts, MAX_PRODUCT_REFS)
   const productRefs = []
   if (candidateProductRefs.length > 0) {
@@ -645,6 +729,12 @@ async function loadAnalysisContext() {
   return {
     runtimeSettings,
     scoringRules,
+    reviewThresholds,
+    spotCheckRate,
+    knowledgeVersion,
+    learnedRules,
+    confusables,
+    activeProducts,
     activeMaterials,
     ownBrandNames,
     brandReferenceText,
@@ -711,6 +801,8 @@ async function analyzeWithVision(imageUrls, options = {}) {
     activeMaterials = [],
     ownBrandNames = new Set(),
     scoringRules = null,
+    reviewThresholds = null,
+    confusables = [],
     productRefs = [],
     bannerRefs = [],
     bannerRefMaterials = [],
@@ -745,6 +837,8 @@ async function analyzeWithVision(imageUrls, options = {}) {
   const parseOpts = {
     activeMaterials,
     scoringRules,
+    reviewThresholds,
+    confusables,
     ownBrandNames,
     visitImageCount: imageUrls.length
   }
@@ -1316,13 +1410,18 @@ async function handleDailySummary(event, wxContext) {
     storeRankings
   }
 
-  // 4. 落库存储到 dailyReports（北京时间 YYYY-MM-DD，同日同业务员支持多轮合并重算）
-  const todayStr = beijingDateStr()
+  // 4. 落库存储到 dailyReports（北京时间 YYYY-MM-DD，同日同业务员支持多轮合并重算；
+  //    人工校正后触发 replace:true 时按原 reportDocId / date 整体替换并清除 stale）
+  const targetDateStr = (event && typeof event.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(event.date.trim()))
+    ? event.date.trim()
+    : beijingDateStr()
   const ownerOpenids = Array.from(new Set(readyInspections.map(i => i._openid).filter(Boolean)))
   const userNames = Array.from(new Set(readyInspections.map(i => i.userName).filter(Boolean)))
   const ownerKey = ownerOpenids.length === 1 ? ownerOpenids[0] : (callerOpenid || 'multi')
   const safeOwner = String(ownerKey).replace(/[^a-zA-Z0-9_-]/g, '_') || 'unknown'
-  const reportDocId = `dr_${safeOwner}_${todayStr}`
+  const reportDocId = (event && typeof event.reportDocId === 'string' && event.reportDocId.trim())
+    ? event.reportDocId.trim()
+    : `dr_${safeOwner}_${targetDateStr}`
 
   const newInspectionIds = readyInspections.map(i => i._id)
   const newStoreNames = Array.from(new Set(readyInspections.map(i => i.storeName || '未命名门店')))
@@ -1333,24 +1432,26 @@ async function handleDailySummary(event, wxContext) {
   let mergedUserName = userNames.join('、')
   let mergedReport = summaryReport
 
-  try {
-    const prev = await db.collection('dailyReports').doc(reportDocId).get()
-    if (prev.data) {
-      const p = prev.data
-      mergedInspectionIds = Array.from(new Set([...(p.inspectionIds || []), ...newInspectionIds]))
-      mergedStoreNames = Array.from(new Set([...(p.storeNames || []), ...newStoreNames]))
-      mergedOwnerOpenids = Array.from(new Set([...(p.ownerOpenids || []), ...ownerOpenids]))
-      const prevNames = (p.userName || '').split('、').filter(Boolean)
-      mergedUserName = Array.from(new Set([...prevNames, ...userNames])).join('、')
+  if (!event.replace) {
+    try {
+      const prev = await db.collection('dailyReports').doc(reportDocId).get()
+      if (prev.data) {
+        const p = prev.data
+        mergedInspectionIds = Array.from(new Set([...(p.inspectionIds || []), ...newInspectionIds]))
+        mergedStoreNames = Array.from(new Set([...(p.storeNames || []), ...newStoreNames]))
+        mergedOwnerOpenids = Array.from(new Set([...(p.ownerOpenids || []), ...ownerOpenids]))
+        const prevNames = (p.userName || '').split('、').filter(Boolean)
+        mergedUserName = Array.from(new Set([...prevNames, ...userNames])).join('、')
 
-      mergedReport = mergeDailyReports(p.report, summaryReport)
+        mergedReport = mergeDailyReports(p.report, summaryReport)
+      }
+    } catch (prevErr) {
+      // 首次生成，无历史文档
     }
-  } catch (prevErr) {
-    // 首次生成，无历史文档
   }
 
   const docPayload = {
-    date: todayStr,
+    date: targetDateStr,
     _openid: ownerOpenids.length === 1 ? ownerOpenids[0] : (callerOpenid || ''),
     ownerOpenids: mergedOwnerOpenids,
     userName: mergedUserName,
@@ -1358,7 +1459,8 @@ async function handleDailySummary(event, wxContext) {
     inspectionCount: mergedInspectionIds.length,
     inspectionIds: mergedInspectionIds,
     storeNames: mergedStoreNames,
-    report: mergedReport
+    report: mergedReport,
+    stale: false
   }
 
   let savedId = reportDocId
@@ -1392,7 +1494,7 @@ async function handleDailySummary(event, wxContext) {
   return {
     success: true,
     dailyReport: mergedReport,
-    date: todayStr,
+    date: targetDateStr,
     savedId,
     analyzedCount: readyInspections.length,
     failedCount: singleFailedCount
@@ -1401,6 +1503,11 @@ async function handleDailySummary(event, wxContext) {
 
 exports._internal = {
   resolveRuntimeAIConfig,
+  resolveApiKey,
+  loadAnalysisContext,
+  analyzeWithVision,
+  callQwen,
+  withHardTimeout,
   buildQwenRequestParameters,
   allocateReferenceBudget,
   isHybridThinkingModel,

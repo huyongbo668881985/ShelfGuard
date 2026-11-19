@@ -586,3 +586,62 @@
   background: #eee;
 }
 
+.admin-review-bar {
+  background: #ffffff;
+  border-radius: 16rpx;
+  padding: 20rpx 24rpx;
+  margin-bottom: 20rpx;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border: 2rpx solid #e3ebf6;
+  box-shadow: 0 2rpx 10rpx rgba(28, 61, 90, 0.06);
+}
+
+.admin-review-info {
+  display: flex;
+  flex-direction: column;
+  gap: 6rpx;
+}
+
+.admin-review-tag {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #1c3d5a;
+}
+
+.admin-review-tag.tag-status-corrected {
+  color: #2e7d32;
+}
+
+.admin-review-tag.tag-status-confirmed {
+  color: #5f6368;
+}
+
+.admin-review-sub {
+  font-size: 22rpx;
+  color: #888;
+}
+
+.admin-review-btns {
+  display: flex;
+  align-items: center;
+  gap: 14rpx;
+}
+
+.admin-btn-confirm {
+  background: #f1f5f9 !important;
+  color: #1c3d5a !important;
+  border: 1rpx solid #cbd5e1 !important;
+  font-size: 24rpx !important;
+  margin: 0 !important;
+}
+
+.admin-btn-edit {
+  background: #1c3d5a !important;
+  color: #ffffff !important;
+  font-size: 24rpx !important;
+  margin: 0 !important;
+}
+
+

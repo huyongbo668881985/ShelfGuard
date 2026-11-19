@@ -809,3 +809,58 @@ test('scheduler.decideJobs：每天 03:30 触发 pruneOriginals，避开 03:00 s
   })
   assert.deepEqual(jobsCatchup.map(j => j.name), ['pruneOriginals'])
 })
+
+test('classifyEligibility：已复核/校正记录永久保留原图，未复核低/中置信记录延长保留 7 天', () => {
+  const nowMs = Date.parse('2026-11-20T12:00:00Z')
+  const fourDaysAgo = new Date(nowMs - 4 * 24 * 60 * 60 * 1000).toISOString()
+  const eightDaysAgo = new Date(nowMs - 8 * 24 * 60 * 60 * 1000).toISOString()
+
+  // 1. keepOriginal=true 或 reviewStatus=corrected / confirmed 永不清理
+  assert.equal(pruneMod.classifyEligibility({
+    status: 'analyzed',
+    analyzedAt: eightDaysAgo,
+    keepOriginal: true
+  }, nowMs).eligible, false)
+
+  assert.equal(pruneMod.classifyEligibility({
+    status: 'analyzed',
+    analyzedAt: eightDaysAgo,
+    reviewStatus: 'corrected'
+  }, nowMs).eligible, false)
+
+  assert.equal(pruneMod.classifyEligibility({
+    status: 'analyzed',
+    analyzedAt: eightDaysAgo,
+    reviewStatus: 'confirmed'
+  }, nowMs).eligible, false)
+
+  // 2. 未复核的 low/mid 置信记录在 4 天（96 小时 > 72 小时，但 < 7 天）时不清理，满 8 天后可清理
+  assert.equal(pruneMod.classifyEligibility({
+    status: 'analyzed',
+    analyzedAt: fourDaysAgo,
+    reviewLevel: 'low',
+    reviewStatus: 'unreviewed'
+  }, nowMs).eligible, false)
+
+  assert.equal(pruneMod.classifyEligibility({
+    status: 'analyzed',
+    analyzedAt: fourDaysAgo,
+    reviewLevel: 'mid'
+  }, nowMs).eligible, false)
+
+  assert.equal(pruneMod.classifyEligibility({
+    status: 'analyzed',
+    analyzedAt: eightDaysAgo,
+    reviewLevel: 'low',
+    reviewStatus: 'unreviewed'
+  }, nowMs).eligible, true)
+
+  // 3. 高置信记录满 4 天（>72 小时）按原策略正常清理
+  assert.equal(pruneMod.classifyEligibility({
+    status: 'analyzed',
+    analyzedAt: fourDaysAgo,
+    reviewLevel: 'high',
+    reviewStatus: 'unreviewed'
+  }, nowMs).eligible, true)
+})
+

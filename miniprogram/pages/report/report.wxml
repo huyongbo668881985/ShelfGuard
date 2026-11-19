@@ -81,6 +81,30 @@
 
     <!-- AI 分析报告 -->
     <block wx:if="{{detail.aiReport}}">
+      <!-- 管理员专属：AI 复核与人工校正操作栏（业务员与普通管理者不可见） -->
+      <view class="admin-review-bar" wx:if="{{detail.isAdminViewer}}">
+        <view class="admin-review-info">
+          <text class="admin-review-tag tag-status-{{detail.reviewStatus || 'unreviewed'}}">
+            {{detail.reviewStatus === 'corrected' ? '✏️ 已人工校正' : detail.reviewStatus === 'confirmed' ? '✓ 已确认无误' : detail.reviewLevel === 'low' ? '⚠️ 低置信待复核' : detail.reviewLevel === 'mid' ? '🔎 中置信待复核' : detail.spotCheck ? '🎯 高置信抽检' : '高置信'}}
+          </text>
+          <text class="admin-review-sub" wx:if="{{detail.narrativeStatus === 'pending'}}">报告文字重写中…</text>
+          <text class="admin-review-sub" wx:elif="{{detail.reviewedByName}}">由 {{detail.reviewedByName}} 复核</text>
+        </view>
+        <view class="admin-review-btns">
+          <button
+            class="admin-btn-confirm"
+            size="mini"
+            wx:if="{{detail.reviewStatus !== 'confirmed' && detail.reviewStatus !== 'corrected'}}"
+            bindtap="confirmReportAccurate"
+          >确认无误</button>
+          <button
+            class="admin-btn-edit"
+            size="mini"
+            bindtap="goToReview"
+          >{{detail.reviewStatus === 'corrected' ? '再次校正' : '人工校正'}}</button>
+        </view>
+      </view>
+
       <!-- 照片质量 / 局部取景温和提醒（不阻断） -->
       <view class="quality-notice-card" wx:if="{{reportView.qualityNotices && reportView.qualityNotices.length > 0}}">
         <view class="quality-notice-body">

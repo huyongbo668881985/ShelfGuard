@@ -75,10 +75,13 @@ const MAX_ATTEMPTS = 3
 // 认领数必须 ≤ 此值，避免 claim 15 却只分析 8、其余卡在 analyzing
 const MAX_DAILY_SUMMARY_STORES = 8
 
+// 进程内互斥锁：防止定时任务与手动「立即分析全部」并发抢占同一批队列
+let activeBatchJob = null
+
 // ============================================================
 // 入口
 // ============================================================
-exports.main = async (event, context) => {
+exports.main = async (event = {}, context) => {
   const startedAt = Date.now()
   const wxContext = cloud.getWXContext()
   const openid = wxContext.OPENID || ''
@@ -89,7 +92,7 @@ exports.main = async (event, context) => {
 
   const settings = await loadSettings()
 
-  // 手动触发：小程序"立即分析"按钮走这条路，忽略时间窗口限制
+  // 手动触发：小程序"立即分析全部"按钮走这条路，忽略时间窗口限制，连续跑完全部待分析队列
   if (action === 'runNow') {
     if (!isInternalCall) {
       const allowed = await canManage(openid)
@@ -97,9 +100,84 @@ exports.main = async (event, context) => {
         return { success: false, error: '只有管理员可以手动触发批量分析' }
       }
     }
-    const result = await drainQueue({ settings, startedAt, ignoreDeadlineForFirst: true })
-    await recordRun(result, 'manual')
-    return { success: true, triggeredBy: 'manual', ...result }
+
+    if (activeBatchJob) {
+      const [remaining, analyzing] = await Promise.all([countPending(), countAnalyzing()])
+      return {
+        success: true,
+        started: false,
+        alreadyRunning: true,
+        triggeredBy: 'manual',
+        processed: 0,
+        succeeded: 0,
+        failed: 0,
+        reclaimed: 0,
+        remaining,
+        analyzing,
+        message: '后台已有分析任务正在运行中，请稍后刷新查看进度'
+      }
+    }
+
+    const initialReclaimed = await reclaimStuckRecords()
+    const [initialPending, initialAnalyzing] = await Promise.all([countPending(), countAnalyzing()])
+
+    if (event.async === true && initialPending <= 0) {
+      if (initialReclaimed > 0) {
+        await recordRun(
+          { processed: 0, succeeded: 0, failed: 0, reclaimed: initialReclaimed, remaining: 0 },
+          'manual'
+        )
+      }
+      return {
+        success: true,
+        started: false,
+        triggeredBy: 'manual',
+        processed: 0,
+        succeeded: 0,
+        failed: 0,
+        reclaimed: initialReclaimed,
+        remaining: 0,
+        analyzing: initialAnalyzing,
+        message: initialAnalyzing > 0 ? '当前记录已在后台分析中，请稍后刷新查看' : '没有待分析的记录'
+      }
+    }
+
+    const runPromise = drainAllQueue({ settings, initialReclaimed })
+      .catch(err => {
+        console.error('[batchAnalyze] 手动全量后台分析异常:', err)
+        return {
+          processed: 0,
+          succeeded: 0,
+          failed: 0,
+          reclaimed: initialReclaimed,
+          remaining: initialPending,
+          details: [],
+          error: err && err.message ? err.message : '后台分析异常'
+        }
+      })
+      .finally(() => {
+        if (activeBatchJob && activeBatchJob.promise === runPromise) {
+          activeBatchJob = null
+        }
+      })
+
+    activeBatchJob = { mode: 'manual', startedAt: Date.now(), promise: runPromise }
+
+    // 异步模式（小程序端调用）：立即返回，避免 60 秒请求超时，由服务端持续跑完全部记录
+    if (event.async === true) {
+      return {
+        success: true,
+        started: true,
+        async: true,
+        triggeredBy: 'manual',
+        reclaimed: initialReclaimed,
+        queued: initialPending,
+        remaining: initialPending
+      }
+    }
+
+    const result = await runPromise
+    return { success: true, started: true, triggeredBy: 'manual', ...result }
   }
 
   // 定时触发
@@ -107,32 +185,106 @@ exports.main = async (event, context) => {
     return { success: true, skipped: true, reason: '当前为即时分析模式，定时任务不处理' }
   }
 
-  // ⚠️ 先回收僵尸记录，且这一步不受时间窗口限制。
-  // 否则窗口外的卡死记录（云函数超时被杀、或那次 analyzeImage 调用异常）
-  // 永远没机会被捞回，会一直停在"分析中"无法自愈。
-  const reclaimed = await reclaimStuckRecords()
-
-  if (!isInAnalyzeWindow(settings)) {
-    if (reclaimed > 0) {
-      await recordRun(
-        { processed: 0, succeeded: 0, failed: 0, reclaimed, remaining: await countPending() },
-        'timer'
-      )
-    }
+  if (activeBatchJob) {
     return {
       success: true,
       skipped: true,
-      reclaimed,
-      reason: `当前不在分析窗口内（${settings.analyzeTime} 起 ${settings.windowMinutes} 分钟），已先回收 ${reclaimed} 条卡死记录`
+      busy: true,
+      reason: `已有${activeBatchJob.mode === 'manual' ? '手动全量' : '定时'}分析任务正在执行，本轮定时触发跳过`
     }
   }
 
-  const result = await drainQueue({ settings, startedAt })
-  // 只有真的干了活才记一笔，避免窗口内每 2 分钟空转一次都去写数据库
-  if (result.processed > 0 || result.reclaimed > 0) {
-    await recordRun(result, 'timer')
+  const timerPromise = (async () => {
+    // ⚠️ 先回收僵尸记录，且这一步不受时间窗口限制。
+    // 否则窗口外的卡死记录（云函数超时被杀、或那次 analyzeImage 调用异常）
+    // 永远没机会被捞回，会一直停在"分析中"无法自愈。
+    const reclaimed = await reclaimStuckRecords()
+
+    if (!isInAnalyzeWindow(settings)) {
+      if (reclaimed > 0) {
+        await recordRun(
+          { processed: 0, succeeded: 0, failed: 0, reclaimed, remaining: await countPending() },
+          'timer'
+        )
+      }
+      return {
+        success: true,
+        skipped: true,
+        reclaimed,
+        reason: `当前不在分析窗口内（${settings.analyzeTime} 起 ${settings.windowMinutes} 分钟），已先回收 ${reclaimed} 条卡死记录`
+      }
+    }
+
+    const result = await drainQueue({ settings, startedAt })
+    // 只有真的干了活才记一笔，避免窗口内每 2 分钟空转一次都去写数据库
+    if (result.processed > 0 || result.reclaimed > 0) {
+      await recordRun(result, 'timer')
+    }
+    return { success: true, triggeredBy: 'timer', ...result }
+  })().finally(() => {
+    if (activeBatchJob && activeBatchJob.promise === timerPromise) {
+      activeBatchJob = null
+    }
+  })
+
+  activeBatchJob = { mode: 'timer', startedAt: Date.now(), promise: timerPromise }
+  return await timerPromise
+}
+
+/**
+ * 连续排空全部待分析队列（用于管理员点击「立即分析全部」）：
+ * 每轮按业务员最多认领 8 条并生成/合并日报，循环直到 remaining === 0。
+ */
+async function drainAllQueue({ settings, initialReclaimed = 0 }) {
+  const aggregate = {
+    processed: 0,
+    succeeded: 0,
+    failed: 0,
+    reclaimed: initialReclaimed,
+    remaining: 0,
+    details: [],
+    batches: 0,
+    dailyReportGenerated: false
   }
-  return { success: true, triggeredBy: 'timer', ...result }
+  let zeroProgressStreak = 0
+
+  while (true) {
+    const batchRes = await drainQueue({
+      settings,
+      startedAt: Date.now(),
+      ignoreDeadlineForFirst: true
+    })
+    aggregate.batches += 1
+    aggregate.processed += batchRes.processed || 0
+    aggregate.succeeded += batchRes.succeeded || 0
+    aggregate.failed += batchRes.failed || 0
+    aggregate.reclaimed += batchRes.reclaimed || 0
+    aggregate.remaining = batchRes.remaining
+    if (batchRes.dailyReportGenerated) {
+      aggregate.dailyReportGenerated = true
+    }
+    if (Array.isArray(batchRes.details) && batchRes.details.length > 0) {
+      aggregate.details.push(...batchRes.details)
+    }
+
+    await recordRun(aggregate, 'manual')
+
+    if (batchRes.remaining <= 0) {
+      break
+    }
+    if ((batchRes.processed || 0) === 0) {
+      zeroProgressStreak += 1
+      if (zeroProgressStreak >= 5) {
+        console.warn('[batchAnalyze] 连续多轮无进展，提前结束全量循环以避免空转')
+        break
+      }
+    } else {
+      zeroProgressStreak = 0
+    }
+  }
+
+  console.log(`[batchAnalyze] 手动全量分析完成: 共 ${aggregate.batches} 批，处理 ${aggregate.processed} 条（成功 ${aggregate.succeeded}，失败 ${aggregate.failed}，剩余 ${aggregate.remaining}）`)
+  return aggregate
 }
 
 // ============================================================
@@ -460,13 +612,21 @@ async function markFailedIfNeeded(record, errorMsg) {
   }
 }
 
-async function countPending() {
+async function countByStatus(status) {
   try {
-    const res = await db.collection('inspections').where({ status: 'pending' }).count()
-    return res.total
+    const res = await db.collection('inspections').where({ status }).count()
+    return typeof res.total === 'number' ? res.total : 0
   } catch (err) {
     return -1
   }
+}
+
+function countPending() {
+  return countByStatus('pending')
+}
+
+function countAnalyzing() {
+  return countByStatus('analyzing')
 }
 
 // ============================================================
@@ -559,5 +719,15 @@ async function canManage(openid) {
   } catch (err) {
     console.error('权限校验失败:', err)
     return false
+  }
+}
+
+exports._internal = {
+  getActiveJob: () => activeBatchJob,
+  waitForActiveJob: async () => {
+    if (activeBatchJob && activeBatchJob.promise) {
+      return await activeBatchJob.promise
+    }
+    return null
   }
 }

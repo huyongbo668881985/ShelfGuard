@@ -10,6 +10,7 @@ function shanghaiParts(date = new Date()) {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
+    weekday: 'short',
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
@@ -23,6 +24,7 @@ function shanghaiParts(date = new Date()) {
     year: bag.year,
     month: bag.month,
     day: bag.day,
+    weekday: bag.weekday || '',
     hour: parseInt(bag.hour, 10),
     minute: parseInt(bag.minute, 10),
     second: parseInt(bag.second, 10)
@@ -34,15 +36,19 @@ function decideJobs(parts, state) {
   const minuteKey = `${parts.year}-${parts.month}-${parts.day}T${String(parts.hour).padStart(2, '0')}:${String(parts.minute).padStart(2, '0')}`
   const dateKey = `${parts.year}-${parts.month}-${parts.day}`
   if (parts.minute % 2 === 0 && state.lastBatch !== minuteKey) jobs.push({ name: 'batchAnalyze', key: minuteKey })
+  if (parts.minute % 10 === 0 && state.lastReviewMaint !== minuteKey) jobs.push({ name: 'reviewMaintenance', key: minuteKey })
   if (parts.minute % 30 === 0 && state.lastJxc !== minuteKey) jobs.push({ name: 'syncJxc', key: minuteKey })
   if (parts.hour === 3 && parts.minute === 0 && state.lastStats !== dateKey) jobs.push({ name: 'shelfStats', key: dateKey })
   if (parts.hour === 3 && parts.minute >= 30 && state.lastPrune !== dateKey) jobs.push({ name: 'pruneOriginals', key: dateKey })
+  if (parts.weekday === 'Mon' && parts.hour === 4 && parts.minute >= 30 && state.lastReflection !== dateKey) {
+    jobs.push({ name: 'reflection', key: dateKey })
+  }
   return jobs
 }
 
 function createScheduler() {
-  const state = { lastBatch: '', lastJxc: '', lastStats: '', lastPrune: '' }
-  const running = { batchAnalyze: false, syncJxc: false, shelfStats: false, pruneOriginals: false }
+  const state = { lastBatch: '', lastReviewMaint: '', lastJxc: '', lastStats: '', lastPrune: '', lastReflection: '' }
+  const running = { batchAnalyze: false, reviewMaintenance: false, syncJxc: false, shelfStats: false, pruneOriginals: false, reflection: false }
   let timer = null
   let warnedJxc = false
 
@@ -97,6 +103,23 @@ function createScheduler() {
           skippedFailed: result && result.skippedFailed,
           sharpAvailable: result && result.sharpAvailable
         }))
+      } else if (name === 'reviewMaintenance') {
+        const result = await cloud.runWithContext({ openid: '', source: 'timer' }, () => (
+          handlers.reviewReport({ Type: 'Timer', action: 'maintenance' })
+        ))
+        if (result && (result.retriedNarratives > 0 || result.rebuiltDailyReports > 0 || result.rebuiltShelfStats)) {
+          console.log('[cron] reviewMaintenance', JSON.stringify(result))
+        }
+      } else if (name === 'reflection') {
+        const result = await cloud.runWithContext({ openid: '', source: 'timer' }, () => (
+          handlers.reflection({ Type: 'Timer', action: 'run' })
+        ))
+        console.log('[cron] reflection', JSON.stringify({
+          success: !!(result && result.success),
+          skipped: !!(result && result.skipped),
+          reflectionId: result && result.reflectionId,
+          reason: result && result.reason
+        }))
       }
     } catch (err) {
       console.error(`[cron] ${name} 失败:`, err)
@@ -109,9 +132,11 @@ function createScheduler() {
     const jobs = decideJobs(shanghaiParts(), state)
     for (const job of jobs) {
       if (job.name === 'batchAnalyze') state.lastBatch = job.key
+      if (job.name === 'reviewMaintenance') state.lastReviewMaint = job.key
       if (job.name === 'syncJxc') state.lastJxc = job.key
       if (job.name === 'shelfStats') state.lastStats = job.key
       if (job.name === 'pruneOriginals') state.lastPrune = job.key
+      if (job.name === 'reflection') state.lastReflection = job.key
       await runJob(job.name)
     }
   }

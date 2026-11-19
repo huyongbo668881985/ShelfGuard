@@ -1,0 +1,234 @@
+<!-- pages/reflection/reflection.wxml -->
+<view class="container">
+  <!-- 顶部知识库大盘与立即复盘入口 -->
+  <view class="card hero-card" wx:if="{{knowledgeOverview}}">
+    <view class="hero-top">
+      <view>
+        <text class="hero-title">AI 识别知识库 v{{knowledgeOverview.knowledgeVersion}}</text>
+        <text class="hero-sub">每周一 04:30 自动复盘人工校正样本 · 管理员审批后生效</text>
+      </view>
+      <button class="btn-run" size="mini" bindtap="onRunReflectionNow" disabled="{{runningReflection}}">
+        {{runningReflection ? '复盘中…' : '立即复盘'}}
+      </button>
+    </view>
+
+    <view class="hero-metrics">
+      <view class="h-cell">
+        <text class="h-val">{{knowledgeOverview.totalReviewLogs || 0}}</text>
+        <text class="h-lab">累计复核样本</text>
+      </view>
+      <view class="h-cell" bindtap="goProductsConfusables">
+        <text class="h-val">{{knowledgeOverview.confusablesCount || 0}}</text>
+        <text class="h-lab">易混淆竞品 ▸</text>
+      </view>
+      <view class="h-cell">
+        <text class="h-val">{{knowledgeOverview.learnedRulesCount || 0}}</text>
+        <text class="h-lab">生效规则补丁</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 切换标签：复盘报告 / 已生效修正记录 -->
+  <view class="tab-bar">
+    <view class="tab-item {{activeTab === 'report' ? 'active' : ''}}" data-tab="report" bindtap="switchTab">
+      复盘报告与提案
+    </view>
+    <view class="tab-item {{activeTab === 'changes' ? 'active' : ''}}" data-tab="changes" bindtap="switchTab">
+      知识库变更记录（可撤销）
+    </view>
+  </view>
+
+  <!-- Tab 1: 复盘报告与提案 -->
+  <block wx:if="{{activeTab === 'report'}}">
+    <!-- 历史期数横滑选择 -->
+    <scroll-view class="period-scroll" scroll-x="true" enable-flex="true" wx:if="{{reportList.length > 1}}">
+      <view class="period-row">
+        <view
+          class="period-pill {{selectedReportId === item._id ? 'active' : ''}}"
+          wx:for="{{reportList}}"
+          wx:key="_id"
+          data-id="{{item._id}}"
+          bindtap="onSelectReport"
+        >
+          {{item.dateLabel}}（{{item.pendingProposals > 0 ? item.pendingProposals + '待审' : '已处理'}}）
+        </view>
+      </view>
+    </scroll-view>
+
+    <view class="empty-box" wx:if="{{!loading && !currentReport}}">
+      <text class="empty-title">暂无 AI 复盘报告</text>
+      <text class="empty-desc">先在「拜访记录」中复核或人工校正几条报告，再点击上方「立即复盘」，AI 将自动总结误认/漏认原因并生成规则修正提案。</text>
+    </view>
+
+    <block wx:if="{{currentReport}}">
+      <!-- 1. 本期复核统计概览 -->
+      <view class="card section-card">
+        <view class="sec-head">
+          <text class="sec-title">📊 本期复核质量统计</text>
+          <text class="sec-date">{{currentReport.createdAtFormatted}}</text>
+        </view>
+
+        <view class="stat-grid">
+          <view class="s-box">
+            <text class="s-num">{{currentReport.stats.totalReviewed}}</text>
+            <text class="s-lab">复核总单数</text>
+          </view>
+          <view class="s-box">
+            <text class="s-num warn">{{currentReport.stats.correctedCount}}</text>
+            <text class="s-lab">人工校正数</text>
+          </view>
+          <view class="s-box">
+            <text class="s-num">{{currentReport.stats.correctionRate !== null ? currentReport.stats.correctionRate + '%' : '--'}}</text>
+            <text class="s-lab">样本错误率</text>
+          </view>
+          <view class="s-box">
+            <text class="s-num">{{currentReport.stats.facingMae !== null ? currentReport.stats.facingMae + '面' : '--'}}</text>
+            <text class="s-lab">排面平均误差</text>
+          </view>
+        </view>
+
+        <!-- 置信度校准表 -->
+        <view class="sub-block" wx:if="{{currentReport.stats.byConfidenceLevel}}">
+          <text class="sub-title">各置信等级实际错误率（含高置信抽检）</text>
+          <view class="calib-row">
+            <text class="calib-item">低置信：{{currentReport.stats.byConfidenceLevel.low.corrected}}/{{currentReport.stats.byConfidenceLevel.low.total}}（{{currentReport.stats.byConfidenceLevel.low.errorRate !== null ? currentReport.stats.byConfidenceLevel.low.errorRate + '%' : '--'}}）</text>
+            <text class="calib-item">中置信：{{currentReport.stats.byConfidenceLevel.mid.corrected}}/{{currentReport.stats.byConfidenceLevel.mid.total}}（{{currentReport.stats.byConfidenceLevel.mid.errorRate !== null ? currentReport.stats.byConfidenceLevel.mid.errorRate + '%' : '--'}}）</text>
+            <text class="calib-item">高置信抽检：{{currentReport.stats.byConfidenceLevel.spotCheckHigh.corrected}}/{{currentReport.stats.byConfidenceLevel.spotCheckHigh.total}}（{{currentReport.stats.byConfidenceLevel.spotCheckHigh.errorRate !== null ? currentReport.stats.byConfidenceLevel.spotCheckHigh.errorRate + '%' : '--'}}）</text>
+          </view>
+        </view>
+
+        <!-- 误认 Top 与 漏认 Top -->
+        <view class="sub-block" wx:if="{{currentReport.stats.topFalseOwn.length > 0}}">
+          <text class="sub-title">🚫 高频把其他酒误认为我方产品</text>
+          <view class="top-line" wx:for="{{currentReport.stats.topFalseOwn}}" wx:key="index">
+            <text>实际是「{{item.actualProduct}}」→ 误认为我方「{{item.recognizedAsSku}}」</text>
+            <text class="top-cnt">{{item.count}} 次</text>
+          </view>
+        </view>
+
+        <view class="sub-block" wx:if="{{currentReport.stats.topMissedOwn.length > 0}}">
+          <text class="sub-title">🔍 高频漏认的我方产品</text>
+          <view class="top-line" wx:for="{{currentReport.stats.topMissedOwn}}" wx:key="index">
+            <text>我方「{{item.sku}}」未被识别</text>
+            <text class="top-cnt">{{item.count}} 次</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 2. 根因分析与规则修正提案 -->
+      <view class="card section-card">
+        <view class="sec-head">
+          <text class="sec-title">🛠️ 规则修正提案（{{currentReport.proposals.length}} 项）</text>
+        </view>
+
+        <view class="empty-inline" wx:if="{{currentReport.proposals.length === 0}}">
+          <text>本期复核样本表现良好，暂无需要调整的规则提案。</text>
+        </view>
+
+        <view class="proposal-list" wx:else>
+          <view class="proposal-card status-{{item.status}}" wx:for="{{currentReport.proposals}}" wx:key="proposalId">
+            <view class="prop-header">
+              <text class="prop-type">{{fixTypeLabels[item.fixType] || item.fixType}}</text>
+              <text class="prop-badge badge-{{item.status}}">
+                {{item.status === 'approved' ? '已采纳生效' : item.status === 'rejected' ? '已驳回' : item.status === 'undone' ? '已撤销' : '待审批'}}
+              </text>
+            </view>
+
+            <text class="prop-summary">{{item.summary}}</text>
+            <text class="prop-cluster" wx:if="{{item.clusterTitle}}">针对问题：{{item.clusterTitle}}（{{item.evidenceCount}} 例）</text>
+            <text class="prop-rationale" wx:if="{{item.rationale}}">原因与依据：{{item.rationale}}</text>
+
+            <!-- 具体写入内容预览 -->
+            <view class="payload-box">
+              <text wx:if="{{item.payload.distinguishingFeatures}}">区分要点：{{item.payload.distinguishingFeatures}}</text>
+              <text wx:elif="{{item.payload.confusionNotes}}">区分要点：{{item.payload.confusionNotes}}</text>
+              <text wx:elif="{{item.payload.visualFeatures}}">视觉特征：{{item.payload.visualFeatures}}</text>
+              <text wx:elif="{{item.payload.rule}}">规则补丁：{{item.payload.rule}}</text>
+              <text wx:elif="{{item.payload.reason}}">说明：{{item.payload.reason}}</text>
+              <text wx:elif="{{item.payload.tip}}">拍照提醒：{{item.payload.tip}}</text>
+              <text wx:elif="{{item.payload.suggestion}}">开发建议：{{item.payload.suggestion}}</text>
+            </view>
+
+            <!-- 回放验证结果 -->
+            <view class="replay-bar replay-{{item.replayResult.status}}" wx:if="{{item.replayResult}}">
+              <text>🧪 验证：{{item.replayResult.summaryText}}</text>
+            </view>
+
+            <!-- 证据样本链接 -->
+            <view class="evidence-row" wx:if="{{item.evidenceInspectionIds && item.evidenceInspectionIds.length > 0}}">
+              <text class="ev-label">典型样本：</text>
+              <text
+                class="ev-link"
+                wx:for="{{item.evidenceInspectionIds}}"
+                wx:for-item="eid"
+                wx:for-index="eidx"
+                wx:key="*this"
+                data-id="{{eid}}"
+                bindtap="openEvidenceInspection"
+              >样本{{eidx + 1}}</text>
+            </view>
+
+            <!-- 审批按钮 -->
+            <view class="prop-actions" wx:if="{{item.status === 'pending'}}">
+              <button
+                class="btn-reject"
+                size="mini"
+                data-id="{{item.proposalId}}"
+                data-decision="reject"
+                bindtap="onDecideProposal"
+              >驳回</button>
+              <button
+                class="btn-approve"
+                size="mini"
+                data-id="{{item.proposalId}}"
+                data-decision="approve"
+                data-fixtype="{{item.fixType}}"
+                data-productid="{{item.target.productId}}"
+                bindtap="onDecideProposal"
+              >采纳并生效</button>
+            </view>
+          </view>
+        </view>
+      </view>
+
+      <!-- 3. 往期修正效果追踪 -->
+      <view class="card section-card" wx:if="{{currentReport.effectTracking && currentReport.effectTracking.length > 0}}">
+        <view class="sec-head">
+          <text class="sec-title">📈 已采纳修正的效果追踪</text>
+        </view>
+        <view class="track-item" wx:for="{{currentReport.effectTracking}}" wx:key="changeId">
+          <text class="track-name">{{item.summary}}</text>
+          <text class="track-metric">
+            采纳前错误率 {{item.beforeErrorRate !== null ? item.beforeErrorRate + '%' : '--'}}（{{item.beforeErrorHits}}/{{item.beforeSampleCount}}）
+            → 采纳后 {{item.afterErrorRate !== null ? item.afterErrorRate + '%' : '待积累样本'}}（{{item.afterErrorHits}}/{{item.afterSampleCount}}）
+          </text>
+        </view>
+      </view>
+    </block>
+  </block>
+
+  <!-- Tab 2: 知识库变更记录 -->
+  <block wx:if="{{activeTab === 'changes'}}">
+    <view class="empty-box" wx:if="{{changesList.length === 0}}">
+      <text class="empty-title">暂无知识库变更记录</text>
+    </view>
+    <view class="card change-card" wx:for="{{changesList}}" wx:key="_id">
+      <view class="change-top">
+        <text class="change-ver">v{{item.knowledgeVersion}} · {{fixTypeLabels[item.fixType] || item.fixType}}</text>
+        <text class="change-date">{{item.appliedAtFormatted}}</text>
+      </view>
+      <text class="change-sum">{{item.summary}}</text>
+      <view class="change-foot">
+        <text class="change-by">由 {{item.appliedByName || '管理员'}} 采纳</text>
+        <text class="change-undone" wx:if="{{item.undone}}">已撤销</text>
+        <button
+          class="btn-undo"
+          size="mini"
+          wx:else
+          data-id="{{item._id}}"
+          bindtap="onUndoChange"
+        >一键撤销</button>
+      </view>
+    </view>
+  </block>
+</view>

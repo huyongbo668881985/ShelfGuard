@@ -9,7 +9,7 @@
 // 角色永远从服务端 users 表按 openid 查出来，不信任客户端传的任何角色声明。
 
 const cloud = require('../../cloud-shim')
-const { extractFacingSummary } = require('../analyzeImage/scoring')
+const { extractFacingSummary, computeReviewLevel, computeSpotCheck } = require('../analyzeImage/scoring')
 
 cloud.init({
   env: cloud.DYNAMIC_CURRENT_ENV
@@ -108,7 +108,7 @@ async function loadManagerUserNames(extraList = [], { excludeAdmins = false } = 
 }
 
 // 构建通用查询条件（列表和统计共用）
-function buildBaseConditions({ isManager, openid, targetUserName, where, excludeOpenids = [] }) {
+function buildBaseConditions({ isManager, isAdmin, openid, targetUserName, where, excludeOpenids = [] }) {
   const ninetyDaysAgo = new Date()
   ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90)
 
@@ -165,6 +165,36 @@ function buildBaseConditions({ isManager, openid, targetUserName, where, exclude
       : _.lte(scoreMax)
   }
 
+  // AI 复核筛选（仅管理员 admin 生效，普通业务员和管理者传入时静默忽略）
+  if (isAdmin && where) {
+    let hasReviewFilter = false
+    if (typeof where.reviewLevel === 'string' && ['low', 'mid', 'high'].includes(where.reviewLevel)) {
+      conditions.reviewLevel = where.reviewLevel
+      hasReviewFilter = true
+    }
+    if (where.spotCheck === true) {
+      conditions.spotCheck = true
+      hasReviewFilter = true
+    }
+    if (typeof where.reviewStatus === 'string' && ['unreviewed', 'confirmed', 'corrected'].includes(where.reviewStatus)) {
+      hasReviewFilter = true
+      if (where.reviewStatus === 'unreviewed') {
+        conditions = _.and(conditions, {
+          reviewStatus: _.nin(['confirmed', 'corrected'])
+        })
+      } else {
+        conditions = _.and(conditions, {
+          reviewStatus: where.reviewStatus
+        })
+      }
+    }
+    if (hasReviewFilter) {
+      conditions = _.and(conditions, {
+        status: 'analyzed'
+      })
+    }
+  }
+
   // 关键词搜索：前端只传纯文本 keyword，服务端负责拼接 $or（门店名/任务名模糊匹配）。
   // 之前的实现是把 _.or(...) 直接塞进 where._ 再靠 where._._actions 内部字段判断，
   // 但 db.command 经 callFunction JSON 序列化后 _actions 通常不存在，导致搜索条件被静默丢弃。
@@ -199,10 +229,12 @@ exports.main = async (event, context) => {
   }
   const role = (caller && MANAGER_ROLES.includes(caller.role)) ? caller.role : 'sales'
   const isManager = MANAGER_ROLES.includes(role)
+  const isAdmin = role === 'admin'
   const excludeAdmins = role === 'manager'
   const excludeOpenids = excludeAdmins ? await loadAdminOpenids() : []
   const queryConditions = buildBaseConditions({
     isManager,
+    isAdmin,
     openid,
     targetUserName: safeTargetUserName,
     where: safeWhere,
@@ -588,7 +620,11 @@ exports.main = async (event, context) => {
         location: true,
         status: true,
         createdAt: true,
-        aiReport: true
+        aiReport: true,
+        reviewLevel: true,
+        reviewStatus: true,
+        spotCheck: true,
+        reviewRevision: true
       })
       .get()
 
@@ -621,6 +657,30 @@ exports.main = async (event, context) => {
         item.ownSkuCount = fs.ownSkuCount
         item.ownBrandPresent = fs.ownBrandPresent
         item.hasShelfPhoto = fs.hasShelfPhoto
+        const resolvedLevel = item.reviewLevel || computeReviewLevel(ar)
+        const resolvedSpotCheck = typeof item.spotCheck === 'boolean'
+          ? item.spotCheck
+          : computeSpotCheck(item._id, undefined, resolvedLevel)
+        const resolvedStatus = item.reviewStatus || 'unreviewed'
+        if (isAdmin) {
+          item.reviewLevel = resolvedLevel
+          item.spotCheck = resolvedSpotCheck
+          item.reviewStatus = resolvedStatus
+          item.reviewRevision = item.reviewRevision || 0
+        } else {
+          delete item.reviewLevel
+          delete item.spotCheck
+          delete item.reviewStatus
+          delete item.reviewRevision
+        }
+        const safeMeta = ar.metadata && typeof ar.metadata === 'object' ? { ...ar.metadata } : {}
+        if (!isAdmin) {
+          delete safeMeta.corrected
+          delete safeMeta.correctedRevision
+          if (Array.isArray(safeMeta.reviewReasons)) {
+            safeMeta.reviewReasons = safeMeta.reviewReasons.filter(r => r !== '已人工校正')
+          }
+        }
         item.aiReport = {
           score: ar.score,
           scoreLevel: ar.scoreLevel,
@@ -628,13 +688,19 @@ exports.main = async (event, context) => {
           hasShelfPhoto: fs.hasShelfPhoto,
           ownBrandPresent: fs.ownBrandPresent,
           facingMetrics: ar.facingMetrics || null,
-          metadata: ar.metadata,
+          metadata: safeMeta,
           sharePercent: item.sharePercent
         }
       } else {
         item.sharePercent = null
         item.ownFacingCount = null
         item.ownSkuCount = null
+        if (!isAdmin) {
+          delete item.reviewLevel
+          delete item.spotCheck
+          delete item.reviewStatus
+          delete item.reviewRevision
+        }
       }
       return item
     })
@@ -644,6 +710,7 @@ exports.main = async (event, context) => {
     return {
       success: true,
       isManager,
+      isAdmin,
       salesUsers,
       total,
       page: safePage,

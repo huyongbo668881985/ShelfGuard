@@ -16,6 +16,114 @@ const DEFAULT_SCORING_RULES = Object.freeze({
   horizontalBannerMaxScore: 10
 })
 
+const DEFAULT_REVIEW_THRESHOLDS = Object.freeze({
+  lowCountingConfidence: 0.6,
+  midCountingConfidence: 0.8,
+  lowSkuConfidence: 0.6,
+  midSkuConfidence: 0.8
+})
+
+const DEFAULT_SPOT_CHECK_RATE = 10
+
+function normalizeReviewThresholds(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ...DEFAULT_REVIEW_THRESHOLDS }
+  }
+  const clampConf = (val, fallback, min = 0.2, max = 0.98) => {
+    const n = Number(val)
+    if (!Number.isFinite(n)) return fallback
+    return Math.round(Math.max(min, Math.min(max, n)) * 100) / 100
+  }
+  const lowCountingConfidence = clampConf(raw.lowCountingConfidence, DEFAULT_REVIEW_THRESHOLDS.lowCountingConfidence)
+  const midCountingConfidence = Math.max(
+    lowCountingConfidence,
+    clampConf(raw.midCountingConfidence, DEFAULT_REVIEW_THRESHOLDS.midCountingConfidence)
+  )
+  const lowSkuConfidence = clampConf(raw.lowSkuConfidence, DEFAULT_REVIEW_THRESHOLDS.lowSkuConfidence)
+  const midSkuConfidence = Math.max(
+    lowSkuConfidence,
+    clampConf(raw.midSkuConfidence, DEFAULT_REVIEW_THRESHOLDS.midSkuConfidence)
+  )
+  return {
+    lowCountingConfidence,
+    midCountingConfidence,
+    lowSkuConfidence,
+    midSkuConfidence
+  }
+}
+
+/**
+ * 计算单条 AI 报告的复核等级：low | mid | high
+ * - low：排面置信 < lowCountingConfidence，或任一我方 SKU 置信 < lowSkuConfidence，或画质 poor，或解析失败
+ * - mid：排面置信 < midCountingConfidence，或任一我方 SKU 置信 < midSkuConfidence，或 needsReview=true，或局部特写 closeup
+ * - high：以上均不满足
+ */
+function computeReviewLevel(aiReport, rawThresholds) {
+  if (!aiReport || typeof aiReport !== 'object') return 'low'
+  const meta = (aiReport.metadata && typeof aiReport.metadata === 'object') ? aiReport.metadata : {}
+  if (meta.parseError) return 'low'
+
+  const t = normalizeReviewThresholds(rawThresholds)
+  const fm = (aiReport.facingMetrics && typeof aiReport.facingMetrics === 'object') ? aiReport.facingMetrics : {}
+  const countingConf = (typeof fm.countingConfidence === 'number' && Number.isFinite(fm.countingConfidence))
+    ? fm.countingConfidence
+    : null
+
+  const products = Array.isArray(aiReport.productIdentification) ? aiReport.productIdentification : []
+  const ownSkus = products.filter(p => p && p.isOwn === true)
+  let minOwnSkuConf = null
+  for (const p of ownSkus) {
+    if (typeof p.confidence === 'number' && Number.isFinite(p.confidence)) {
+      minOwnSkuConf = minOwnSkuConf === null ? p.confidence : Math.min(minOwnSkuConf, p.confidence)
+    }
+  }
+
+  const imageQuality = normalizeImageQuality(meta.imageQuality)
+  const framingType = normalizeFramingType(meta.framingType)
+
+  if (
+    imageQuality === 'poor' ||
+    (countingConf !== null && countingConf < t.lowCountingConfidence) ||
+    (minOwnSkuConf !== null && minOwnSkuConf < t.lowSkuConfidence)
+  ) {
+    return 'low'
+  }
+
+  if (
+    Boolean(meta.needsReview) ||
+    (aiReport.hasShelfPhoto !== false && framingType === 'closeup') ||
+    (countingConf !== null && countingConf < t.midCountingConfidence) ||
+    (minOwnSkuConf !== null && minOwnSkuConf < t.midSkuConfidence)
+  ) {
+    return 'mid'
+  }
+
+  return 'high'
+}
+
+/**
+ * 确定性抽检哈希：对高置信记录按 spotCheckRate(0-100%) 稳定抽样打标
+ * 仅当 reviewLevel === 'high' 时返回 true/false（非 high 一律 false，因本身已在低/中置信队列）
+ */
+function computeSpotCheck(id, rate = DEFAULT_SPOT_CHECK_RATE, reviewLevel = 'high') {
+  if (reviewLevel && reviewLevel !== 'high') return false
+  const str = String(id || '').trim()
+  if (!str) return false
+  const pct = Number.isFinite(Number(rate))
+    ? Math.max(0, Math.min(100, Math.round(Number(rate))))
+    : DEFAULT_SPOT_CHECK_RATE
+  if (pct <= 0) return false
+  if (pct >= 100) return true
+  // FNV-1a 32-bit hash，保证同一 _id 跨运行结果完全稳定且分布均匀
+  let h = 2166136261
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i)
+    h = Math.imul(h, 16777619)
+  }
+  const bucket = (h >>> 0) % 100
+  return bucket < pct
+}
+
 /**
  * 校验并规范化评分规则配置（供 settings 保存时校验）
  * @param {object} raw
@@ -296,21 +404,31 @@ function selectHorizontalBannerRefs(activeMaterials = [], maxRefs = 3) {
 }
 
 /**
- * 从启用的产品库中筛选最多 maxRefs 张带瓶身参考图的产品（全局优先 front 正面照，其次 side / back）
+ * 从启用的产品库中筛选最多 maxRefs 张带瓶身参考图的产品
+ * - 按 refPriority 降序排列（相等则保持原有顺序，避免破坏现有产品优先级）
+ * - 第一轮优先 front 正面照，其次 side / back
  */
 function selectProductRefs(activeProducts = [], maxRefs = 4) {
   if (!Array.isArray(activeProducts)) return []
   const limit = Math.max(0, maxRefs)
   if (limit === 0) return []
+  const indexed = activeProducts.map((p, idx) => ({
+    p,
+    idx,
+    prio: (p && Number.isFinite(Number(p.refPriority))) ? Number(p.refPriority) : 0
+  }))
+  indexed.sort((a, b) => (b.prio - a.prio) || (a.idx - b.idx))
+  const ordered = indexed.map(x => x.p)
+
   const seenFiles = new Set()
   const pickedProducts = new Set()
   const out = []
 
   const tryPick = (slotOrder) => {
-    for (let i = 0; i < activeProducts.length; i++) {
+    for (let i = 0; i < ordered.length; i++) {
       if (out.length >= limit) break
       if (pickedProducts.has(i)) continue
-      const p = activeProducts[i]
+      const p = ordered[i]
       if (!p || typeof p !== 'object' || p.isActive === false) continue
       const photos = p.photos && typeof p.photos === 'object' ? p.photos : {}
       let pickedSlot = ''
@@ -331,6 +449,7 @@ function selectProductRefs(activeProducts = [], maxRefs = 4) {
         productLine: String(p.productLine || '').trim(),
         aliases: Array.isArray(p.aliases) ? p.aliases.filter(Boolean) : [],
         visualFeatures: String(p.visualFeatures || '').trim(),
+        confusionNotes: String(p.confusionNotes || '').trim(),
         photo: pickedPhoto,
         slot: pickedSlot
       })
@@ -492,6 +611,23 @@ function validateAndNormalizeReport(rawResult, rawResponse, options = {}) {
   const visitImageCount = Number.isFinite(Number(options.visitImageCount)) && Number(options.visitImageCount) > 0
     ? Math.floor(Number(options.visitImageCount))
     : null
+  const reviewThresholds = normalizeReviewThresholds(options.reviewThresholds)
+  const confusables = Array.isArray(options.confusables)
+    ? options.confusables.filter(c => c && c.isActive !== false && (c.competitorName || c.competitorBrand))
+    : []
+  const confusableNameSet = new Set()
+  confusables.forEach(c => {
+    const n = String(c.competitorName || '').trim().toLowerCase()
+    const b = String(c.competitorBrand || '').trim().toLowerCase()
+    if (n && !ownBrandNameSet.has(n)) confusableNameSet.add(n)
+    if (b && !ownBrandNameSet.has(b)) confusableNameSet.add(b)
+    if (b && n && !n.includes(b)) {
+      const combined = `${b}${n}`
+      const combinedSpaced = `${b} ${n}`
+      if (!ownBrandNameSet.has(combined)) confusableNameSet.add(combined)
+      if (!ownBrandNameSet.has(combinedSpaced)) confusableNameSet.add(combinedSpaced)
+    }
+  })
 
   // 基础数组 / 对象兜底（浅拷贝嵌套对象避免污染调用方入参）
   result.productIdentification = Array.isArray(result.productIdentification) ? result.productIdentification : []
@@ -609,19 +745,79 @@ function validateAndNormalizeReport(rawResult, rawResponse, options = {}) {
     }
   }
 
-  // 标注产品识别中的 isOwn
+  // 标注产品识别中的 isOwn，同时执行易混淆竞品拦截与我方单品置信度检查
   const hasBrandLib = ownBrandNameSet.size > 0
+  let hasLowConfOwnSku = false
+  let hasMidConfOwnSku = false
   result.productIdentification = result.productIdentification.map(p => {
     if (!p || typeof p !== 'object') return p
     const fc = Number(p.facingCount)
     const normalizedFc = Number.isFinite(fc) && fc >= 0 ? Math.round(fc) : 0
-    const isOwn = isOwnBrandProduct(p, ownBrandNameSet)
+    const rawBrand = String(p.brand || '').trim()
+    const rawLine = String(p.productLine || '').trim()
+    const lowerBrand = rawBrand.toLowerCase()
+    const lowerLine = rawLine.toLowerCase()
+    const lowerCombined = `${lowerBrand}${lowerLine}`.trim()
+    const lowerSpaced = `${lowerBrand} ${lowerLine}`.trim()
+
+    let isOwn = p.isOwn !== undefined ? Boolean(p.isOwn) : (hasBrandLib ? isOwnBrandProduct(p, ownBrandNameSet) : undefined)
+
+    // 易混淆竞品硬拦截：若产品品牌或品名命中易混淆竞品库，强制置为 isOwn=false 并标注复核
+    if (
+      isOwn === true &&
+      confusableNameSet.size > 0 &&
+      (
+        (lowerBrand && confusableNameSet.has(lowerBrand)) ||
+        (lowerLine && confusableNameSet.has(lowerLine)) ||
+        (lowerCombined && confusableNameSet.has(lowerCombined)) ||
+        (lowerSpaced && confusableNameSet.has(lowerSpaced))
+      )
+    ) {
+      isOwn = false
+      needsReview = true
+      if (!qualityFlags.includes('confusable_competitor_intercepted')) {
+        qualityFlags.push('confusable_competitor_intercepted')
+      }
+      const displayName = [rawBrand, rawLine].filter(Boolean).join(' ') || '未知产品'
+      const interceptMsg = `产品「${displayName}」命中易混淆竞品库，已自动纠正为竞品(isOwn=false)并建议人工复核`
+      consistencyAdjustments.push(interceptMsg)
+      reviewReasons.push(interceptMsg)
+    }
+
+    const conf = typeof p.confidence === 'number' && Number.isFinite(p.confidence)
+      ? Math.round(Math.max(0, Math.min(1, p.confidence)) * 100) / 100
+      : undefined
+    if (isOwn === true && conf !== undefined) {
+      if (conf < reviewThresholds.lowSkuConfidence) {
+        hasLowConfOwnSku = true
+      } else if (conf < reviewThresholds.midSkuConfidence) {
+        hasMidConfOwnSku = true
+      }
+    }
+
     return {
       ...p,
       facingCount: normalizedFc,
-      isOwn: p.isOwn !== undefined ? Boolean(p.isOwn) : (hasBrandLib ? isOwn : undefined)
+      ...(conf !== undefined ? { confidence: conf } : {}),
+      isOwn
     }
   })
+
+  if (hasLowConfOwnSku) {
+    needsReview = true
+    scoreReliability = 'low'
+    if (!qualityFlags.includes('low_own_sku_confidence')) {
+      qualityFlags.push('low_own_sku_confidence')
+    }
+    reviewReasons.push('部分我方产品识别置信度偏低，可能存在竞品误认或包装模糊，建议人工复核')
+  } else if (hasMidConfOwnSku) {
+    needsReview = true
+    if (scoreReliability === 'high') scoreReliability = 'medium'
+    if (!qualityFlags.includes('mid_own_sku_confidence')) {
+      qualityFlags.push('mid_own_sku_confidence')
+    }
+    reviewReasons.push('部分我方产品识别把握一般（中置信），建议抽空核对')
+  }
 
   // 情况 A：整次拜访无货架照（仅门头照/纯物料照）
   if (!hasShelfPhoto) {
@@ -1376,10 +1572,16 @@ function mergeDailyReports(prevReport, newReport) {
 
 module.exports = {
   DEFAULT_SCORING_RULES,
+  DEFAULT_REVIEW_THRESHOLDS,
+  DEFAULT_SPOT_CHECK_RATE,
   validateScoringRules,
   normalizeScoringRules,
+  normalizeReviewThresholds,
+  computeReviewLevel,
+  computeSpotCheck,
   deriveDimensionStatus,
   deriveScoreLevel,
+  round1,
   clampIntScore,
   snapThreeTierScore,
   computeFacingScore,

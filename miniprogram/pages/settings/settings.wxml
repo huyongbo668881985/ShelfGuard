@@ -41,6 +41,15 @@
       <text class="entry-arrow">›</text>
     </view>
 
+    <!-- AI 定期复盘与规则修正（仅管理员可见） -->
+    <view class="card admin-entry" wx:if="{{canEdit}}" bindtap="goReflection">
+      <view class="entry-left">
+        <text class="entry-title">AI 定期复盘与规则修正</text>
+        <text class="entry-sub">查看误认/漏认统计、审批 AI 改进提案、维护易混淆竞品库{{reviewPendingCount > 0 ? '（当前待复核 ' + reviewPendingCount + ' 条）' : ''}}</text>
+      </view>
+      <text class="entry-arrow">›</text>
+    </view>
+
     <!-- 以下内容只对管理员 / 管理者显示（系统无管理员时，非管理者进来只看到激活卡片） -->
     <block wx:if="{{isManager}}">
 
@@ -112,7 +121,7 @@
       <view class="queue-actions">
         <button class="btn-outline" bindtap="onRetryFailed" disabled="{{!canEdit}}">重排失败/卡住</button>
         <button class="btn-primary" bindtap="onRunNow" disabled="{{!canEdit || running}}">
-          {{running ? '分析中...' : '立即分析一批'}}
+          {{running ? '启动中...' : '立即分析全部'}}
         </button>
       </view>
     </view>

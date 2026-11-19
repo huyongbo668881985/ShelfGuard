@@ -1,7 +1,7 @@
 <!--pages/products/products.wxml-->
 <view class="products-page">
 
-  <!-- 顶部 Tab 切换：白酒产品 vs 广告物料 -->
+  <!-- 顶部 Tab 切换：白酒产品 vs 广告物料 vs 易混淆竞品 -->
   <view class="tab-bar">
     <view
       class="tab-item {{activeTab === 'products' ? 'active' : ''}}"
@@ -17,13 +17,23 @@
     >
       <text>广告物料 ({{materialTotal}})</text>
     </view>
+    <view
+      class="tab-item {{activeTab === 'confusables' ? 'active' : ''}}"
+      data-tab="confusables"
+      bindtap="onSwitchTab"
+    >
+      <text>易混淆竞品 ({{confusableTotal}})</text>
+    </view>
   </view>
 
   <view class="page-hint" wx:if="{{activeTab === 'products'}}">
-    <text>录入的品牌名、别名和参考照会用于 AI 识别货架照片时的比对，越准确，识别结果越可靠。</text>
+    <text>录入的品牌名、别名、区分要点和参考照会用于 AI 识别货架照片时的比对，越准确，识别结果越可靠。</text>
+  </view>
+  <view class="page-hint" wx:elif="{{activeTab === 'materials'}}">
+    <text>录入终端广告物料的标准名称、分类与视觉特征后，AI 会在每次拜访照片中自动识别并按标准名称统计全店覆盖率。</text>
   </view>
   <view class="page-hint" wx:else>
-    <text>录入终端广告物料的标准名称、分类与视觉特征后，AI 会在每次拜访照片中自动识别并按标准名称统计全店覆盖率。</text>
+    <text>记录容易被 AI 误认为我方产品的竞品酒水及区分要点（可由定期 AI 复盘自动沉淀或管理员手动添加），分析时将自动警示并硬拦截。</text>
   </view>
 
   <!-- ==================== 白酒产品列表 ==================== -->
@@ -55,6 +65,10 @@
 
           <view class="card-features" wx:if="{{item.visualFeatures}}">
             <text>{{item.visualFeatures}}</text>
+          </view>
+
+          <view class="card-features" wx:if="{{item.confusionNotes}}" style="color: #b45309;">
+            <text>防误认要点：{{item.confusionNotes}}</text>
           </view>
 
           <view class="card-aliases" wx:if="{{item.aliases.length > 0}}">
@@ -146,6 +160,36 @@
     </view>
   </block>
 
+  <!-- ==================== 易混淆竞品列表 ==================== -->
+  <block wx:if="{{activeTab === 'confusables'}}">
+    <view class="list-container" wx:if="{{confusableList.length > 0}}">
+      <view class="product-card" wx:for="{{confusableList}}" wx:key="_id">
+        <view class="card-body">
+          <view class="card-header">
+            <text class="card-brand">{{item.competitorBrand}} {{item.competitorName}}</text>
+            <text class="category-badge">易混 {{item.hitCount || 1}}次</text>
+          </view>
+          <view class="card-features" wx:if="{{item.lookalikeProductName}}">
+            <text>易被误认为我方：{{item.lookalikeProductName}}</text>
+          </view>
+          <view class="card-features" wx:if="{{item.distinguishingFeatures}}" style="color: #b45309;">
+            <text>区分要点：{{item.distinguishingFeatures}}</text>
+          </view>
+          <view class="card-actions" wx:if="{{isAdmin}}">
+            <text class="action-btn" data-item="{{item}}" bindtap="onEditConfusable">编辑</text>
+            <text class="action-btn danger" data-item="{{item}}" bindtap="onRemoveConfusable">下线</text>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <view class="empty-state" wx:if="{{!confusableLoading && confusableList.length === 0}}">
+      <text class="empty-icon">🛡️</text>
+      <text class="empty-text">暂无易混淆竞品记录</text>
+      <text class="empty-hint">管理员在人工校正时标注「不是我方」或采纳 AI 复盘提案后将自动沉淀至此，也可点击右下角 ＋ 手动添加</text>
+    </view>
+  </block>
+
   <!-- 悬浮新增按钮（仅管理员） -->
   <view class="fab-btn" wx:if="{{isAdmin}}" bindtap="onTapFab">
     <text>＋</text>
@@ -206,6 +250,18 @@
           value="{{form.visualFeatures}}"
           bindinput="onVisualFeaturesInput"
           maxlength="300"
+        ></textarea>
+      </view>
+
+      <view class="form-item">
+        <text class="form-label">防误认区分要点（可选，说明与相似竞品的关键区别）</text>
+        <textarea
+          class="form-textarea"
+          placeholder="如：认准瓶身正中央横排红色「特8」大字；瓶身写「特曲」或蓝色颈标的为竞品，不得判为我方"
+          placeholder-style="color: #999;"
+          value="{{form.confusionNotes}}"
+          bindinput="onConfusionNotesInput"
+          maxlength="200"
         ></textarea>
       </view>
 
@@ -332,6 +388,71 @@
     <view class="editor-footer">
       <button class="btn-primary" bindtap="onSaveMaterial" disabled="{{savingMaterial}}">
         {{savingMaterial ? '保存中...' : '保存物料'}}
+      </button>
+    </view>
+  </view>
+
+  <!-- 易混淆竞品编辑面板 -->
+  <view class="editor-mask" wx:if="{{showConfusableEditor}}" bindtap="closeConfusableEditor"></view>
+  <view class="editor-panel {{showConfusableEditor ? 'show' : ''}}">
+    <view class="editor-header">
+      <text class="editor-title">{{editingConfusableId ? '编辑易混淆竞品' : '新增易混淆竞品'}}</text>
+      <text class="editor-close" bindtap="closeConfusableEditor">✕</text>
+    </view>
+
+    <scroll-view class="editor-content" scroll-y>
+      <view class="form-item">
+        <text class="form-label">竞品名称 *</text>
+        <input
+          class="form-input"
+          style="color: #1a1a2e; background: #fff; height: 80rpx;"
+          placeholder="如：牛栏山陈酿、红星二锅头"
+          placeholder-style="color: #999;"
+          value="{{confusableForm.competitorName}}"
+          bindinput="onConfusableNameInput"
+        />
+      </view>
+
+      <view class="form-item">
+        <text class="form-label">竞品品牌（可选）</text>
+        <input
+          class="form-input"
+          style="color: #1a1a2e; background: #fff; height: 80rpx;"
+          placeholder="如：牛栏山"
+          placeholder-style="color: #999;"
+          value="{{confusableForm.competitorBrand}}"
+          bindinput="onConfusableBrandInput"
+        />
+      </view>
+
+      <view class="form-item">
+        <text class="form-label">易与我方哪个产品混淆（可选）</text>
+        <input
+          class="form-input"
+          style="color: #1a1a2e; background: #fff; height: 80rpx;"
+          placeholder="如：永丰特8"
+          placeholder-style="color: #999;"
+          value="{{confusableForm.lookalikeProductName}}"
+          bindinput="onConfusableLookalikeInput"
+        />
+      </view>
+
+      <view class="form-item">
+        <text class="form-label">视觉区分要点（告诉 AI 如何分辨）</text>
+        <textarea
+          class="form-textarea"
+          placeholder="如：该竞品瓶颈为蓝色颈标、瓶身竖排印有「陈酿」字样；我方特8为红色颈套+横排「特8」大字"
+          placeholder-style="color: #999;"
+          value="{{confusableForm.distinguishingFeatures}}"
+          bindinput="onConfusableFeaturesInput"
+          maxlength="200"
+        ></textarea>
+      </view>
+    </scroll-view>
+
+    <view class="editor-footer">
+      <button class="btn-primary" bindtap="onSaveConfusable" disabled="{{savingConfusable}}">
+        {{savingConfusable ? '保存中...' : '保存易混淆竞品'}}
       </button>
     </view>
   </view>

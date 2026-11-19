@@ -1,0 +1,305 @@
+<!-- pages/review/review.wxml -->
+<view class="container">
+  <view class="loading-box" wx:if="{{loading}}">
+    <text>正在加载复核数据...</text>
+  </view>
+
+  <block wx:if="{{!loading && inspection}}">
+    <!-- 顶部信息与照片轮播 -->
+    <view class="card photo-card">
+      <view class="store-bar">
+        <view class="store-main">
+          <text class="store-name">{{inspection.storeName}}</text>
+          <text class="store-meta">{{inspection.userName || '业务员'}} · 第 {{currentPhotoIndex + 1}}/{{inspection.photoURLs.length || 1}} 张</text>
+        </view>
+        <view class="level-tag level-{{inspection.reviewLevel}}">
+          {{inspection.reviewStatus === 'corrected' ? '已校正' : inspection.reviewStatus === 'confirmed' ? '已确认' : inspection.reviewLevel === 'low' ? '低置信' : inspection.reviewLevel === 'mid' ? '中置信' : '高置信'}}
+        </view>
+      </view>
+
+      <swiper
+        class="photo-swiper"
+        indicator-dots="{{inspection.photoURLs.length > 1}}"
+        current="{{currentPhotoIndex}}"
+        bindchange="onSwiperChange"
+      >
+        <swiper-item wx:for="{{inspection.photoURLs}}" wx:key="*this">
+          <image
+            class="photo-img"
+            src="{{inspection.photoThumbURLs[index] || item}}"
+            mode="aspectFit"
+            data-url="{{item}}"
+            bindtap="previewPhoto"
+          ></image>
+        </swiper-item>
+      </swiper>
+      <text class="photo-tip">点击照片可放大查看瓶身细节</text>
+    </view>
+
+    <!-- 我方产品清单（核心修正区） -->
+    <view class="card section-card">
+      <view class="section-header">
+        <text class="section-title">我方在架产品（共 {{totalOwnFacings}} 面）</text>
+        <text class="add-link" bindtap="onOpenAddOwnModal">＋ 补充漏识别</text>
+      </view>
+
+      <view class="empty-own" wx:if="{{facts.ownProducts.length === 0}}">
+        <text>当前无我方产品（未上柜）。如照片中有我方产品被漏认，请点右上角「＋补充漏识别」。</text>
+      </view>
+
+      <view class="sku-list" wx:else>
+        <view class="sku-item" wx:for="{{facts.ownProducts}}" wx:key="slotKey">
+          <view class="sku-top">
+            <picker
+              mode="selector"
+              range="{{productLabels}}"
+              data-index="{{index}}"
+              bindchange="onChangeOwnProductSku"
+            >
+              <view class="sku-name-picker">
+                <text class="sku-name">{{item.brand}} {{item.productLine}}</text>
+                <text class="picker-arrow">▾换品规</text>
+              </view>
+            </picker>
+            <text
+              class="sku-conf {{item.confidence !== null && item.confidence < 0.6 ? 'conf-low' : item.confidence !== null && item.confidence < 0.8 ? 'conf-mid' : 'conf-high'}}"
+              wx:if="{{item.confidence !== null}}"
+            >置信 {{item.confidence}}</text>
+          </view>
+
+          <view class="sku-controls">
+            <view class="stepper">
+              <view class="step-btn" data-index="{{index}}" data-delta="-1" bindtap="onStepOwnFacing">－</view>
+              <text class="step-val">{{item.facingCount}} 面</text>
+              <view class="step-btn" data-index="{{index}}" data-delta="1" bindtap="onStepOwnFacing">＋</view>
+            </view>
+
+            <picker
+              mode="selector"
+              range="{{positions}}"
+              data-index="{{index}}"
+              bindchange="onChangeOwnPosition"
+            >
+              <view class="pos-pill">{{item.position || '中层'}} ▾</view>
+            </picker>
+
+            <view class="btn-not-own" data-index="{{index}}" bindtap="onOpenFalseOwnModal">
+              不是我方
+            </view>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 竞品折叠区（支持把被误判为竞品的我方酒一键转回我方） -->
+    <view class="card section-card" wx:if="{{facts.competitorProducts.length > 0}}">
+      <view class="section-header" bindtap="toggleCompetitors">
+        <text class="section-title">识别到的竞品（{{facts.competitorProducts.length}} 项）</text>
+        <text class="fold-link">{{showCompetitors ? '收起 ▴' : '展开核对 ▾'}}</text>
+      </view>
+      <view class="comp-list" wx:if="{{showCompetitors}}">
+        <view class="comp-item" wx:for="{{facts.competitorProducts}}" wx:key="slotKey">
+          <text class="comp-name">{{item.brand}} {{item.productLine}}（{{item.facingCount}}面）</text>
+          <text class="btn-is-own" data-index="{{index}}" bindtap="onConvertCompToOwn">其实是我方</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- 5 维陈列细项事实校正（仅在架时显示） -->
+    <view class="card section-card" wx:if="{{totalOwnFacings > 0}}">
+      <view class="section-header">
+        <text class="section-title">陈列细项观测事实</text>
+      </view>
+
+      <view class="dim-row">
+        <view class="dim-label-box">
+          <text class="dim-label">黄金视线位排面</text>
+          <text class="dim-hint">货架中上层（上限 {{totalOwnFacings}} 面）</text>
+        </view>
+        <view class="stepper">
+          <view class="step-btn" data-delta="-1" bindtap="onStepGoldenFacings">－</view>
+          <text class="step-val">{{facts.goldenFacings}} / {{totalOwnFacings}}</text>
+          <view class="step-btn" data-delta="1" bindtap="onStepGoldenFacings">＋</view>
+        </view>
+      </view>
+
+      <view class="dim-row">
+        <view class="dim-label-box">
+          <text class="dim-label">正标完全朝外</text>
+          <text class="dim-hint">无侧摆/背标（上限 {{totalOwnFacings}} 面）</text>
+        </view>
+        <view class="stepper">
+          <view class="step-btn" data-delta="-1" bindtap="onStepFrontLabelFacings">－</view>
+          <text class="step-val">{{facts.frontLabelFacings}} / {{totalOwnFacings}}</text>
+          <view class="step-btn" data-delta="1" bindtap="onStepFrontLabelFacings">＋</view>
+        </view>
+      </view>
+
+      <view class="dim-row">
+        <text class="dim-label">价签规范</text>
+        <view class="tier-group">
+          <view
+            class="tier-pill {{facts.priceTagTier === 'good' ? 'active' : ''}}"
+            data-tier="good"
+            bindtap="onSelectPriceTagTier"
+          >完好可读</view>
+          <view
+            class="tier-pill {{facts.priceTagTier === 'mid' ? 'active' : ''}}"
+            data-tier="mid"
+            bindtap="onSelectPriceTagTier"
+          >遮挡/模糊</view>
+          <view
+            class="tier-pill {{facts.priceTagTier === 'none' ? 'active' : ''}}"
+            data-tier="none"
+            bindtap="onSelectPriceTagTier"
+          >无价签</view>
+        </view>
+      </view>
+
+      <view class="dim-row">
+        <text class="dim-label">我方横签露出</text>
+        <view class="tier-group">
+          <view
+            class="tier-pill {{facts.bannerTier === 'good' ? 'active' : ''}}"
+            data-tier="good"
+            bindtap="onSelectBannerTier"
+          >完好露出</view>
+          <view
+            class="tier-pill {{facts.bannerTier === 'mid' ? 'active' : ''}}"
+            data-tier="mid"
+            bindtap="onSelectBannerTier"
+          >破损/偏离</view>
+          <view
+            class="tier-pill {{facts.bannerTier === 'none' ? 'active' : ''}}"
+            data-tier="none"
+            bindtap="onSelectBannerTier"
+          >无横签</view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 备注与恢复原始 -->
+    <view class="card section-card">
+      <input
+        class="note-input"
+        placeholder="可选备注（如：货架右侧反光严重，供 AI 复盘参考）"
+        value="{{note}}"
+        bindinput="onInputNote"
+      />
+      <view class="restore-row" wx:if="{{inspection.hasOriginalBackup && inspection.reviewStatus === 'corrected'}}">
+        <text class="restore-link" bindtap="onDiscardCorrection">撤销人工校正，恢复 AI 原始结果</text>
+      </view>
+    </view>
+
+    <!-- 实时分数预览卡 -->
+    <view class="card preview-card" wx:if="{{preview}}">
+      <view class="preview-main">
+        <text class="preview-title">校正后分数预览</text>
+        <view class="preview-score-line">
+          <text class="old-score" wx:if="{{originalScore !== null}}">{{originalScore}}分</text>
+          <text class="old-score" wx:else>未上柜</text>
+          <text class="score-arrow">→</text>
+          <text class="new-score" wx:if="{{preview.score !== null}}">{{preview.score}}分（{{preview.scoreLevel}}）</text>
+          <text class="new-score oos" wx:else>{{preview.scoreLevel}}</text>
+        </view>
+      </view>
+      <view class="preview-dims" wx:if="{{preview.score !== null && preview.displayCompliance}}">
+        <text class="pdim">排面 {{preview.displayCompliance.facingCount.score}}</text>
+        <text class="pdim">黄金位 {{preview.displayCompliance.goldenPosition.score}}</text>
+        <text class="pdim">正标 {{preview.displayCompliance.labelOrientation.score}}</text>
+        <text class="pdim">价签 {{preview.displayCompliance.priceTag.score}}</text>
+        <text class="pdim">横签 {{preview.displayCompliance.horizontalBanner.score}}</text>
+      </view>
+    </view>
+
+    <!-- 底部固定操作栏 -->
+    <view class="bottom-bar">
+      <button class="btn-confirm" bindtap="onConfirmAccurate" disabled="{{saving}}">
+        确认无误{{hasNextInQueue ? ' · 下一条' : ''}}
+      </button>
+      <button class="btn-save" bindtap="onSaveCorrection" disabled="{{saving}}">
+        保存并重新生成{{hasNextInQueue ? ' · 下一条' : ''}}
+      </button>
+    </view>
+  </block>
+
+  <!-- 弹窗1：标记「不是我方产品」 -->
+  <view class="modal-mask" wx:if="{{showFalseOwnModal}}" bindtap="onCancelFalseOwnModal"></view>
+  <view class="modal-box" wx:if="{{showFalseOwnModal}}">
+    <view class="modal-title">误认纠正：这不是我方产品</view>
+    <text class="modal-sub">标注原因与真实酒名，AI 定期复盘时将自动总结区分规则：</text>
+    <view class="reason-options">
+      <view
+        class="reason-pill {{falseOwnReason === item.key ? 'active' : ''}}"
+        wx:for="{{falseOwnReasons}}"
+        wx:key="key"
+        data-key="{{item.key}}"
+        bindtap="onSelectFalseOwnReason"
+      >{{item.label}}</view>
+    </view>
+    <input
+      class="modal-input"
+      placeholder="实际是什么酒？（如：牛栏山陈酿、红星二锅头）"
+      value="{{falseOwnActualProduct}}"
+      bindinput="onInputFalseOwnActual"
+    />
+    <view class="chip-row" wx:if="{{confusableNames.length > 0}}">
+      <text
+        class="comp-chip"
+        wx:for="{{confusableNames}}"
+        wx:key="*this"
+        data-name="{{item}}"
+        bindtap="onPickConfusableChip"
+      >{{item}}</text>
+    </view>
+    <view class="modal-actions">
+      <button class="modal-cancel" bindtap="onCancelFalseOwnModal">取消</button>
+      <button class="modal-ok" bindtap="onConfirmFalseOwn">确认移除</button>
+    </view>
+  </view>
+
+  <!-- 弹窗2：补充「漏识别的我方产品」 -->
+  <view class="modal-mask" wx:if="{{showAddOwnModal}}" bindtap="onCancelAddOwnModal"></view>
+  <view class="modal-box" wx:if="{{showAddOwnModal}}">
+    <view class="modal-title">补充漏识别的我方产品</view>
+
+    <view class="form-row">
+      <text class="form-label">选择我方品规</text>
+      <picker mode="selector" range="{{productLabels}}" value="{{addOwnProductIndex}}" bindchange="onPickAddOwnProduct">
+        <view class="form-picker">{{productLabels[addOwnProductIndex] || '请选择'}} ▾</view>
+      </picker>
+    </view>
+
+    <view class="form-row">
+      <text class="form-label">正面可见排面数</text>
+      <view class="stepper">
+        <view class="step-btn" data-delta="-1" bindtap="onStepAddOwnFacings">－</view>
+        <text class="step-val">{{addOwnFacings}} 面</text>
+        <view class="step-btn" data-delta="1" bindtap="onStepAddOwnFacings">＋</view>
+      </view>
+    </view>
+
+    <view class="form-row">
+      <text class="form-label">所在货架位置</text>
+      <picker mode="selector" range="{{positions}}" bindchange="onPickAddOwnPosition">
+        <view class="form-picker">{{addOwnPosition}} ▾</view>
+      </picker>
+    </view>
+
+    <text class="modal-sub">为什么 AI 没识别到？（供复盘改进）</text>
+    <view class="reason-options">
+      <view
+        class="reason-pill {{addOwnReason === item.key ? 'active' : ''}}"
+        wx:for="{{missedOwnReasons}}"
+        wx:key="key"
+        data-key="{{item.key}}"
+        bindtap="onSelectAddOwnReason"
+      >{{item.label}}</view>
+    </view>
+
+    <view class="modal-actions">
+      <button class="modal-cancel" bindtap="onCancelAddOwnModal">取消</button>
+      <button class="modal-ok" bindtap="onConfirmAddOwn">确认添加</button>
+    </view>
+  </view>
+</view>

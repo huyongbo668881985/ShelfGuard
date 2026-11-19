@@ -13,7 +13,9 @@ const NAMES = [
   'analyzeImage',
   'batchAnalyze',
   'shelfStats',
-  'syncJxcCustomers'
+  'syncJxcCustomers',
+  'reviewReport',
+  'reflection'
 ]
 
 const handlers = {}

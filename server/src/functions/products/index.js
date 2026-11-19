@@ -15,8 +15,25 @@ const ADMIN_ROLES = ['admin']
 const DEFAULT_PAGE_SIZE = 50
 const MAX_PAGE_SIZE = 100
 
-const EDITABLE_FIELDS = ['brandName', 'productLine', 'aliases', 'visualFeatures', 'photos', 'isActive']
+const EDITABLE_FIELDS = ['brandName', 'productLine', 'aliases', 'visualFeatures', 'confusionNotes', 'refPriority', 'photos', 'isActive']
 const MATERIAL_EDITABLE_FIELDS = ['materialName', 'category', 'aliases', 'visualFeatures', 'photo', 'isActive']
+const CONFUSABLE_EDITABLE_FIELDS = ['competitorName', 'competitorBrand', 'lookalikeProductId', 'lookalikeProductName', 'distinguishingFeatures', 'photo', 'hitCount', 'isActive']
+
+async function bumpKnowledgeVersion() {
+  try {
+    const sRes = await db.collection('settings').doc('global').get()
+    const cur = (sRes && sRes.data && Number(sRes.data.knowledgeVersion)) || 1
+    await db.collection('settings').doc('global').update({
+      data: { knowledgeVersion: cur + 1, updatedAt: db.serverDate() }
+    })
+  } catch (e) {
+    try {
+      await db.collection('settings').doc('global').set({
+        data: { knowledgeVersion: 2, updatedAt: db.serverDate() }
+      })
+    } catch (_) {}
+  }
+}
 const MATERIAL_CATEGORIES = [
   '灯箱',
   '横签',
@@ -233,12 +250,15 @@ exports.main = async (event, context) => {
             productLine: product.productLine || '',
             aliases: Array.isArray(product.aliases) ? product.aliases : [],
             visualFeatures: String(product.visualFeatures || '').trim(),
+            confusionNotes: String(product.confusionNotes || '').trim(),
+            refPriority: Number.isFinite(Number(product.refPriority)) ? Math.round(Number(product.refPriority)) : 0,
             photos,
             isActive: true,
             createdAt: db.serverDate(),
             updatedAt: db.serverDate()
           }
         })
+        await bumpKnowledgeVersion()
         return { success: true, _id: addRes._id }
       }
 
@@ -256,6 +276,14 @@ exports.main = async (event, context) => {
         }
         if (updateData.visualFeatures !== undefined) {
           updateData.visualFeatures = String(updateData.visualFeatures || '').trim()
+        }
+        if (updateData.confusionNotes !== undefined) {
+          updateData.confusionNotes = String(updateData.confusionNotes || '').trim()
+        }
+        if (updateData.refPriority !== undefined) {
+          updateData.refPriority = Number.isFinite(Number(updateData.refPriority))
+            ? Math.round(Number(updateData.refPriority))
+            : 0
         }
         let oldPhotos = {}
         try {
@@ -281,6 +309,7 @@ exports.main = async (event, context) => {
         } else {
           await db.collection('products').doc(productId).update({ data: updateData })
         }
+        await bumpKnowledgeVersion()
         return { success: true }
       }
 
@@ -295,6 +324,7 @@ exports.main = async (event, context) => {
         await db.collection('products').doc(productId).update({
           data: { isActive: false, updatedAt: db.serverDate() }
         })
+        await bumpKnowledgeVersion()
         return { success: true }
       }
 
@@ -367,6 +397,7 @@ exports.main = async (event, context) => {
             updatedAt: db.serverDate()
           }
         })
+        await bumpKnowledgeVersion()
         return { success: true, _id: addRes._id }
       }
 
@@ -416,6 +447,7 @@ exports.main = async (event, context) => {
         if (picked.photo !== undefined && oldPhoto && isCloudFileId(oldPhoto) && picked.photo !== oldPhoto) {
           await deleteCloudFiles([oldPhoto])
         }
+        await bumpKnowledgeVersion()
         return { success: true }
       }
 
@@ -430,6 +462,140 @@ exports.main = async (event, context) => {
         await db.collection('adMaterials').doc(materialId).update({
           data: { isActive: false, updatedAt: db.serverDate() }
         })
+        await bumpKnowledgeVersion()
+        return { success: true }
+      }
+
+      // 获取易混淆竞品列表
+      case 'listConfusables': {
+        const includeInactive = !!(event && event.includeInactive)
+        const query = includeInactive ? {} : { isActive: true }
+        const { limit, page, skip } = parsePaging(event)
+
+        const countRes = await db.collection('confusableProducts').where(query).count()
+        const total = countRes.total || 0
+
+        const res = await db.collection('confusableProducts')
+          .where(query)
+          .orderBy('createdAt', 'desc')
+          .skip(skip)
+          .limit(limit)
+          .get()
+
+        const urlMap = await buildMaterialPhotoUrlMap(res.data || [])
+        const list = (res.data || []).map(c => ({
+          ...c,
+          photoURL: (c.photo && urlMap[c.photo]) || ''
+        }))
+
+        return {
+          success: true,
+          list,
+          total,
+          page,
+          limit,
+          skip,
+          hasMore: skip + list.length < total
+        }
+      }
+
+      // 新增易混淆竞品
+      case 'addConfusable': {
+        if (!(await isAdmin(openid))) {
+          return { success: false, error: '只有管理员可以维护易混淆竞品库' }
+        }
+        const raw = (event && event.confusable) || {}
+        const competitorName = String(raw.competitorName || '').trim()
+        if (!competitorName) {
+          return { success: false, error: '缺少竞品名称' }
+        }
+        let photo = ''
+        try {
+          photo = sanitizeMaterialPhoto(raw.photo)
+        } catch (photoErr) {
+          return { success: false, error: photoErr.message }
+        }
+        const addRes = await db.collection('confusableProducts').add({
+          data: {
+            _openid: openid,
+            competitorName,
+            competitorBrand: String(raw.competitorBrand || '').trim(),
+            lookalikeProductId: String(raw.lookalikeProductId || '').trim(),
+            lookalikeProductName: String(raw.lookalikeProductName || '').trim(),
+            distinguishingFeatures: String(raw.distinguishingFeatures || '').trim(),
+            photo,
+            hitCount: Number.isFinite(Number(raw.hitCount)) ? Math.max(1, Math.round(Number(raw.hitCount))) : 1,
+            source: String(raw.source || 'manual').trim(),
+            isActive: true,
+            createdAt: db.serverDate(),
+            updatedAt: db.serverDate()
+          }
+        })
+        await bumpKnowledgeVersion()
+        return { success: true, _id: addRes._id }
+      }
+
+      // 更新易混淆竞品
+      case 'updateConfusable': {
+        if (!(await isAdmin(openid))) {
+          return { success: false, error: '只有管理员可以维护易混淆竞品库' }
+        }
+        const confusableId = event && event.confusableId
+        if (!confusableId) {
+          return { success: false, error: '缺少 confusableId' }
+        }
+        const raw = (event && event.confusable) || {}
+        const picked = {}
+        CONFUSABLE_EDITABLE_FIELDS.forEach(k => {
+          if (raw[k] !== undefined) picked[k] = raw[k]
+        })
+        if (picked.competitorName !== undefined) {
+          picked.competitorName = String(picked.competitorName || '').trim()
+          if (!picked.competitorName) {
+            return { success: false, error: '竞品名称不能为空' }
+          }
+        }
+        if (picked.competitorBrand !== undefined) picked.competitorBrand = String(picked.competitorBrand || '').trim()
+        if (picked.lookalikeProductId !== undefined) picked.lookalikeProductId = String(picked.lookalikeProductId || '').trim()
+        if (picked.lookalikeProductName !== undefined) picked.lookalikeProductName = String(picked.lookalikeProductName || '').trim()
+        if (picked.distinguishingFeatures !== undefined) picked.distinguishingFeatures = String(picked.distinguishingFeatures || '').trim()
+        if (picked.hitCount !== undefined) {
+          picked.hitCount = Number.isFinite(Number(picked.hitCount)) ? Math.max(0, Math.round(Number(picked.hitCount))) : 0
+        }
+        let oldPhoto = ''
+        try {
+          const prev = await db.collection('confusableProducts').doc(confusableId).get()
+          oldPhoto = (prev.data && prev.data.photo) || ''
+        } catch (_) {}
+        if (picked.photo !== undefined) {
+          try {
+            picked.photo = sanitizeMaterialPhoto(picked.photo)
+          } catch (photoErr) {
+            return { success: false, error: photoErr.message }
+          }
+        }
+        picked.updatedAt = db.serverDate()
+        await db.collection('confusableProducts').doc(confusableId).update({ data: picked })
+        if (picked.photo !== undefined && oldPhoto && isCloudFileId(oldPhoto) && picked.photo !== oldPhoto) {
+          await deleteCloudFiles([oldPhoto])
+        }
+        await bumpKnowledgeVersion()
+        return { success: true }
+      }
+
+      // 下架易混淆竞品（软删除）
+      case 'removeConfusable': {
+        if (!(await isAdmin(openid))) {
+          return { success: false, error: '只有管理员可以维护易混淆竞品库' }
+        }
+        const confusableId = event && event.confusableId
+        if (!confusableId) {
+          return { success: false, error: '缺少 confusableId' }
+        }
+        await db.collection('confusableProducts').doc(confusableId).update({
+          data: { isActive: false, updatedAt: db.serverDate() }
+        })
+        await bumpKnowledgeVersion()
         return { success: true }
       }
 

@@ -254,6 +254,49 @@
   color: #d32f2f;
 }
 
+.item-review-badge {
+  flex-shrink: 0;
+  font-size: 20rpx;
+  line-height: 1;
+  padding: 8rpx 12rpx;
+  border-radius: 16rpx;
+  font-weight: 600;
+}
+
+.rbadge-low {
+  background: #fdecea;
+  color: #c62828;
+}
+
+.rbadge-mid {
+  background: #fff3e0;
+  color: #ef6c00;
+}
+
+.rbadge-spot {
+  background: #e8eaf6;
+  color: #3949ab;
+}
+
+.rbadge-corrected {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.rbadge-confirmed {
+  background: #f1f3f4;
+  color: #5f6368;
+}
+
+.filter-unreviewed-toggle {
+  margin-top: 16rpx;
+  padding: 14rpx 20rpx;
+  border-radius: 12rpx;
+  background: #f4f6f9;
+  color: #1c3d5a;
+  font-size: 24rpx;
+}
+
 .item-summary {
   font-size: 26rpx;
   color: #666;

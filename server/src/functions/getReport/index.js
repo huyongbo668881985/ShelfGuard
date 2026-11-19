@@ -14,6 +14,7 @@
 // - 其他情况拒绝，不信任任何客户端传来的角色声明。
 
 const cloud = require('../../cloud-shim')
+const { computeReviewLevel, computeSpotCheck } = require('../analyzeImage/scoring')
 
 cloud.init({
   env: cloud.DYNAMIC_CURRENT_ENV
@@ -62,13 +63,14 @@ exports.main = async (event, context) => {
   }
 
   // 归属校验：本人可直接读；admin 可读全员；manager 不可读 admin；其余拒绝
+  const callerRole = (caller && MANAGER_ROLES.includes(caller.role)) ? caller.role : 'sales'
+  const isAdmin = callerRole === 'admin'
   if (doc._openid !== openid) {
-    const role = (caller && MANAGER_ROLES.includes(caller.role)) ? caller.role : 'sales'
-    if (!MANAGER_ROLES.includes(role)) {
+    if (!MANAGER_ROLES.includes(callerRole)) {
       console.warn(`拒绝越权读取: caller=${openid} 试图读取 inspection=${inspectionId}（属于 ${doc._openid}）`)
       return { success: false, error: '无权访问该拜访记录' }
     }
-    if (role === 'manager' && doc._openid) {
+    if (callerRole === 'manager' && doc._openid) {
       const owner = await getCaller(doc._openid)
       if (owner && owner.role === 'admin') {
         console.warn(`拒绝越权读取: manager=${openid} 试图读取 admin(${doc._openid}) 的 inspection=${inspectionId}`)
@@ -76,6 +78,47 @@ exports.main = async (event, context) => {
       }
     }
   }
+
+  if (doc.aiReport && typeof doc.aiReport === 'object') {
+    const resolvedLevel = doc.reviewLevel || computeReviewLevel(doc.aiReport)
+    const resolvedSpot = typeof doc.spotCheck === 'boolean'
+      ? doc.spotCheck
+      : computeSpotCheck(doc._id, undefined, resolvedLevel)
+    if (isAdmin) {
+      doc.reviewLevel = resolvedLevel
+      doc.spotCheck = resolvedSpot
+      doc.reviewStatus = doc.reviewStatus || 'unreviewed'
+      doc.reviewRevision = doc.reviewRevision || 0
+    } else {
+      delete doc.reviewLevel
+      delete doc.spotCheck
+      delete doc.reviewStatus
+      delete doc.reviewRevision
+      delete doc.reviewedAt
+      delete doc.reviewedBy
+      delete doc.reviewedByName
+      delete doc.narrativeStatus
+      delete doc.aiReportOriginal
+      if (doc.aiReport.metadata && typeof doc.aiReport.metadata === 'object') {
+        delete doc.aiReport.metadata.corrected
+        delete doc.aiReport.metadata.correctedRevision
+        if (Array.isArray(doc.aiReport.metadata.reviewReasons)) {
+          doc.aiReport.metadata.reviewReasons = doc.aiReport.metadata.reviewReasons.filter(r => r !== '已人工校正')
+        }
+      }
+    }
+  } else if (!isAdmin) {
+    delete doc.reviewLevel
+    delete doc.spotCheck
+    delete doc.reviewStatus
+    delete doc.reviewRevision
+    delete doc.reviewedAt
+    delete doc.reviewedBy
+    delete doc.reviewedByName
+    delete doc.narrativeStatus
+    delete doc.aiReportOriginal
+  }
+  doc.isAdminViewer = isAdmin
 
   // 照片临时链接：服务端统一取（云函数具备管理员权限，不受存储安全规则限制）。
   // photoURLs 保持高清原图（供放大预览/发微信/存相册）；photoThumbURLs 为轻量预览图（供详情页网格秒开）。

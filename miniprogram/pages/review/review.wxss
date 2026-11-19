@@ -1,0 +1,539 @@
+/* pages/review/review.wxss */
+.container {
+  padding: 20rpx 24rpx 180rpx;
+  background: #f4f6f9;
+  min-height: 100vh;
+}
+
+.loading-box {
+  padding: 120rpx 30rpx;
+  text-align: center;
+  color: #666;
+  font-size: 28rpx;
+}
+
+.card {
+  background: #ffffff;
+  border-radius: 16rpx;
+  padding: 24rpx;
+  margin-bottom: 20rpx;
+  box-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.04);
+}
+
+.store-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16rpx;
+}
+
+.store-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4rpx;
+}
+
+.store-name {
+  font-size: 32rpx;
+  font-weight: 700;
+  color: #1c3d5a;
+}
+
+.store-meta {
+  font-size: 24rpx;
+  color: #888;
+}
+
+.level-tag {
+  font-size: 22rpx;
+  padding: 6rpx 16rpx;
+  border-radius: 20rpx;
+  font-weight: 600;
+}
+
+.level-low {
+  background: #fdecea;
+  color: #c62828;
+}
+
+.level-mid {
+  background: #fff3e0;
+  color: #ef6c00;
+}
+
+.level-high {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.photo-swiper {
+  width: 100%;
+  height: 440rpx;
+  background: #111;
+  border-radius: 12rpx;
+  overflow: hidden;
+}
+
+.photo-img {
+  width: 100%;
+  height: 100%;
+}
+
+.photo-tip {
+  display: block;
+  text-align: center;
+  font-size: 22rpx;
+  color: #888;
+  margin-top: 10rpx;
+}
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16rpx;
+}
+
+.section-title {
+  font-size: 28rpx;
+  font-weight: 700;
+  color: #222;
+}
+
+.add-link {
+  font-size: 26rpx;
+  color: #1565c0;
+  font-weight: 600;
+}
+
+.fold-link {
+  font-size: 24rpx;
+  color: #666;
+}
+
+.empty-own {
+  padding: 24rpx;
+  background: #fff8e1;
+  border-radius: 12rpx;
+  color: #8d6e63;
+  font-size: 25rpx;
+  line-height: 1.5;
+}
+
+.sku-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16rpx;
+}
+
+.sku-item {
+  border: 1rpx solid #e2e8f0;
+  border-radius: 14rpx;
+  padding: 18rpx 20rpx;
+  background: #fafbfc;
+}
+
+.sku-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14rpx;
+}
+
+.sku-name-picker {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+}
+
+.sku-name {
+  font-size: 28rpx;
+  font-weight: 700;
+  color: #1c3d5a;
+}
+
+.picker-arrow {
+  font-size: 22rpx;
+  color: #1565c0;
+  background: #e8f0fe;
+  padding: 4rpx 12rpx;
+  border-radius: 10rpx;
+}
+
+.sku-conf {
+  font-size: 22rpx;
+  padding: 4rpx 12rpx;
+  border-radius: 12rpx;
+}
+
+.conf-low {
+  background: #fdecea;
+  color: #c62828;
+}
+
+.conf-mid {
+  background: #fff3e0;
+  color: #ef6c00;
+}
+
+.conf-high {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.sku-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14rpx;
+}
+
+.stepper {
+  display: flex;
+  align-items: center;
+  background: #fff;
+  border: 1rpx solid #cbd5e1;
+  border-radius: 12rpx;
+  overflow: hidden;
+}
+
+.step-btn {
+  width: 58rpx;
+  height: 54rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 30rpx;
+  font-weight: 700;
+  color: #1c3d5a;
+  background: #f1f5f9;
+}
+
+.step-val {
+  min-width: 96rpx;
+  text-align: center;
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #222;
+  padding: 0 10rpx;
+}
+
+.pos-pill {
+  font-size: 24rpx;
+  padding: 10rpx 18rpx;
+  background: #eef2f6;
+  color: #334155;
+  border-radius: 12rpx;
+}
+
+.btn-not-own {
+  font-size: 24rpx;
+  padding: 10rpx 18rpx;
+  background: #fdecea;
+  color: #c62828;
+  border-radius: 12rpx;
+  font-weight: 600;
+}
+
+.comp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12rpx;
+}
+
+.comp-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14rpx 16rpx;
+  background: #f8fafc;
+  border-radius: 10rpx;
+}
+
+.comp-name {
+  font-size: 26rpx;
+  color: #475569;
+}
+
+.btn-is-own {
+  font-size: 24rpx;
+  color: #1565c0;
+  background: #e8f0fe;
+  padding: 8rpx 16rpx;
+  border-radius: 10rpx;
+  font-weight: 600;
+}
+
+.dim-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16rpx 0;
+  border-bottom: 1rpx solid #f1f5f9;
+}
+
+.dim-row:last-child {
+  border-bottom: none;
+}
+
+.dim-label-box {
+  display: flex;
+  flex-direction: column;
+  gap: 4rpx;
+}
+
+.dim-label {
+  font-size: 26rpx;
+  color: #333;
+  font-weight: 600;
+}
+
+.dim-hint {
+  font-size: 22rpx;
+  color: #999;
+}
+
+.tier-group {
+  display: flex;
+  gap: 10rpx;
+}
+
+.tier-pill {
+  font-size: 24rpx;
+  padding: 10rpx 18rpx;
+  border-radius: 12rpx;
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.tier-pill.active {
+  background: #1c3d5a;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.note-input {
+  width: 100%;
+  font-size: 26rpx;
+  padding: 14rpx 16rpx;
+  background: #f8fafc;
+  border-radius: 10rpx;
+  box-sizing: border-box;
+}
+
+.restore-row {
+  margin-top: 16rpx;
+  text-align: right;
+}
+
+.restore-link {
+  font-size: 24rpx;
+  color: #c62828;
+  text-decoration: underline;
+}
+
+.preview-card {
+  background: #1c3d5a;
+  color: #ffffff;
+}
+
+.preview-main {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12rpx;
+}
+
+.preview-title {
+  font-size: 26rpx;
+  color: #cbd5e1;
+}
+
+.preview-score-line {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.old-score {
+  font-size: 26rpx;
+  color: #94a3b8;
+  text-decoration: line-through;
+}
+
+.score-arrow {
+  color: #94a3b8;
+}
+
+.new-score {
+  font-size: 34rpx;
+  font-weight: 700;
+  color: #4ade80;
+}
+
+.new-score.oos {
+  color: #fbbf24;
+}
+
+.preview-dims {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12rpx;
+}
+
+.pdim {
+  font-size: 22rpx;
+  padding: 4rpx 12rpx;
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 8rpx;
+}
+
+.bottom-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #ffffff;
+  padding: 18rpx 24rpx calc(18rpx + env(safe-area-inset-bottom));
+  display: flex;
+  gap: 18rpx;
+  box-shadow: 0 -4rpx 16rpx rgba(0, 0, 0, 0.06);
+  z-index: 20;
+}
+
+.btn-confirm {
+  flex: 1;
+  background: #f1f5f9;
+  color: #1c3d5a;
+  font-size: 28rpx;
+  font-weight: 600;
+  border-radius: 14rpx;
+}
+
+.btn-save {
+  flex: 1.4;
+  background: #1c3d5a;
+  color: #ffffff;
+  font-size: 28rpx;
+  font-weight: 600;
+  border-radius: 14rpx;
+}
+
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 100;
+}
+
+.modal-box {
+  position: fixed;
+  left: 36rpx;
+  right: 36rpx;
+  top: 18%;
+  background: #ffffff;
+  border-radius: 20rpx;
+  padding: 32rpx;
+  z-index: 101;
+}
+
+.modal-title {
+  font-size: 30rpx;
+  font-weight: 700;
+  color: #1c3d5a;
+  margin-bottom: 12rpx;
+}
+
+.modal-sub {
+  display: block;
+  font-size: 24rpx;
+  color: #666;
+  margin: 12rpx 0;
+}
+
+.reason-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12rpx;
+  margin-bottom: 18rpx;
+}
+
+.reason-pill {
+  font-size: 24rpx;
+  padding: 10rpx 18rpx;
+  border-radius: 12rpx;
+  background: #f1f5f9;
+  color: #334155;
+}
+
+.reason-pill.active {
+  background: #1c3d5a;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.modal-input {
+  width: 100%;
+  padding: 16rpx 20rpx;
+  background: #f8fafc;
+  border: 1rpx solid #cbd5e1;
+  border-radius: 12rpx;
+  font-size: 26rpx;
+  box-sizing: border-box;
+  margin-bottom: 14rpx;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10rpx;
+  margin-bottom: 20rpx;
+}
+
+.comp-chip {
+  font-size: 22rpx;
+  padding: 6rpx 14rpx;
+  background: #e8f0fe;
+  color: #1565c0;
+  border-radius: 20rpx;
+}
+
+.form-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14rpx 0;
+}
+
+.form-label {
+  font-size: 26rpx;
+  color: #333;
+}
+
+.form-picker {
+  font-size: 26rpx;
+  color: #1565c0;
+  background: #f1f5f9;
+  padding: 10rpx 18rpx;
+  border-radius: 10rpx;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 16rpx;
+  margin-top: 20rpx;
+}
+
+.modal-cancel {
+  flex: 1;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 28rpx;
+}
+
+.modal-ok {
+  flex: 1;
+  background: #1c3d5a;
+  color: #ffffff;
+  font-size: 28rpx;
+}

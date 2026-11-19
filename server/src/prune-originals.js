@@ -4,6 +4,7 @@ const defaultDb = require('./docdb')
 const defaultFiles = require('./files')
 
 const ANALYZED_RETENTION_MS = 72 * 60 * 60 * 1000
+const UNREVIEWED_LOW_MID_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 const FAILED_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000
 const DEFAULT_BATCH_LIMIT = 300
@@ -51,6 +52,9 @@ function classifyEligibility(doc, nowMs = Date.now()) {
   if (doc.originPrunedAt) {
     return { eligible: false, reason: 'already_pruned' }
   }
+  if (doc.keepOriginal === true || doc.reviewStatus === 'corrected' || doc.reviewStatus === 'confirmed') {
+    return { eligible: false, reason: 'reviewed_keep_original' }
+  }
 
   // 待分析 / 分析中 / 历史 uploaded 状态绝不清理原图，确保 AI 分析与重试有原图可用
   if (doc.status === 'pending' || doc.status === 'analyzing' || doc.status === 'uploaded') {
@@ -69,13 +73,20 @@ function classifyEligibility(doc, nowMs = Date.now()) {
     return { eligible: false, reason: 'clock_same_day' }
   }
 
-  // 已分析成功的拜访：analyzedAt（历史缺省回退 createdAt）超过 72 小时
+  // 已分析成功的拜访：
+  // - 未复核的低/中置信记录保留 7 天（给管理员留出复核与校正时间）
+  // - 其他已分析记录超过 72 小时清理原图
   if (doc.status === 'analyzed') {
     const refMs = toTimestampMs(doc.analyzedAt) ?? toTimestampMs(doc.createdAt)
     if (refMs === null) {
       return { eligible: false, reason: 'missing_timestamp' }
     }
-    if (nowMs - refMs >= ANALYZED_RETENTION_MS) {
+    const isUnreviewedLowMid =
+      (doc.reviewLevel === 'low' || doc.reviewLevel === 'mid') &&
+      doc.reviewStatus !== 'confirmed' &&
+      doc.reviewStatus !== 'corrected'
+    const retentionMs = isUnreviewedLowMid ? UNREVIEWED_LOW_MID_RETENTION_MS : ANALYZED_RETENTION_MS
+    if (nowMs - refMs >= retentionMs) {
       return { eligible: true, category: 'analyzed' }
     }
     return { eligible: false, reason: 'within_retention' }
@@ -283,6 +294,7 @@ module.exports = {
   startOfShanghaiDayMs,
   isClockRecord,
   ANALYZED_RETENTION_MS,
+  UNREVIEWED_LOW_MID_RETENTION_MS,
   FAILED_RETENTION_MS,
   DEFAULT_BATCH_LIMIT,
   DEFAULT_CONCURRENCY

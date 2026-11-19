@@ -36,8 +36,11 @@ Page({
     // 管理者视角：isManager 为 true 时才会显示"按业务员筛选"，
     // 普通业务员看不到这个入口，且服务端也会强制忽略该参数只返回本人数据
     isManager: false,
+    isAdmin: false,
     filterUserName: '',   // 管理者选择/填写，为空表示"看全部业务员"
     salesUsers: [],       // 在册业务员姓名列表（胶囊选择器数据源）
+    filterReview: '',     // 管理员 AI 复核筛选：'' | 'low' | 'mid' | 'spot' | 'corrected' | 'confirmed'
+    onlyUnreviewed: true, // 筛选低/中置信或抽检时，默认只看未复核记录
     
     // 统计信息
     stats: {
@@ -77,8 +80,9 @@ Page({
   syncManagerFlag() {
     const role = app.globalData.userInfo && app.globalData.userInfo.role
     const isManager = role === 'admin' || role === 'manager'
-    if (isManager !== this.data.isManager) {
-      this.setData({ isManager })
+    const isAdmin = role === 'admin'
+    if (isManager !== this.data.isManager || isAdmin !== this.data.isAdmin) {
+      this.setData({ isManager, isAdmin })
       return true
     }
     return false
@@ -147,6 +151,9 @@ Page({
         if (result.isManager != null && result.isManager !== this.data.isManager) {
           nextData.isManager = result.isManager
         }
+        if (result.isAdmin != null && result.isAdmin !== this.data.isAdmin) {
+          nextData.isAdmin = result.isAdmin
+        }
         if (Array.isArray(result.salesUsers) && result.salesUsers.length > 0) {
           nextData.salesUsers = result.salesUsers
         }
@@ -203,6 +210,24 @@ Page({
       conditions.keyword = this.data.searchKeyword
     }
 
+    // 管理员 AI 复核筛选
+    if (this.data.isAdmin && this.data.filterReview) {
+      const rv = this.data.filterReview
+      if (rv === 'low' || rv === 'mid') {
+        conditions.reviewLevel = rv
+        if (this.data.onlyUnreviewed) {
+          conditions.reviewStatus = 'unreviewed'
+        }
+      } else if (rv === 'spot') {
+        conditions.spotCheck = true
+        if (this.data.onlyUnreviewed) {
+          conditions.reviewStatus = 'unreviewed'
+        }
+      } else if (rv === 'corrected' || rv === 'confirmed') {
+        conditions.reviewStatus = rv
+      }
+    }
+
     return conditions
   },
 
@@ -250,6 +275,28 @@ Page({
       clocked: '已打卡'
     }
     item.statusText = STATUS_TEXT[item.status] || ''
+
+    // 管理员复核角标
+    item.reviewBadgeText = ''
+    item.reviewBadgeType = ''
+    if (this.data.isAdmin && item.status === 'analyzed') {
+      if (item.reviewStatus === 'corrected') {
+        item.reviewBadgeText = '已校正✓'
+        item.reviewBadgeType = 'corrected'
+      } else if (item.reviewStatus === 'confirmed') {
+        item.reviewBadgeText = '已确认'
+        item.reviewBadgeType = 'confirmed'
+      } else if (item.reviewLevel === 'low') {
+        item.reviewBadgeText = '低置信'
+        item.reviewBadgeType = 'low'
+      } else if (item.reviewLevel === 'mid') {
+        item.reviewBadgeText = '中置信'
+        item.reviewBadgeType = 'mid'
+      } else if (item.spotCheck) {
+        item.reviewBadgeText = '抽检'
+        item.reviewBadgeType = 'spot'
+      }
+    }
 
     return item
   },
@@ -340,9 +387,38 @@ Page({
   // 点击记录
   onTapItem(e) {
     const id = e.currentTarget.dataset.id
+    if (this.data.isAdmin && Array.isArray(this.data.list)) {
+      app.globalData.reviewQueue = this.data.list
+        .filter(it => it && it.status === 'analyzed' && it._id)
+        .map(it => it._id)
+    }
+    if (this.data.isAdmin && this.data.filterReview) {
+      wx.navigateTo({
+        url: `/pages/review/review?id=${id}`
+      })
+      return
+    }
     wx.navigateTo({
       url: `/pages/report/report?id=${id}`
     })
+  },
+
+  // 管理员：选择 AI 复核筛选
+  onSelectReviewFilter(e) {
+    const value = e.currentTarget.dataset.value || ''
+    const next = this.data.filterReview === value ? '' : value
+    this.setData({
+      filterReview: next,
+      showFilter: false
+    })
+    this.refreshList()
+  },
+
+  onToggleOnlyUnreviewed() {
+    this.setData({
+      onlyUnreviewed: !this.data.onlyUnreviewed
+    })
+    this.refreshList()
   },
 
   // 搜索输入
@@ -423,9 +499,15 @@ Page({
       filterDate: '',
       filterScore: '',
       filterUserName: '',
+      filterReview: '',
+      onlyUnreviewed: true,
       showFilter: false
     })
     this.refreshList()
+  },
+
+  goReflection() {
+    wx.navigateTo({ url: '/pages/reflection/reflection' })
   },
 
   // 「管理」入口：只有管理员 / 管理者能看到（页面里还会再按服务端角色拦一次）

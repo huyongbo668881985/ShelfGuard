@@ -11,7 +11,9 @@
     "pages/products/products",
     "pages/customers/customers",
     "pages/settings/settings",
-    "pages/admin/admin"
+    "pages/admin/admin",
+    "pages/review/review",
+    "pages/reflection/reflection"
   ],
   "window": {
     "backgroundColor": "#F4F6F9",

@@ -100,9 +100,44 @@
     </view>
     <view class="filter-btn" bindtap="onShowFilter">
       <text>筛选</text>
-      <text class="filter-badge" wx:if="{{filterDate || filterScore || filterUserName}}">•</text>
+      <text class="filter-badge" wx:if="{{filterDate || filterScore || filterUserName || filterReview}}">•</text>
     </view>
   </view>
+
+  <!-- 管理员：AI 复核快捷胶囊条 -->
+  <scroll-view class="user-pills-scroll" scroll-x="true" enable-flex="true" wx:if="{{isAdmin}}">
+    <view class="user-pills-row">
+      <view
+        class="user-pill {{filterReview === 'low' ? 'active' : ''}}"
+        data-value="low"
+        bindtap="onSelectReviewFilter"
+      >⚠️ 低置信</view>
+      <view
+        class="user-pill {{filterReview === 'mid' ? 'active' : ''}}"
+        data-value="mid"
+        bindtap="onSelectReviewFilter"
+      >🔎 中置信</view>
+      <view
+        class="user-pill {{filterReview === 'spot' ? 'active' : ''}}"
+        data-value="spot"
+        bindtap="onSelectReviewFilter"
+      >🎯 抽检</view>
+      <view
+        class="user-pill {{filterReview === 'corrected' ? 'active' : ''}}"
+        data-value="corrected"
+        bindtap="onSelectReviewFilter"
+      >✏️ 已校正</view>
+      <view
+        class="user-pill {{filterReview === 'confirmed' ? 'active' : ''}}"
+        data-value="confirmed"
+        bindtap="onSelectReviewFilter"
+      >✓ 已确认</view>
+      <view
+        class="user-pill"
+        bindtap="goReflection"
+      >🧠 AI复盘</view>
+    </view>
+  </scroll-view>
 
   <!-- 管理者：业务员快捷胶囊选择器 -->
   <scroll-view class="user-pills-scroll" scroll-x="true" enable-flex="true" wx:if="{{isManager && salesUsers.length > 0}}">
@@ -123,7 +158,11 @@
   </scroll-view>
 
   <!-- 当前筛选标签 -->
-  <view class="filter-tags" wx:if="{{filterDate || filterScore || filterUserName}}">
+  <view class="filter-tags" wx:if="{{filterDate || filterScore || filterUserName || filterReview}}">
+    <view class="filter-tag" wx:if="{{filterReview}}">
+      <text>复核：{{filterReview === 'low' ? '低置信' : filterReview === 'mid' ? '中置信' : filterReview === 'spot' ? '抽检' : filterReview === 'corrected' ? '已校正' : '已确认'}}{{(filterReview === 'low' || filterReview === 'mid' || filterReview === 'spot') && onlyUnreviewed ? '(仅未复核)' : ''}}</text>
+      <text class="tag-close" bindtap="onSelectReviewFilter" data-value="{{filterReview}}">✕</text>
+    </view>
     <view class="filter-tag" wx:if="{{filterUserName}}">
       <text>业务员：{{filterUserName}}</text>
       <text class="tag-close" bindtap="onClearUserNameFilter">✕</text>
@@ -165,6 +204,7 @@
       <view class="item-content">
       <view class="item-header">
         <text class="item-title">{{item.storeName || item.taskName || '未命名'}}</text>
+        <view class="item-review-badge rbadge-{{item.reviewBadgeType}}" wx:if="{{item.reviewBadgeText}}">{{item.reviewBadgeText}}</view>
         <view class="item-status status-{{item.status}}" wx:if="{{item.statusText}}">{{item.statusText}}</view>
         <view class="item-facing-pill" wx:if="{{item.displayFacingCount !== null && item.displayFacingCount !== undefined}}">
           <text>{{item.displayFacingCount}}面</text>
@@ -255,6 +295,44 @@
           data-value="low"
           bindtap="onSelectScoreFilter"
         >60分以下</view>
+      </view>
+    </view>
+
+    <view class="filter-section" wx:if="{{isAdmin}}">
+      <text class="filter-section-title">AI 复核（仅管理员）</text>
+      <view class="filter-options">
+        <view
+          class="filter-option {{filterReview === 'low' ? 'active' : ''}}"
+          data-value="low"
+          bindtap="onSelectReviewFilter"
+        >低置信</view>
+        <view
+          class="filter-option {{filterReview === 'mid' ? 'active' : ''}}"
+          data-value="mid"
+          bindtap="onSelectReviewFilter"
+        >中置信</view>
+        <view
+          class="filter-option {{filterReview === 'spot' ? 'active' : ''}}"
+          data-value="spot"
+          bindtap="onSelectReviewFilter"
+        >高置信抽检</view>
+        <view
+          class="filter-option {{filterReview === 'corrected' ? 'active' : ''}}"
+          data-value="corrected"
+          bindtap="onSelectReviewFilter"
+        >已校正</view>
+        <view
+          class="filter-option {{filterReview === 'confirmed' ? 'active' : ''}}"
+          data-value="confirmed"
+          bindtap="onSelectReviewFilter"
+        >已确认</view>
+      </view>
+      <view
+        class="filter-unreviewed-toggle"
+        wx:if="{{filterReview === 'low' || filterReview === 'mid' || filterReview === 'spot'}}"
+        bindtap="onToggleOnlyUnreviewed"
+      >
+        <text>{{onlyUnreviewed ? '☑ 仅显示未复核（处理后自动消除）' : '☐ 显示全部（含已处理）'}}</text>
       </view>
     </view>
     <view class="filter-section" wx:if="{{isManager}}">
