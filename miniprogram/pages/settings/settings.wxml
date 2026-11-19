@@ -206,6 +206,65 @@
       </view>
     </view>
 
+    <!-- 陈列质量 5 维评分权重配置 -->
+    <view class="card">
+      <view class="section-title">陈列评分规则（5维 · 合计 {{scoringRulesSum}}/100 分）</view>
+
+      <view class="form-row">
+        <text class="form-label">排面数量满分</text>
+        <view class="form-input-wrap">
+          <input class="form-input" type="number" value="{{scoringRules.facingMaxScore}}" data-field="facingMaxScore" bindinput="onScoringRuleInput" disabled="{{!canEdit}}" />
+          <text class="form-unit">分</text>
+        </view>
+      </view>
+      <view class="form-row">
+        <text class="form-label">排面满分目标</text>
+        <view class="form-input-wrap">
+          <input class="form-input" type="number" value="{{scoringRules.facingTarget}}" data-field="facingTarget" bindinput="onScoringRuleInput" disabled="{{!canEdit}}" />
+          <text class="form-unit">面</text>
+        </view>
+      </view>
+      <view class="form-row">
+        <text class="form-label">单排面分值</text>
+        <view class="form-input-wrap">
+          <input class="form-input" type="digit" value="{{scoringRules.facingPointsPerUnit}}" data-field="facingPointsPerUnit" bindinput="onScoringRuleInput" disabled="{{!canEdit}}" />
+          <text class="form-unit">分/面</text>
+        </view>
+      </view>
+      <view class="form-row">
+        <text class="form-label">黄金位置满分</text>
+        <view class="form-input-wrap">
+          <input class="form-input" type="number" value="{{scoringRules.goldenPositionMaxScore}}" data-field="goldenPositionMaxScore" bindinput="onScoringRuleInput" disabled="{{!canEdit}}" />
+          <text class="form-unit">分</text>
+        </view>
+      </view>
+      <view class="form-row">
+        <text class="form-label">正标朝向满分</text>
+        <view class="form-input-wrap">
+          <input class="form-input" type="number" value="{{scoringRules.labelOrientationMaxScore}}" data-field="labelOrientationMaxScore" bindinput="onScoringRuleInput" disabled="{{!canEdit}}" />
+          <text class="form-unit">分</text>
+        </view>
+      </view>
+      <view class="form-row">
+        <text class="form-label">价签规范满分</text>
+        <view class="form-input-wrap">
+          <input class="form-input" type="number" value="{{scoringRules.priceTagMaxScore}}" data-field="priceTagMaxScore" bindinput="onScoringRuleInput" disabled="{{!canEdit}}" />
+          <text class="form-unit">分</text>
+        </view>
+      </view>
+      <view class="form-row">
+        <text class="form-label">横签露出满分</text>
+        <view class="form-input-wrap">
+          <input class="form-input" type="number" value="{{scoringRules.horizontalBannerMaxScore}}" data-field="horizontalBannerMaxScore" bindinput="onScoringRuleInput" disabled="{{!canEdit}}" />
+          <text class="form-unit">分</text>
+        </view>
+      </view>
+
+      <view class="form-hint">
+        <text>默认：排面50（≥10面满分、每面5分）+ 黄金位20 + 正标10 + 价签10 + 横签10 = 100分。修改后点底部「保存设置」生效。</text>
+      </view>
+    </view>
+
     <!-- API Key -->
     <view class="card">
       <view class="section-title">通义千问 API Key</view>

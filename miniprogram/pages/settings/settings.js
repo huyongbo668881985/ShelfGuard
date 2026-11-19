@@ -43,6 +43,16 @@ Page({
     windowMinutes: 180,
     batchSize: 2,
     imageMode: 'traffic', // traffic | quality
+    scoringRules: {
+      facingMaxScore: 50,
+      facingTarget: 10,
+      facingPointsPerUnit: 5,
+      goldenPositionMaxScore: 20,
+      labelOrientationMaxScore: 10,
+      priceTagMaxScore: 10,
+      horizontalBannerMaxScore: 10
+    },
+    scoringRulesSum: 100,
 
     // API Key（明文只在输入时存在于本页，保存后服务端只回掩码）
     hasApiKey: false,
@@ -141,6 +151,14 @@ Page({
         windowMinutes: s.windowMinutes,
         batchSize: s.batchSize,
         imageMode: teamImageMode,
+        scoringRules: s.scoringRules || this.data.scoringRules,
+        scoringRulesSum: s.scoringRules
+          ? (Number(s.scoringRules.facingMaxScore) || 0) +
+            (Number(s.scoringRules.goldenPositionMaxScore) || 0) +
+            (Number(s.scoringRules.labelOrientationMaxScore) || 0) +
+            (Number(s.scoringRules.priceTagMaxScore) || 0) +
+            (Number(s.scoringRules.horizontalBannerMaxScore) || 0)
+          : 100,
         hasApiKey: s.hasApiKey,
         apiKeyMasked: s.apiKeyMasked,
         queue: result.queue || { pending: 0, analyzing: 0, failed: 0, scope: 'self' },
@@ -284,6 +302,18 @@ Page({
     this.setData({ jxcBaseUrl: e.detail.value })
   },
 
+  onScoringRuleInput(e) {
+    const field = e.currentTarget.dataset.field
+    if (!field) return
+    const next = Object.assign({}, this.data.scoringRules, { [field]: e.detail.value })
+    const sum = (Number(next.facingMaxScore) || 0) +
+      (Number(next.goldenPositionMaxScore) || 0) +
+      (Number(next.labelOrientationMaxScore) || 0) +
+      (Number(next.priceTagMaxScore) || 0) +
+      (Number(next.horizontalBannerMaxScore) || 0)
+    this.setData({ scoringRules: next, scoringRulesSum: sum })
+  },
+
   onJxcApiKeyInput(e) {
     this.setData({ jxcApiKeyInput: e.detail.value })
   },
@@ -302,12 +332,18 @@ Page({
     if (!this.checkEditable()) return
     if (this.data.saving) return
 
+    if (this.data.scoringRulesSum !== 100) {
+      wx.showToast({ title: `5维满分合计须为100分（当前${this.data.scoringRulesSum}分）`, icon: 'none' })
+      return
+    }
+
     const payload = {
       analyzeMode: this.data.analyzeMode,
       analyzeTime: this.data.analyzeTime,
       windowMinutes: this.data.windowMinutes,
       batchSize: this.data.batchSize,
       imageMode: this.data.imageMode,
+      scoringRules: this.data.scoringRules,
       jxcBaseUrl: this.data.jxcBaseUrl
     }
     // 输入框留空表示"不改动已有 Key"，不要把空值传上去覆盖掉

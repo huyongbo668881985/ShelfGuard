@@ -19,6 +19,7 @@ const EDITABLE_FIELDS = ['brandName', 'productLine', 'aliases', 'photos', 'isAct
 const MATERIAL_EDITABLE_FIELDS = ['materialName', 'category', 'aliases', 'visualFeatures', 'photo', 'isActive']
 const MATERIAL_CATEGORIES = [
   '灯箱',
+  '横签',
   'POP海报',
   '台卡/桌贴',
   '门头店招',

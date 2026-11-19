@@ -13,10 +13,19 @@ const cloud = require('../../cloud-shim')
 const axios = require('axios')
 const {
   SYSTEM_PROMPT,
+  buildSystemPrompt,
   buildUserPrompt,
   DAILY_SUMMARY_SYSTEM_PROMPT,
   buildDailySummaryUserPrompt
 } = require('./prompt')
+const {
+  normalizeScoringRules,
+  selectHorizontalBannerRefs,
+  normalizeAdMaterials,
+  validateAndNormalizeReport,
+  aggregateDailyMetrics,
+  mergeDailyReports
+} = require('./scoring')
 
 cloud.init({
   env: cloud.DYNAMIC_CURRENT_ENV
@@ -258,9 +267,17 @@ exports.main = async (event, context) => {
     }
   }
 
+  return await analyzeSingleInspection(inspectionDoc, idsToAnalyze)
+}
+
+/**
+ * 标准单次拜访分析主链路（单条触发与 batchAnalyze / dailySummary 均复用此函数）
+ */
+async function analyzeSingleInspection(inspectionDoc, idsToAnalyze, preloadedContext = null) {
+  const inspectionId = inspectionDoc._id
   try {
-    // 1. 获取图片临时链接（一次性批量获取，避免同一门店多角度照片被拆成多次分析、互相覆盖结果）
-    console.log(`[1/5] 获取 ${idsToAnalyze.length} 张图片临时链接...`)
+    // 1. 获取实拍图片数据
+    console.log(`[1/5] 获取 ${idsToAnalyze.length} 张实拍图片...`)
     const fileRes = await cloud.readFilesAsDataUrls({ fileList: idsToAnalyze })
     const failedFiles = fileRes.fileList.filter(f => !f.tempFileURL)
     if (fileRes.fileList.length === 0 || failedFiles.length === fileRes.fileList.length) {
@@ -269,27 +286,36 @@ exports.main = async (event, context) => {
     const imageUrls = fileRes.fileList
       .filter(f => f.tempFileURL)
       .map(f => f.tempFileURL)
-    console.log('[1/5] 图片链接获取成功')
+    console.log('[1/5] 图片获取成功')
 
-    // 2. 查询产品库与广告物料库，拼成一段文字提示给 AI 做识别参考，
-    //    这样品牌或物料一多、一换，不用改 Prompt 代码，直接在"产品与物料库"页里维护就行。
-    console.log('[2/5] 查询产品与物料库...')
-    const activeMaterials = await loadActiveMaterials()
-    const brandReferenceText = await getBrandReferenceText()
-    console.log('[2/5] 产品与物料库查询完成')
+    // 2. 加载产品库、广告物料库、横签对照参考图与评分规则配置
+    console.log('[2/5] 查询产品库、物料库与评分配置...')
+    const ctx = preloadedContext || await loadAnalysisContext()
+    const {
+      activeMaterials,
+      brandReferenceText,
+      ownBrandNames,
+      scoringRules,
+      bannerRefMaterials,
+      bannerRefUrls
+    } = ctx
+    console.log(`[2/5] 上下文加载完成（横签参考图 ${bannerRefUrls.length} 张）`)
 
-    // 3. 调用 AI 视觉模型分析（同一次巡检的多张照片合并为一次调用，输出一份综合报告）
-    //    套一层自己的倒计时：宁可主动判失败，也不能让云函数被硬杀导致状态卡在 analyzing。
-    //    详见文件顶部 AI_HARD_TIMEOUT_MS 的注释。
+    // 3. 调用 AI 视觉模型分析（实拍图 + 最多 3 张横签参考图）
     console.log(`[3/5] 调用 ${CURRENT_MODEL}/${AI_CONFIG[CURRENT_MODEL].model} 视觉分析...`)
     const analysis = await withHardTimeout(
-      analyzeWithVision(imageUrls, brandReferenceText, activeMaterials),
+      analyzeWithVision(imageUrls, {
+        brandReferenceText,
+        activeMaterials,
+        ownBrandNames,
+        scoringRules,
+        bannerRefMaterials,
+        bannerRefUrls
+      }),
       AI_HARD_TIMEOUT_MS,
       `AI 分析超过 ${AI_HARD_TIMEOUT_MS / 1000} 秒未完成，已主动中止。常见原因：单次照片过多、图片分辨率过高`
     )
 
-    // 未配置 API Key：不把模拟报告落库（否则统计/平均分会被假数据污染），
-    // 直接标记失败并给出明确原因；模拟报告仅随返回值透传给调用方做开发预览。
     if (analysis.mock) {
       const noKeyError = '未配置 AI API Key，未生成真实分析报告。请管理员在服务器环境变量 DASHSCOPE_API_KEY 或「分析设置」中配置。'
       console.warn('[3/5]', noKeyError)
@@ -314,11 +340,11 @@ exports.main = async (event, context) => {
         aiReport: aiReport,
         status: 'analyzed',
         analyzedAt: db.serverDate(),
-        analyzeError: '',                  // 重试成功时清掉上一次的错误信息
+        analyzeError: '',
         analyzedModel: AI_CONFIG[CURRENT_MODEL].model,
-        analyzedFileID: idsToAnalyze[0],   // 兼容旧字段：保留第一张图的 fileID
-        analyzedFileIDs: idsToAnalyze,     // 新字段：本次参与分析的全部 fileID
-        aiDebug: analysis.debug            // 诊断快照，方便排查"有调用无输出"
+        analyzedFileID: idsToAnalyze[0],
+        analyzedFileIDs: idsToAnalyze,
+        aiDebug: analysis.debug
       }
     })
     if (inspectionDoc.customerId && Array.isArray(aiReport.adMaterials) && aiReport.adMaterials.length > 0) {
@@ -385,8 +411,17 @@ async function resolveApiKey(config) {
 }
 
 // ============================================================
-// 产品库 & 广告物料库：查询本品牌资料，拼装成 AI 识别时的参考文本
+// 评分规则 & 产品库 & 广告物料库 & 横签参考图加载
 // ============================================================
+async function loadScoringRules() {
+  try {
+    const res = await db.collection('settings').doc('global').get()
+    return normalizeScoringRules(res.data && res.data.scoringRules)
+  } catch (err) {
+    return normalizeScoringRules(null)
+  }
+}
+
 async function loadActiveMaterials() {
   try {
     const res = await db.collection('adMaterials').where({ isActive: true }).get()
@@ -397,51 +432,81 @@ async function loadActiveMaterials() {
   }
 }
 
-function normalizeAdMaterials(rawList, activeMaterials = []) {
-  if (!Array.isArray(rawList)) return []
-  const byAlias = new Map()
-  ;(activeMaterials || []).forEach(m => {
-    if (!m || !m.materialName) return
-    const std = String(m.materialName).trim()
-    if (!std) return
-    byAlias.set(std.toLowerCase(), m)
-    if (Array.isArray(m.aliases)) {
-      m.aliases.forEach(a => {
-        const k = String(a || '').trim().toLowerCase()
-        if (k) byAlias.set(k, m)
+async function loadAnalysisContext() {
+  const scoringRules = await loadScoringRules()
+  const activeMaterials = await loadActiveMaterials()
+  const ownBrandNames = new Set()
+  let brandReferenceText = ''
+
+  try {
+    const res = await db.collection('products').where({ isActive: true }).get()
+    const products = res.data || []
+    if (products.length > 0) {
+      const lines = products.map(p => {
+        if (p.brandName) ownBrandNames.add(String(p.brandName).trim().toLowerCase())
+        const parts = [`品牌：${p.brandName}`]
+        if (p.productLine) parts.push(`产品线：${p.productLine}`)
+        if (Array.isArray(p.aliases) && p.aliases.length > 0) {
+          p.aliases.forEach(a => {
+            const k = String(a || '').trim().toLowerCase()
+            if (k) ownBrandNames.add(k)
+          })
+          parts.push(`别名/简称：${p.aliases.join('、')}`)
+        }
+        return `- ${parts.join('，')}`
       })
+      brandReferenceText += `\n\n## 本品牌产品资料（识别时优先参考，遇到下列品牌/别名要统一按标准品牌名归类并标注 isOwn: true，其余品牌视为竞品 isOwn: false）\n${lines.join('\n')}`
     }
-  })
+  } catch (err) {
+    console.error('查询产品库失败，本次分析不带品牌参考:', err)
+  }
 
-  const merged = new Map()
-  rawList.forEach(item => {
-    if (!item) return
-    const rawName = String(item.name || item.materialName || '').trim()
-    if (!rawName) return
-    const matched = byAlias.get(rawName.toLowerCase())
-    const canonicalName = matched ? String(matched.materialName).trim() : rawName
-    const category = (matched && matched.category) || String(item.category || '其他').trim() || '其他'
-    const count = Math.max(1, parseInt(item.count, 10) || 1)
-    const condition = String(item.condition || '完好').trim() || '完好'
-    const isOwn = matched ? true : (item.isOwn !== false)
+  if (activeMaterials.length > 0) {
+    const mLines = activeMaterials.map(m => {
+      const parts = [`标准名称：${m.materialName}`]
+      if (m.category) parts.push(`分类：${m.category}`)
+      if (Array.isArray(m.aliases) && m.aliases.length > 0) {
+        parts.push(`别名：${m.aliases.join('、')}`)
+      }
+      if (m.visualFeatures) parts.push(`视觉特征：${m.visualFeatures}`)
+      return `- ${parts.join('，')}`
+    })
+    brandReferenceText += `\n\n## 本品牌广告物料库（识别画面中的广告物料时必须优先比对下列物料，并在 adMaterials[].name 中严格输出对应的「标准名称」）\n${mLines.join('\n')}`
+  }
 
-    const existing = merged.get(canonicalName)
-    if (existing) {
-      existing.count = Math.max(existing.count, count)
-    } else {
-      merged.set(canonicalName, {
-        name: canonicalName,
-        category,
-        isOwn,
-        count,
-        condition,
-        position: String(item.position || '').trim(),
-        confidence: typeof item.confidence === 'number' ? item.confidence : 0.9
+  // 筛选启用且带参考图 photo 的横签，最多取 3 张作为对照图传给视觉模型
+  const candidateBannerRefs = selectHorizontalBannerRefs(activeMaterials, 3)
+  const bannerRefMaterials = []
+  const bannerRefUrls = []
+  if (candidateBannerRefs.length > 0) {
+    try {
+      const refFileRes = await cloud.readFilesAsDataUrls({
+        fileList: candidateBannerRefs.map(m => m.photo)
       })
+      const byFileId = new Map()
+      ;(refFileRes.fileList || []).forEach(f => {
+        if (f && f.fileID && f.tempFileURL) byFileId.set(f.fileID, f.tempFileURL)
+      })
+      candidateBannerRefs.forEach(m => {
+        const url = byFileId.get(m.photo)
+        if (url) {
+          bannerRefMaterials.push(m)
+          bannerRefUrls.push(url)
+        }
+      })
+    } catch (err) {
+      console.warn('读取横签参考图失败，降级为纯文本特征识别:', err.message || err)
     }
-  })
+  }
 
-  return Array.from(merged.values())
+  return {
+    scoringRules,
+    activeMaterials,
+    ownBrandNames,
+    brandReferenceText,
+    bannerRefMaterials,
+    bannerRefUrls
+  }
 }
 
 async function syncCustomerMaterials(customerId, adMaterials, inspectionId) {
@@ -479,70 +544,40 @@ async function syncCustomerMaterials(customerId, adMaterials, inspectionId) {
   }
 }
 
-async function getBrandReferenceText() {
-  let out = ''
-  try {
-    const res = await db.collection('products').where({ isActive: true }).get()
-    const products = res.data || []
-    if (products.length > 0) {
-      const lines = products.map(p => {
-        const parts = [`品牌：${p.brandName}`]
-        if (p.productLine) parts.push(`产品线：${p.productLine}`)
-        if (Array.isArray(p.aliases) && p.aliases.length > 0) {
-          parts.push(`别名/简称：${p.aliases.join('、')}`)
-        }
-        return `- ${parts.join('，')}`
-      })
-      out += `\n\n## 本品牌产品资料（识别时优先参考，遇到下列品牌/别名要统一按标准品牌名归类，不要因为叫法不同而拆成两个品牌）\n${lines.join('\n')}`
-    }
-  } catch (err) {
-    console.error('查询产品库失败，本次分析不带品牌参考:', err)
-  }
-
-  try {
-    const materials = await loadActiveMaterials()
-    if (materials.length > 0) {
-      const mLines = materials.map(m => {
-        const parts = [`标准名称：${m.materialName}`]
-        if (m.category) parts.push(`分类：${m.category}`)
-        if (Array.isArray(m.aliases) && m.aliases.length > 0) {
-          parts.push(`别名：${m.aliases.join('、')}`)
-        }
-        if (m.visualFeatures) parts.push(`视觉特征：${m.visualFeatures}`)
-        return `- ${parts.join('，')}`
-      })
-      out += `\n\n## 本品牌广告物料库（识别画面中的广告物料时必须优先比对下列物料，并在 adMaterials[].name 中严格输出对应的「标准名称」）\n${mLines.join('\n')}`
-    }
-  } catch (err) {
-    console.error('查询物料库失败:', err)
-  }
-
-  return out
-}
-
 // ============================================================
 // AI 调用逻辑
 // ============================================================
-async function analyzeWithVision(imageUrls, brandReferenceText, activeMaterials = []) {
+async function analyzeWithVision(imageUrls, options = {}) {
   const config = AI_CONFIG[CURRENT_MODEL]
   const apiKey = await resolveApiKey(config)
 
   if (!apiKey) {
     console.warn('未配置 AI API Key，拒绝将模拟报告写入数据库（防止假数据污染统计）。配置方法见本文件顶部 AI_CONFIG 注释。')
     return {
-      text: generateMockReport(),
+      text: generateMockReport(options.scoringRules),
       debug: { mode: 'mock', reason: '未配置 API Key' },
       mock: true
     }
   }
 
-  const userPrompt = buildUserPrompt(imageUrls.length, brandReferenceText)
+  const {
+    brandReferenceText = '',
+    activeMaterials = [],
+    ownBrandNames = new Set(),
+    scoringRules = null,
+    bannerRefMaterials = [],
+    bannerRefUrls = []
+  } = options
 
-  const { text, debug } = await callQwen(config, apiKey, imageUrls, userPrompt)
-  const parsed = parseAIResponse(text, activeMaterials)
-  // 把"前端最终拿到的是不是有效报告"也记进诊断，区分"模型回了但解析失败"
-  // 和"模型根本没回正文"这两种不同的"没输出"表现。
+  const systemPrompt = buildSystemPrompt(scoringRules)
+  const userPrompt = buildUserPrompt(imageUrls.length, brandReferenceText, bannerRefMaterials)
+  const allImages = [...imageUrls, ...bannerRefUrls]
+
+  const { text, debug } = await callQwen(config, apiKey, allImages, userPrompt, systemPrompt)
+  const parsed = parseAIResponse(text, { activeMaterials, scoringRules, ownBrandNames })
   debug.parsedOk = !(parsed.metadata && parsed.metadata.parseError)
+  debug.visitImageCount = imageUrls.length
+  debug.bannerRefCount = bannerRefUrls.length
   return { text: parsed, debug }
 }
 
@@ -710,7 +745,7 @@ function extractQwenText(data) {
 // ============================================================
 // 响应解析
 // ============================================================
-function parseAIResponse(responseText, activeMaterials = []) {
+function parseAIResponse(responseText, options = {}) {
   try {
     let jsonStr = (responseText || '').trim()
 
@@ -720,8 +755,7 @@ function parseAIResponse(responseText, activeMaterials = []) {
       jsonStr = jsonMatch[1].trim()
     }
 
-    // 兜底：Qwen 不强制 JSON 输出，偶尔会在 JSON 前后夹带一句"好的，以下是分析结果："
-    // 这类说明文字，需要截取第一个 { 到最后一个 } 之间的内容再解析。
+    // 兜底：截取第一个 { 到最后一个 } 之间的内容再解析
     if (!jsonStr.startsWith('{')) {
       const start = jsonStr.indexOf('{')
       const end = jsonStr.lastIndexOf('}')
@@ -731,19 +765,28 @@ function parseAIResponse(responseText, activeMaterials = []) {
     }
 
     const result = JSON.parse(jsonStr)
-
-    // 验证并补全必要字段
-    return validateAndNormalize(result, responseText, activeMaterials)
+    const opts = Array.isArray(options) ? { activeMaterials: options } : (options || {})
+    return validateAndNormalizeReport(result, responseText, opts)
   } catch (err) {
     console.error('解析 AI 返回结果失败:', err)
     return {
-      score: 0,
+      scoringVersion: 'v2',
+      hasShelfPhoto: true,
+      ownBrandPresent: null,
+      score: null,
       scoreLevel: '解析失败',
       summary: 'AI 返回结果解析失败，请重试',
+      facingMetrics: {
+        ownFacingCount: null,
+        ownSkuCount: null,
+        totalShelfFacingCount: null,
+        ownFacingShare: null,
+        countingConfidence: null
+      },
       productIdentification: [],
       adMaterials: [],
       displayCompliance: {},
-      competitiveAnalysis: {},
+      competitiveAnalysis: { brands: [] },
       issues: [],
       suggestions: [],
       metadata: { parseError: true },
@@ -752,155 +795,151 @@ function parseAIResponse(responseText, activeMaterials = []) {
   }
 }
 
-/**
- * 验证并规范化 AI 返回结果
- */
-function validateAndNormalize(result, rawResponse, activeMaterials = []) {
-  // 确保对象字段存在
-  if (!result.displayCompliance || typeof result.displayCompliance !== 'object') {
-    result.displayCompliance = {}
-  }
-
-  // 如果 6 个维度分数齐全，由服务端按权重公式精确计算总分，消除大模型心算误差与随机波动
-  const dc = result.displayCompliance
-  const weights = [
-    ['labelOrientation', 0.25],
-    ['neatness', 0.20],
-    ['goldenPosition', 0.20],
-    ['brandConcentration', 0.15],
-    ['priceTagMatch', 0.15],
-    ['shelfFullness', 0.05]
-  ]
-  const allPresent = weights.every(([key]) => dc[key] && typeof dc[key].score === 'number')
-
-  let score = parseInt(result.score, 10)
-  if (allPresent && score > 0) {
-    const weightedSum = weights.reduce((acc, [key, w]) => acc + dc[key].score * w, 0)
-    score = Math.round(weightedSum)
-  }
-  if (isNaN(score) || score < 0 || score > 100) {
-    score = 0
-  }
-  result.score = score
-
-  // 根据最终分数规范化 scoreLevel
-  if (score >= 90) result.scoreLevel = '卓越'
-  else if (score >= 80) result.scoreLevel = '优秀'
-  else if (score >= 70) result.scoreLevel = '良好'
-  else if (score >= 60) result.scoreLevel = '一般'
-  else if (score >= 40) result.scoreLevel = '较差'
-  else result.scoreLevel = '不合格'
-
-  // 确保数组字段存在
-  if (!Array.isArray(result.productIdentification)) result.productIdentification = []
-  result.adMaterials = normalizeAdMaterials(result.adMaterials, activeMaterials)
-  if (!Array.isArray(result.issues)) result.issues = []
-  if (!Array.isArray(result.suggestions)) result.suggestions = []
-  if (!result.competitiveAnalysis || typeof result.competitiveAnalysis !== 'object') {
-    result.competitiveAnalysis = {}
-  }
-  // report.wxml 里直接访问了 competitiveAnalysis.brands.length，
-  // 缺这个数组会整页渲染报错，这里补一个空数组兜底
-  if (!Array.isArray(result.competitiveAnalysis.brands)) {
-    result.competitiveAnalysis.brands = []
-  }
-  if (!result.metadata || typeof result.metadata !== 'object') {
-    result.metadata = {}
-  }
-  if (!Array.isArray(result.metadata.photoRoles)) {
-    result.metadata.photoRoles = []
-  }
-
-  // 保留原始响应
-  result.rawResponse = rawResponse
-
-  return result
-}
-
 // ============================================================
-// 模拟报告（未配置 API Key 时的占位结果，方便先把流程跑通）
+// 模拟报告（未配置 API Key 时的占位结果，不落库）
 // ============================================================
-function generateMockReport() {
-  return {
-    score: 78,
-    scoreLevel: '良好',
-    summary: '【模拟报告】整体陈列基本规范，产品正标朝向较为统一。货架饱满度良好，但存在部分价签缺失和产品排列不够整齐的问题。建议优先补充价签，调整产品摆放角度。',
+function generateMockReport(scoringRules) {
+  const rules = normalizeScoringRules(scoringRules)
+  return validateAndNormalizeReport({
+    hasShelfPhoto: true,
+    ownBrandPresent: true,
+    summary: '【模拟报告】我方品牌共占据 8 个正面排面（2 个品规），核心产品位于黄金视线层，正标朝向统一，价签清晰，但缺少我方横签。',
+    facingMetrics: {
+      ownFacingCount: 8,
+      ownSkuCount: 2,
+      totalShelfFacingCount: 24,
+      ownFacingShare: 33.3,
+      countingConfidence: 0.9
+    },
     productIdentification: [
       {
-        brand: '五粮液',
-        productLine: '普五第八代',
-        aromaType: '浓香型',
-        priceRange: '高端',
-        facingCount: 4,
+        brand: '永丰',
+        productLine: '特8',
+        isOwn: true,
+        aromaType: '清香型',
+        priceRange: '大众',
+        facingCount: 5,
         position: '黄金位',
         confidence: 0.92
       },
       {
-        brand: '泸州老窖',
-        productLine: '特曲',
-        aromaType: '浓香型',
-        priceRange: '中端',
+        brand: '永丰',
+        productLine: '经典二锅头',
+        isOwn: true,
+        aromaType: '清香型',
+        priceRange: '大众',
         facingCount: 3,
         position: '中层',
-        confidence: 0.85
-      },
-      {
-        brand: '洋河',
-        productLine: '海之蓝',
-        aromaType: '浓香型',
-        priceRange: '中端',
-        facingCount: 2,
-        position: '底层',
-        confidence: 0.78
+        confidence: 0.88
       }
     ],
     displayCompliance: {
-      labelOrientation: { score: 85, status: 'good', detail: '90%以上产品正标朝外' },
-      neatness: { score: 72, status: 'medium', detail: '部分产品排列不够整齐' },
-      goldenPosition: { score: 80, status: 'good', detail: '核心产品位于黄金位置' },
-      brandConcentration: { score: 75, status: 'medium', detail: '同品牌基本集中' },
-      priceTagMatch: { score: 55, status: 'poor', detail: '约4个位置缺少价签' },
-      shelfFullness: { score: 88, status: 'good', detail: '货架饱满度良好' }
+      facingCount: { score: 40, observedFacings: 8, detail: '观测事实：正面最前排共见我方 8 个排面。' },
+      goldenPosition: { score: 16, detail: '观测事实：核心产品 6 个排面位于中上黄金视线层。' },
+      labelOrientation: { score: 9, detail: '观测事实：8 瓶中 7 瓶正标朝外，1 瓶略偏。' },
+      priceTag: { score: 10, detail: '观测事实：我方陈列层下沿价签清晰完好。' },
+      horizontalBanner: { score: 0, detail: '观测事实：陈列上下沿未见我方横签。' }
     },
     competitiveAnalysis: {
       totalBrands: 4,
       brands: [
-        { brand: '五粮液', sharePercent: 35, positionAdvantage: 'high' },
-        { brand: '泸州老窖', sharePercent: 28, positionAdvantage: 'medium' },
-        { brand: '洋河', sharePercent: 22, positionAdvantage: 'low' }
+        { brand: '永丰', isOwn: true, sharePercent: 33.3, positionAdvantage: 'high' },
+        { brand: '竞品A', isOwn: false, sharePercent: 25.0, positionAdvantage: 'medium' }
       ],
-      insight: '当前货架以浓香型白酒为主，五粮液占据优势位置'
+      insight: '我方在黄金位占优，补齐横签并扩充 2 个排面即可冲刺满分。'
     },
     issues: [
-      { severity: 'high', category: '价签管理', description: '中层第2排约4个位置缺少价签', impact: '影响消费者价格判断' },
-      { severity: 'medium', category: '陈列整齐度', description: '底层产品排列不够整齐，间距不均匀', impact: '影响整体视觉效果' },
-      { severity: 'low', category: '品牌集中', description: '泸州老窖产品分散在两个区域', impact: '品牌展示效果减弱' }
+      { severity: 'high', category: '横签露出', description: '我方陈列上下沿缺少我方横签', impact: '品牌视觉识别度偏弱' }
     ],
     suggestions: [
-      { priority: 'high', action: '立即补充缺失的4个价签', expectedEffect: '提升购买转化率', deadline: '当日' },
-      { priority: 'medium', action: '调整底层产品摆放，保持间距均匀', expectedEffect: '提升陈列整齐度', deadline: '当日' },
-      { priority: 'low', action: '将泸州老窖产品集中到一个区域', expectedEffect: '增强品牌区块效果', deadline: '下次补货时' }
+      { priority: 'high', action: '在我方陈列层下沿补齐我方横签', expectedEffect: '横签项直接+10分', deadline: '当日' }
     ],
     metadata: {
       imageQuality: 'good',
+      imageQualityReason: '',
+      framingType: 'panorama',
       shelfCount: 4,
       totalProducts: 24,
+      photoRoles: ['货架陈列照'],
       isMock: true
     }
-  }
+  }, '', { scoringRules: rules })
 }
 
 // ============================================================
-// 全天巡检汇总结论分析（每日综合分析模式）
+// 全天巡检汇总结论分析（基于单条结构化报告统一汇总，不再重复喂图、绝不造 80 假分）
 // ============================================================
+function buildDeterministicDailyFallback(aggregated, inspections) {
+  const st = aggregated.storeStats
+  const ov = aggregated.ownBrandOverview
+  const scorePart = aggregated.overallScore !== null
+    ? `在架门店平均陈列分 ${aggregated.overallScore} 分（${aggregated.overallLevel}）`
+    : `暂无可计分在架陈列（${aggregated.overallLevel}）`
+  const facingPart = ov.avgFacingCount !== null ? `，平均我方排面 ${ov.avgFacingCount} 面` : ''
+  const stockPart = ov.inStockRate !== null ? `，在架率 ${ov.inStockRate}%` : ''
+  const oosPart = st.outOfStockStores > 0 ? `，其中 ${st.outOfStockStores} 家未上柜需重点跟进铺货` : ''
+
+  // 从单条报告汇总高频问题
+  const issueMap = new Map()
+  for (const item of inspections) {
+    const issues = (item.aiReport && Array.isArray(item.aiReport.issues)) ? item.aiReport.issues : []
+    for (const iss of issues) {
+      if (!iss || !iss.category) continue
+      const key = String(iss.category).trim()
+      if (!issueMap.has(key)) {
+        issueMap.set(key, {
+          category: key,
+          severity: iss.severity || 'medium',
+          count: 0,
+          description: iss.description || key
+        })
+      }
+      issueMap.get(key).count += 1
+    }
+  }
+  const commonIssues = Array.from(issueMap.values())
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 5)
+    .map((x, idx) => ({
+      rank: idx + 1,
+      category: x.category,
+      severity: x.severity,
+      affectStores: `${x.count}家门店`,
+      description: x.description
+    }))
+
+  return {
+    summaryTitle: '今日终端拜访综合分析日报',
+    summaryConclusion: `今日共拜访 ${st.totalStores} 家门店，${scorePart}${facingPart}${stockPart}${oosPart}。`,
+    competitiveSituation: ov.facingSharePercent !== null
+      ? `今日在架门店我方平均排面占比 ${ov.facingSharePercent}%。`
+      : '请结合各店单条报告查看竞品格局。',
+    commonIssues,
+    actionPlanTomorrow: st.outOfStockStores > 0
+      ? [{ priority: 'P0', action: '优先回访未上柜门店推动我方产品上柜陈列', target: '提升终端在架率' }]
+      : [{ priority: 'P0', action: '针对排面不足 10 面及缺少横签/价签的门店逐项整改', target: '提升整体陈列分' }],
+    storeComments: []
+  }
+}
+
+function parseDailySummaryNarrative(responseText) {
+  let jsonStr = (responseText || '').trim()
+  const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/)
+  if (jsonMatch) jsonStr = jsonMatch[1].trim()
+  if (!jsonStr.startsWith('{')) {
+    const start = jsonStr.indexOf('{')
+    const end = jsonStr.lastIndexOf('}')
+    if (start !== -1 && end > start) jsonStr = jsonStr.slice(start, end + 1)
+  }
+  return JSON.parse(jsonStr)
+}
+
 async function handleDailySummary(event, wxContext) {
   const callerOpenid = wxContext.OPENID || ''
-  // 云函数互调 / 定时触发时 OPENID 为空；SOURCE 含 wx_trigger / timer 亦视为内部
   const source = String(wxContext.SOURCE || '')
   const isTimerSource = /trigger|timer|cron/i.test(source)
   const isInternalCall = !callerOpenid || isTimerSource
 
-  // dailySummary 仅允许：内部/定时，或 admin/manager。普通 sales 直接拒绝（防烧额度）。
   let isManager = false
   if (!isInternalCall) {
     const callerRes = await db.collection('users').where({ _openid: callerOpenid }).get()
@@ -917,7 +956,7 @@ async function handleDailySummary(event, wxContext) {
     }
   }
 
-  // 1. 查找当天（或传入的 inspectionIds）巡检记录，严格校验归属防越权
+  // 1. 查找目标巡检记录
   let inspections = []
   if (Array.isArray(event.inspectionIds) && event.inspectionIds.length > 0) {
     const query = { _id: db.command.in(event.inspectionIds) }
@@ -930,7 +969,6 @@ async function handleDailySummary(event, wxContext) {
       .get()
     inspections = listRes.data || []
   } else {
-    // 默认查找最近 24 小时的巡检记录
     const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000)
     const query = { createdAt: db.command.gte(dayAgo) }
     if (!isInternalCall && !isManager) {
@@ -944,55 +982,24 @@ async function handleDailySummary(event, wxContext) {
     inspections = listRes.data || []
   }
 
+  // 排除上下班打卡记录
+  inspections = inspections.filter(i => i && i.recordType !== 'clock_in' && i.recordType !== 'clock_out' && i.status !== 'clocked')
   if (inspections.length === 0) {
     return { success: false, error: '今日暂无拜访记录可供汇总' }
   }
 
-  const inspectionIds = inspections.map(i => i._id)
-
-  // 2. 抽取照片（每家门店最多取 3 张原图以涵盖门头+货架+广告物料，单批次總计最多 16 张）
-  const allFileIDs = []
-  inspections.forEach(item => {
-    if (Array.isArray(item.photoFileIDs) && item.photoFileIDs.length > 0) {
-      const slice = item.photoFileIDs.slice(0, 3)
-      const room = Math.max(0, 16 - allFileIDs.length)
-      const taken = slice.slice(0, room)
-      item._fedPhotoCount = taken.length
-      allFileIDs.push(...taken)
-    } else {
-      item._fedPhotoCount = 0
-    }
-  })
-  const targetFileIDs = allFileIDs.slice(0, 16)
-  if (targetFileIDs.length === 0) {
-    await db.collection('inspections').where({ _id: db.command.in(inspectionIds) }).update({
-      data: { status: 'analyze_failed', analyzeError: '拜访记录中未找到有效照片', analyzedAt: db.serverDate() }
-    }).catch(console.error)
-    return { success: false, error: '拜访记录中未找到有效照片' }
-  }
-
-  // 3. 检查 API Key（未配置时不把模拟报告落库，防止假数据污染统计，与单条分析保持一致）
   const config = AI_CONFIG[CURRENT_MODEL]
   const apiKey = await resolveApiKey(config)
   if (!apiKey) {
     const noKeyError = '未配置 AI API Key，未生成真实汇总报告。请管理员在服务器环境变量 DASHSCOPE_API_KEY 或「分析设置」中配置。'
     console.warn('[dailySummary]', noKeyError)
-    await db.collection('inspections').where({ _id: db.command.in(inspectionIds) }).update({
-      data: {
-        status: 'analyze_failed',
-        analyzeError: noKeyError,
-        analyzedAt: db.serverDate()
-      }
-    }).catch(console.error)
     return {
       success: false,
       error: noKeyError,
-      mock: true,
-      dailyReport: generateMockDailySummary(inspections)
+      mock: true
     }
   }
 
-  // 配额：照片与 Key 校验通过后再扣（管理员手动触发日报也计入其个人日配额）
   if (!isInternalCall) {
     const quota = await checkAndIncAnalyzeQuota(callerOpenid)
     if (!quota.ok) {
@@ -1005,320 +1012,167 @@ async function handleDailySummary(event, wxContext) {
     }
   }
 
-  // 4. 取临时图片链接与品牌参考资料，调用 AI 生成全天汇总结论
-  try {
-    const fileRes = await cloud.readFilesAsDataUrls({ fileList: targetFileIDs })
-    const imageUrls = fileRes.fileList.filter(f => f.tempFileURL).map(f => f.tempFileURL)
-    if (imageUrls.length === 0) {
-      throw new Error('获取图片临时链接失败')
-    }
-    const activeMaterials = await loadActiveMaterials()
-    const brandReferenceText = await getBrandReferenceText()
-    const userPrompt = buildDailySummaryUserPrompt(inspections, brandReferenceText)
+  // 2. 逐条补齐尚未执行标准单条分析的记录（确保单条与批量口径完全一致）
+  const sharedCtx = await loadAnalysisContext()
+  const readyInspections = []
+  let singleFailedCount = 0
 
-    const { text } = await withHardTimeout(
-      callQwen(config, apiKey, imageUrls, userPrompt, DAILY_SUMMARY_SYSTEM_PROMPT),
-      AI_HARD_TIMEOUT_MS,
-      '今日拜访汇总分析超过时限'
+  for (const item of inspections) {
+    const hasRealReport = !!(
+      item.aiReport &&
+      !(item.aiReport.metadata && item.aiReport.metadata.isDailySummary) &&
+      !(item.aiReport.metadata && item.aiReport.metadata.parseError)
     )
-    const summaryReport = parseDailySummaryResponse(text, inspections)
-
-    // 5. 落库存储到 dailyReports 集合（北京时间 YYYY-MM-DD），并在 settings 集合中保存最新快照
-    const beijingNow = new Date(Date.now() + 8 * 60 * 60 * 1000)
-    const todayStr = `${beijingNow.getUTCFullYear()}-${String(beijingNow.getUTCMonth() + 1).padStart(2, '0')}-${String(beijingNow.getUTCDate()).padStart(2, '0')}`
-    const ownerOpenids = Array.from(new Set(inspections.map(i => i._openid).filter(Boolean)))
-    const userNames = Array.from(new Set(inspections.map(i => i.userName).filter(Boolean)))
-
-    const ownerKey = ownerOpenids.length === 1 ? ownerOpenids[0] : (callerOpenid || 'multi')
-    const safeOwner = String(ownerKey).replace(/[^a-zA-Z0-9_-]/g, '_') || 'unknown'
-    const reportDocId = `dr_${safeOwner}_${todayStr}`
-    const newStoreNames = Array.from(new Set(inspections.map(i => i.storeName || '未命名门店')))
-    const newInspectionIds = inspectionIds.slice()
-
-    // 同日同 openid upsert：多轮 >8 家时合并门店/巡检列表，避免 limit(1) 只剩残缺后半
-    let mergedInspectionIds = newInspectionIds
-    let mergedStoreNames = newStoreNames
-    let mergedOwnerOpenids = ownerOpenids
-    let mergedUserName = userNames.join('、')
-    let mergedReport = summaryReport
-    try {
-      const prev = await db.collection('dailyReports').doc(reportDocId).get()
-      if (prev.data) {
-        const p = prev.data
-        mergedInspectionIds = Array.from(new Set([...(p.inspectionIds || []), ...newInspectionIds]))
-        mergedStoreNames = Array.from(new Set([...(p.storeNames || []), ...newStoreNames]))
-        mergedOwnerOpenids = Array.from(new Set([...(p.ownerOpenids || []), ...ownerOpenids]))
-        const prevNames = (p.userName || '').split('、').filter(Boolean)
-        mergedUserName = Array.from(new Set([...prevNames, ...userNames])).join('、')
-        const prevRankings = (p.report && Array.isArray(p.report.storeRankings)) ? p.report.storeRankings : []
-        const newRankings = Array.isArray(summaryReport.storeRankings) ? summaryReport.storeRankings : []
-        const rankMap = new Map()
-        prevRankings.forEach(r => { if (r && r.storeName) rankMap.set(r.storeName, r) })
-        newRankings.forEach(r => { if (r && r.storeName) rankMap.set(r.storeName, r) })
-        const prevIssues = (p.report && Array.isArray(p.report.commonIssues)) ? p.report.commonIssues : []
-        const newIssues = Array.isArray(summaryReport.commonIssues) ? summaryReport.commonIssues : []
-        mergedReport = Object.assign({}, p.report || {}, summaryReport, {
-          storeRankings: Array.from(rankMap.values()),
-          commonIssues: [...prevIssues, ...newIssues].slice(0, 20),
-          storeStats: Object.assign({}, (p.report && p.report.storeStats) || {}, summaryReport.storeStats || {}, {
-            totalStores: mergedStoreNames.length
-          }),
-          summaryConclusion: (summaryReport.summaryConclusion || '') +
-            ((p.report && p.report.summaryConclusion && mergedInspectionIds.length > newInspectionIds.length)
-              ? `（含本日前序 ${mergedInspectionIds.length - newInspectionIds.length} 条拜访已合并）`
-              : '')
-        })
-      }
-    } catch (prevErr) {
-      // 文档不存在，走新建
+    if (hasRealReport && item.status === 'analyzed') {
+      readyInspections.push(item)
+      continue
     }
 
-    const docPayload = {
-      date: todayStr,
-      _openid: ownerOpenids.length === 1 ? ownerOpenids[0] : (callerOpenid || ''),
-      ownerOpenids: mergedOwnerOpenids,
-      userName: mergedUserName,
-      generatedAt: db.serverDate(),
-      inspectionCount: mergedInspectionIds.length,
-      inspectionIds: mergedInspectionIds,
-      storeNames: mergedStoreNames,
-      report: mergedReport
+    const fileIDs = Array.isArray(item.photoFileIDs) ? item.photoFileIDs : []
+    if (fileIDs.length === 0) {
+      singleFailedCount += 1
+      continue
     }
 
-    let savedId = reportDocId
-    try {
-      await db.collection('dailyReports').doc(reportDocId).set({ data: docPayload })
-    } catch (dbErr) {
-      try {
-        const addRes = await db.collection('dailyReports').add({ data: docPayload })
-        savedId = addRes._id
-      } catch (addErr) {
-        try {
-          await db.collection('settings').doc('global').update({
-            data: { latestDailyReport: docPayload }
-          })
-        } catch (updateErr) {
-          console.warn('存储每日汇总失败:', updateErr)
-        }
-        savedId = ''
-      }
-    }
-
-    // 6. 将所涉巡检记录更新为 analyzed，并同步写入兼容的 aiReport 结构，
-    //    确保历史列表评分圆圈、顶部平均分统计、评分筛选以及点进单条报告页均能完整渲染
-    for (const item of inspections) {
-      const itemAiReport = buildInspectionReportFromDaily(summaryReport, item, todayStr, activeMaterials)
-      await db.collection('inspections').doc(item._id).update({
-        data: {
-          status: 'analyzed',
-          aiReport: itemAiReport,
-          dailyReportId: savedId,
-          analyzeError: '',
-          analyzedModel: config.model,
-          analyzedAt: db.serverDate()
-        }
-      }).catch(err => console.error(`回写巡检 ${item._id} 报告失败:`, err))
-      if (item.customerId && Array.isArray(itemAiReport.adMaterials) && itemAiReport.adMaterials.length > 0) {
-        await syncCustomerMaterials(item.customerId, itemAiReport.adMaterials, item._id)
-      }
-    }
-
-    return { success: true, dailyReport: summaryReport, date: todayStr, savedId }
-  } catch (err) {
-    console.error('AI 每日汇总分析失败:', err)
-    await db.collection('inspections').where({ _id: db.command.in(inspectionIds) }).update({
-      data: {
-        status: 'analyze_failed',
-        analyzeError: err.message || '每日汇总分析失败',
-        analyzedAt: db.serverDate()
-      }
-    }).catch(console.error)
-    return { success: false, error: err.message || '每日汇总分析失败' }
-  }
-}
-
-/**
- * 将当日汇总结论转化为单条巡检可渲染的标准 aiReport 结构
- */
-function buildInspectionReportFromDaily(summaryReport, inspection, todayStr, activeMaterials = []) {
-  const rankings = Array.isArray(summaryReport.storeRankings) ? summaryReport.storeRankings : []
-  const matchedStore = rankings.find(r => r && r.storeName && r.storeName === inspection.storeName)
-
-  let score = parseInt(matchedStore && matchedStore.score != null ? matchedStore.score : summaryReport.overallScore, 10)
-  if (isNaN(score) || score < 0 || score > 100) score = 80
-
-  let scoreLevel = ''
-  if (score >= 90) scoreLevel = '卓越'
-  else if (score >= 80) scoreLevel = '优秀'
-  else if (score >= 70) scoreLevel = '良好'
-  else if (score >= 60) scoreLevel = '一般'
-  else if (score >= 40) scoreLevel = '较差'
-  else scoreLevel = '不合格'
-
-  const storeComment = matchedStore && matchedStore.comment ? `【本门店点评：${matchedStore.comment}】 ` : ''
-  const summary = `${storeComment}【${todayStr} 汇总结论】${summaryReport.summaryConclusion || ''}`
-
-  const issues = (Array.isArray(summaryReport.commonIssues) ? summaryReport.commonIssues : []).map(iss => ({
-    severity: iss.severity || 'medium',
-    category: iss.category || '共性问题',
-    description: iss.description || '',
-    impact: iss.affectStores ? `涉及范围：${iss.affectStores}` : ''
-  }))
-
-  const suggestions = (Array.isArray(summaryReport.actionPlanTomorrow) ? summaryReport.actionPlanTomorrow : []).map((act, idx) => ({
-    priority: idx === 0 ? 'high' : (idx === 1 ? 'medium' : 'low'),
-    action: act.action || '',
-    expectedEffect: act.target || '',
-    deadline: '明日拜访'
-  }))
-
-  const adMaterials = normalizeAdMaterials(matchedStore && matchedStore.adMaterials, activeMaterials)
-
-  const ov = summaryReport.ownBrandOverview || {}
-  return {
-    score,
-    scoreLevel,
-    summary,
-    productIdentification: [],
-    adMaterials,
-    displayCompliance: {},
-    competitiveAnalysis: {
-      totalBrands: 0,
-      brands: ov.facingSharePercent
-        ? [{ brand: '我方品牌', sharePercent: Number(ov.facingSharePercent) || 0, positionAdvantage: 'high' }]
-        : [],
-      insight: ov.competitiveSituation || ''
-    },
-    issues,
-    suggestions,
-    metadata: {
-      isDailySummary: true,
-      dailyDate: todayStr
+    const singleRes = await analyzeSingleInspection(item, fileIDs, sharedCtx)
+    if (singleRes && singleRes.success && singleRes.report) {
+      readyInspections.push({
+        ...item,
+        status: 'analyzed',
+        aiReport: singleRes.report
+      })
+    } else {
+      singleFailedCount += 1
     }
   }
-}
 
-function parseDailySummaryResponse(responseText, inspections) {
+  if (readyInspections.length === 0) {
+    return { success: false, error: '所选拜访记录均未完成单条分析，无法生成今日综合日报' }
+  }
+
+  // 3. 基于真实单条结构化结果精确汇总大盘指标
+  const aggregated = aggregateDailyMetrics(readyInspections)
+  let narrative
   try {
-    let jsonStr = (responseText || '').trim()
-    const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/)
-    if (jsonMatch) jsonStr = jsonMatch[1].trim()
-    if (!jsonStr.startsWith('{')) {
-      const start = jsonStr.indexOf('{')
-      const end = jsonStr.lastIndexOf('}')
-      if (start !== -1 && end > start) jsonStr = jsonStr.slice(start, end + 1)
-    }
-    const result = JSON.parse(jsonStr)
-    result.storeStats = result.storeStats || {
-      totalStores: inspections.length,
-      totalPhotos: inspections.reduce((acc, cur) => acc + (cur.photoCount || 1), 0),
-      goodStoresCount: inspections.length,
-      needImprovementCount: 0
-    }
-    return result
-  } catch (err) {
-    const e = new Error('AI 日报输出解析失败（非合法 JSON），可重试，未写入假分')
-    e.parseError = true
-    e.cause = err
-    throw e
+    const userPrompt = buildDailySummaryUserPrompt(readyInspections, aggregated, sharedCtx.brandReferenceText)
+    const { text } = await withHardTimeout(
+      callQwen(config, apiKey, [], userPrompt, DAILY_SUMMARY_SYSTEM_PROMPT),
+      AI_HARD_TIMEOUT_MS,
+      '今日拜访综合日报汇总超时'
+    )
+    narrative = parseDailySummaryNarrative(text)
+  } catch (narrErr) {
+    console.warn('[dailySummary] AI 文本综合提炼失败，降级使用真实单条数据确定性汇总:', narrErr.message || narrErr)
+    narrative = buildDeterministicDailyFallback(aggregated, readyInspections)
   }
-}
 
-function generateMockDailySummary(inspections) {
-  const storeNames = Array.from(new Set(inspections.map(i => i.storeName || '未命名门店')))
-  return {
-    summaryTitle: '今日终端拜访综合分析日报（模拟报告）',
-    overallScore: 84,
-    overallLevel: '优秀',
-    summaryConclusion: `今日共完成 ${inspections.length} 家门店的终端陈列拜访（涉及：${storeNames.slice(0, 3).join('、')}等）。我方白酒产品在核心货架排面较为饱满，大部分正标朝向规范；建议后续重点跟进缺失价签的补全与底层堆头的整洁度。`,
-    storeStats: {
-      totalStores: inspections.length,
-      totalPhotos: inspections.reduce((acc, cur) => acc + (cur.photoCount || 1), 0),
-      goodStoresCount: Math.ceil(inspections.length * 0.7),
-      needImprovementCount: Math.floor(inspections.length * 0.3)
-    },
-    ownBrandOverview: {
-      facingSharePercent: 32,
-      goldenPositionRatio: '68%',
-      competitiveSituation: '在重点烟酒店占据视线主陈列面，排面占比领先竞品 5% 左右'
-    },
-    commonIssues: [
-      {
-        rank: 1,
-        category: '价签管理',
-        severity: 'high',
-        affectStores: `${Math.max(1, Math.floor(inspections.length * 0.4))}家门店`,
-        description: '部分重点单品价签脱落或未放在正下方，影响顾客选购'
-      },
-      {
-        rank: 2,
-        category: '陈列平整度',
-        severity: 'medium',
-        affectStores: `${Math.max(1, Math.floor(inspections.length * 0.3))}家门店`,
-        description: '底层陈列未摆正，间距不统一'
-      }
-    ],
-    actionPlanTomorrow: [
-      {
-        priority: 'P0',
-        action: '携带对应品规专用价签，入店首先核查并补齐',
-        target: '保障价格标示规范'
-      },
-      {
-        priority: 'P1',
-        action: '调整主推产品正标完全朝向通道走道',
-        target: '强化货架视觉穿透力'
-      }
-    ],
-    storeRankings: storeNames.slice(0, 5).map((name, idx) => ({
-      storeName: name,
-      score: 80 + (idx === 0 ? 8 : (idx === 1 ? 5 : 0)),
-      status: idx === 0 ? '标杆门店' : '陈列良好',
-      comment: idx === 0 ? '黄金位排面饱满，正标统一' : '整体规范，需微调价签'
-    })),
-    isMock: true
+  // 把 AI 提炼的门店简评挂到确定性 storeRankings 上（绝不篡改分数与排面数）
+  const commentMap = new Map()
+  if (narrative && Array.isArray(narrative.storeComments)) {
+    narrative.storeComments.forEach(c => {
+      if (c && c.storeName && c.comment) commentMap.set(String(c.storeName).trim(), String(c.comment).trim())
+    })
   }
-}
+  const storeRankings = aggregated.storeRankings.map(r => ({
+    ...r,
+    comment: commentMap.get(r.storeName) || r.comment
+  }))
 
-function generateFallbackDailySummary(inspections, errorMsg) {
-  const storeNames = Array.from(new Set(inspections.map(i => i.storeName || '未命名门店')))
-  return {
-    summaryTitle: '今日终端拜访基础汇总报告',
-    overallScore: 80,
-    overallLevel: '良好',
-    summaryConclusion: `今日共完成 ${inspections.length} 家门店拜访。由于网络或接口原因，未生成深度 AI 诊断，系统已自动完成照片存档与基础数据汇总。`,
-    storeStats: {
-      totalStores: inspections.length,
-      totalPhotos: inspections.reduce((acc, cur) => acc + (cur.photoCount || 1), 0),
-      goodStoresCount: inspections.length,
-      needImprovementCount: 0
-    },
+  const summaryReport = {
+    scoringVersion: 'v2',
+    summaryTitle: (narrative && narrative.summaryTitle) || '今日终端拜访综合分析日报',
+    overallScore: aggregated.overallScore,
+    overallLevel: aggregated.overallLevel,
+    summaryConclusion: (narrative && narrative.summaryConclusion) || buildDeterministicDailyFallback(aggregated, readyInspections).summaryConclusion,
+    storeStats: aggregated.storeStats,
     ownBrandOverview: {
-      facingSharePercent: 30,
-      goldenPositionRatio: '50%',
-      competitiveSituation: '正常在架销售'
+      ...aggregated.ownBrandOverview,
+      competitiveSituation: (narrative && narrative.competitiveSituation) || ''
     },
-    commonIssues: [
-      {
-        rank: 1,
-        category: '系统提示',
-        severity: 'low',
-        affectStores: '全门店',
-        description: `深度分析暂未出具：${errorMsg || '请稍后在设置中重新分析'}`
+    commonIssues: (narrative && Array.isArray(narrative.commonIssues)) ? narrative.commonIssues : [],
+    actionPlanTomorrow: (narrative && Array.isArray(narrative.actionPlanTomorrow)) ? narrative.actionPlanTomorrow : [],
+    storeRankings
+  }
+
+  // 4. 落库存储到 dailyReports（北京时间 YYYY-MM-DD，同日同业务员支持多轮合并重算）
+  const todayStr = beijingDateStr()
+  const ownerOpenids = Array.from(new Set(readyInspections.map(i => i._openid).filter(Boolean)))
+  const userNames = Array.from(new Set(readyInspections.map(i => i.userName).filter(Boolean)))
+  const ownerKey = ownerOpenids.length === 1 ? ownerOpenids[0] : (callerOpenid || 'multi')
+  const safeOwner = String(ownerKey).replace(/[^a-zA-Z0-9_-]/g, '_') || 'unknown'
+  const reportDocId = `dr_${safeOwner}_${todayStr}`
+
+  const newInspectionIds = readyInspections.map(i => i._id)
+  const newStoreNames = Array.from(new Set(readyInspections.map(i => i.storeName || '未命名门店')))
+
+  let mergedInspectionIds = newInspectionIds
+  let mergedStoreNames = newStoreNames
+  let mergedOwnerOpenids = ownerOpenids
+  let mergedUserName = userNames.join('、')
+  let mergedReport = summaryReport
+
+  try {
+    const prev = await db.collection('dailyReports').doc(reportDocId).get()
+    if (prev.data) {
+      const p = prev.data
+      mergedInspectionIds = Array.from(new Set([...(p.inspectionIds || []), ...newInspectionIds]))
+      mergedStoreNames = Array.from(new Set([...(p.storeNames || []), ...newStoreNames]))
+      mergedOwnerOpenids = Array.from(new Set([...(p.ownerOpenids || []), ...ownerOpenids]))
+      const prevNames = (p.userName || '').split('、').filter(Boolean)
+      mergedUserName = Array.from(new Set([...prevNames, ...userNames])).join('、')
+
+      mergedReport = mergeDailyReports(p.report, summaryReport)
+    }
+  } catch (prevErr) {
+    // 首次生成，无历史文档
+  }
+
+  const docPayload = {
+    date: todayStr,
+    _openid: ownerOpenids.length === 1 ? ownerOpenids[0] : (callerOpenid || ''),
+    ownerOpenids: mergedOwnerOpenids,
+    userName: mergedUserName,
+    generatedAt: db.serverDate(),
+    inspectionCount: mergedInspectionIds.length,
+    inspectionIds: mergedInspectionIds,
+    storeNames: mergedStoreNames,
+    report: mergedReport
+  }
+
+  let savedId = reportDocId
+  try {
+    await db.collection('dailyReports').doc(reportDocId).set({ data: docPayload })
+  } catch (dbErr) {
+    try {
+      const addRes = await db.collection('dailyReports').add({ data: docPayload })
+      savedId = addRes._id
+    } catch (addErr) {
+      try {
+        await db.collection('settings').doc('global').update({
+          data: { latestDailyReport: docPayload }
+        })
+      } catch (updateErr) {
+        console.warn('存储每日汇总失败:', updateErr)
       }
-    ],
-    actionPlanTomorrow: [
-      {
-        priority: 'P0',
-        action: '继续执行常规拜访与陈列维护',
-        target: '保持在架规范'
-      }
-    ],
-    storeRankings: storeNames.map(name => ({
-      storeName: name,
-      score: 80,
-      status: '已拜访',
-      comment: '照片已完成归档'
-    }))
+      savedId = ''
+    }
+  }
+
+  // 5. 仅在巡检记录上关联 dailyReportId，绝不覆盖单条完整 aiReport
+  if (savedId) {
+    for (const item of readyInspections) {
+      await db.collection('inspections').doc(item._id).update({
+        data: { dailyReportId: savedId }
+      }).catch(err => console.warn(`关联巡检 ${item._id} 日报 ID 失败:`, err))
+    }
+  }
+
+  return {
+    success: true,
+    dailyReport: mergedReport,
+    date: todayStr,
+    savedId,
+    analyzedCount: readyInspections.length,
+    failedCount: singleFailedCount
   }
 }

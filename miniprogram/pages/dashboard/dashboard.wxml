@@ -59,6 +59,21 @@
 
   <view class="stats-row" wx:if="{{overall}}">
     <view class="stat-chip">
+      <text class="stat-num">{{overall.avgFacingCount != null ? overall.avgFacingCount + '面' : '—'}}</text>
+      <text class="stat-lab">平均排面数</text>
+    </view>
+    <view class="stat-chip">
+      <text class="stat-num">{{overall.avgScore != null ? overall.avgScore + '分' : '—'}}</text>
+      <text class="stat-lab">平均陈列分</text>
+    </view>
+    <view class="stat-chip">
+      <text class="stat-num">{{overall.inStockRate != null ? overall.inStockRate + '%' : '—'}}</text>
+      <text class="stat-lab">门店在架率</text>
+    </view>
+  </view>
+
+  <view class="stats-row" wx:if="{{overall}}">
+    <view class="stat-chip">
       <text class="stat-num">{{overall.customerCount}}</text>
       <text class="stat-lab">拜访客户数</text>
     </view>
@@ -88,7 +103,9 @@
     <block wx:if="{{storeTrend}}">
       <view class="store-hero">
         <text class="store-share">{{storeTrend.current && storeTrend.current.avgSharePercent != null ? storeTrend.current.avgSharePercent + '%' : '—'}}</text>
-        <text class="store-share-lab">本月平均排面</text>
+        <text class="store-share-lab">
+          本月平均排面占比<block wx:if="{{storeTrend.current && storeTrend.current.avgFacingCount != null}}"> · 平均 {{storeTrend.current.avgFacingCount}} 面</block>
+        </text>
       </view>
       <view class="store-cmp">
         <text>环比 {{storeTrend.mom.available ? ((storeTrend.mom.deltaPoints > 0 ? '+' : '') + storeTrend.mom.deltaPoints + ' pt') : '暂无'}}</text>
@@ -99,8 +116,8 @@
         <view class="trend-row">
           <view class="trend-item" wx:for="{{storeTrend.series}}" wx:key="yearMonth">
             <text class="trend-ym">{{item.yearMonth}}</text>
-            <text class="trend-val">{{item.avgSharePercent != null ? item.avgSharePercent + '%' : '—'}}</text>
-            <text class="trend-visits">{{item.visitCount}}次</text>
+            <text class="trend-val">{{item.avgFacingCount != null ? item.avgFacingCount + '面' : (item.avgSharePercent != null ? item.avgSharePercent + '%' : '—')}}</text>
+            <text class="trend-visits">{{item.avgSharePercent != null ? item.avgSharePercent + '% · ' : ''}}{{item.visitCount}}次</text>
           </view>
         </view>
       </scroll-view>

@@ -20,6 +20,7 @@ Page({
     materialTotal: 0,
     materialCategories: [
       '灯箱',
+      '横签',
       'POP海报',
       '台卡/桌贴',
       '门头店招',

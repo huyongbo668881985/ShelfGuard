@@ -1,0 +1,47 @@
+{
+  "ownBrandNames": ["永丰", "永丰特8"],
+  "brandReferenceText": "\n\n## 本品牌产品资料\n- 品牌：永丰，产品线：特8，别名/简称：永丰特8、特8",
+  "bannerRefMaterials": [],
+  "cases": [
+    {
+      "id": "case-01",
+      "name": "示例-正常在架8面（有价签无横签）",
+      "images": ["./images/sample-01.jpg"],
+      "expected": {
+        "hasShelfPhoto": true,
+        "ownBrandPresent": true,
+        "ownFacingCount": 8,
+        "score": 75,
+        "dimensions": {
+          "facingCount": 40,
+          "goldenPosition": 16,
+          "labelOrientation": 9,
+          "priceTag": 10,
+          "horizontalBanner": 0
+        }
+      }
+    },
+    {
+      "id": "case-02",
+      "name": "示例-拍了货架但无我方品牌（未上柜）",
+      "images": ["./images/sample-02.jpg"],
+      "expected": {
+        "hasShelfPhoto": true,
+        "ownBrandPresent": false,
+        "ownFacingCount": 0,
+        "score": null
+      }
+    },
+    {
+      "id": "case-03",
+      "name": "示例-仅门头照（无货架照）",
+      "images": ["./images/sample-03.jpg"],
+      "expected": {
+        "hasShelfPhoto": false,
+        "ownBrandPresent": null,
+        "ownFacingCount": null,
+        "score": null
+      }
+    }
+  ]
+}

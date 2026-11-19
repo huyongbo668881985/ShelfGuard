@@ -342,3 +342,33 @@
   font-size: 24rpx;
   color: #9AA0A6;
 }
+
+.record-facing {
+  display: inline-block;
+  margin-right: 8rpx;
+  padding: 2rpx 12rpx;
+  border-radius: 16rpx;
+  background: #e3f2fd;
+  color: #1565c0;
+  font-size: 22rpx;
+  font-weight: 600;
+}
+
+.record-nonscore {
+  display: inline-block;
+  padding: 4rpx 12rpx;
+  border-radius: 16rpx;
+  font-size: 22rpx;
+  font-weight: 600;
+}
+
+.record-nonscore.tag-oos {
+  background: #fff3e0;
+  color: #e65100;
+}
+
+.record-nonscore.tag-noshelf {
+  background: #f1f5f9;
+  color: #64748b;
+}
+

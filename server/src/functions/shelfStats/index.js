@@ -12,6 +12,7 @@
 // 角色：永远从 users 表按 openid 查，不信任客户端角色声明（同 getHistory）。
 
 const cloud = require('../../cloud-shim')
+const { extractFacingSummary } = require('../analyzeImage/scoring')
 
 cloud.init({
   env: cloud.DYNAMIC_CURRENT_ENV
@@ -479,6 +480,12 @@ async function loadOwnBrandNames() {
 function extractSharePercent(aiReport, ownBrandNames) {
   if (!aiReport || typeof aiReport !== 'object') return null
 
+  const fm = aiReport.facingMetrics
+  if (fm && fm.ownFacingShare != null) {
+    const directFm = normalizeShare(fm.ownFacingShare)
+    if (directFm !== null) return directFm
+  }
+
   const ov = aiReport.ownBrandOverview
   if (ov) {
     const direct = normalizeShare(ov.facingSharePercent)
@@ -626,9 +633,16 @@ async function rebuildAll({ startedAt, lowVisitThreshold }) {
           visitCount: 0,
           shareSum: 0,
           shareN: 0,
+          facingSum: 0,
+          facingN: 0,
           scoreSum: 0,
           scoreN: 0,
+          shelfVisitCount: 0,
+          ownBrandPresentCount: 0,
+          outOfStockCount: 0,
+          noShelfPhotoCount: 0,
           lastSharePercent: null,
+          lastFacingCount: null,
           lastScore: null,
           lastInspectionId: '',
           lastCreatedAt: 0
@@ -640,8 +654,15 @@ async function rebuildAll({ startedAt, lowVisitThreshold }) {
       if (row.storeName) agg.storeName = row.storeName
       if (row.userName) agg.userName = row.userName
 
-      const share = extractSharePercent(row.aiReport, ownBrandNames)
-      const score = row.aiReport ? normalizeScore(row.aiReport.score) : null
+      const ownBrandLower = new Set(Array.from(ownBrandNames).map(s => String(s || '').toLowerCase()))
+      const validReport = (
+        row.aiReport &&
+        typeof row.aiReport === 'object' &&
+        !(row.aiReport.metadata && (row.aiReport.metadata.isMock || row.aiReport.metadata.parseError))
+      ) ? row.aiReport : null
+      const share = extractSharePercent(validReport, ownBrandNames)
+      const fs = extractFacingSummary(validReport, ownBrandLower)
+      const score = validReport ? normalizeScore(validReport.score) : null
       const createdMs = row.createdAt ? new Date(row.createdAt).getTime() : 0
 
       if (share !== null) {
@@ -649,15 +670,32 @@ async function rebuildAll({ startedAt, lowVisitThreshold }) {
         agg.shareSum += share
         agg.shareN += 1
       }
+      if (fs.ownFacingCount !== null) {
+        agg.facingSum += fs.ownFacingCount
+        agg.facingN += 1
+      }
       if (score !== null) {
         agg.scoreSum += score
         agg.scoreN += 1
+      }
+      if (validReport) {
+        if (fs.hasShelfPhoto === false) {
+          agg.noShelfPhotoCount += 1
+        } else if (fs.hasShelfPhoto === true) {
+          agg.shelfVisitCount += 1
+          if (fs.ownBrandPresent === false) {
+            agg.outOfStockCount += 1
+          } else if (fs.ownBrandPresent === true) {
+            agg.ownBrandPresentCount += 1
+          }
+        }
       }
 
       if (createdMs >= agg.lastCreatedAt) {
         agg.lastCreatedAt = createdMs
         agg.lastInspectionId = row._id || ''
         if (share !== null) agg.lastSharePercent = share
+        if (fs.ownFacingCount !== null) agg.lastFacingCount = fs.ownFacingCount
         if (score !== null) agg.lastScore = score
       }
     }
@@ -674,7 +712,11 @@ async function rebuildAll({ startedAt, lowVisitThreshold }) {
       break
     }
     const avgShare = agg.shareN > 0 ? round1(agg.shareSum / agg.shareN) : null
+    const avgFacingCount = agg.facingN > 0 ? round1(agg.facingSum / agg.facingN) : null
     const avgScore = agg.scoreN > 0 ? Math.round(agg.scoreSum / agg.scoreN) : null
+    const inStockRate = agg.shelfVisitCount > 0
+      ? round1((agg.ownBrandPresentCount / agg.shelfVisitCount) * 100)
+      : null
     const docId = byStoreDocId(agg.ownerOpenid, agg.customerId, agg.yearMonth)
     await upsertDoc(COL_BY_STORE, docId, {
       ownerOpenid: agg.ownerOpenid,
@@ -685,8 +727,15 @@ async function rebuildAll({ startedAt, lowVisitThreshold }) {
       visitCount: agg.visitCount,
       avgSharePercent: avgShare,
       lastSharePercent: agg.lastSharePercent,
+      avgFacingCount,
+      lastFacingCount: agg.lastFacingCount,
       avgScore,
       lastScore: agg.lastScore,
+      shelfVisitCount: agg.shelfVisitCount,
+      ownBrandPresentCount: agg.ownBrandPresentCount,
+      outOfStockCount: agg.outOfStockCount,
+      noShelfPhotoCount: agg.noShelfPhotoCount,
+      inStockRate,
       lastInspectionId: agg.lastInspectionId,
       shareSampleCount: agg.shareN
     })
@@ -694,18 +743,25 @@ async function rebuildAll({ startedAt, lowVisitThreshold }) {
   }
 
   // 按 scope 聚合整体：team + 每位业务员
-  // userMonths: Map openid -> Map ym -> stores[]
   const userMonthStores = new Map()
   const teamMonthStores = new Map()
 
   for (const agg of storeMap.values()) {
     const avgShare = agg.shareN > 0 ? (agg.shareSum / agg.shareN) : null
+    const avgFacing = agg.facingN > 0 ? (agg.facingSum / agg.facingN) : null
+    const avgScore = agg.scoreN > 0 ? (agg.scoreSum / agg.scoreN) : null
     const storeRow = {
       customerId: agg.customerId,
       storeName: agg.storeName,
       userName: agg.userName || '',
       visitCount: agg.visitCount,
       avgSharePercent: avgShare,
+      avgFacingCount: avgFacing,
+      avgScore,
+      shelfVisitCount: agg.shelfVisitCount,
+      ownBrandPresentCount: agg.ownBrandPresentCount,
+      outOfStockCount: agg.outOfStockCount,
+      noShelfPhotoCount: agg.noShelfPhotoCount,
       lastScore: agg.lastScore,
       lastCreatedAt: agg.lastCreatedAt || 0
     }
@@ -725,6 +781,20 @@ async function rebuildAll({ startedAt, lowVisitThreshold }) {
     const avgSharePercent = shareVals.length > 0
       ? round1(shareVals.reduce((a, b) => a + b, 0) / shareVals.length)
       : null
+    const facingVals = stores.map(s => s.avgFacingCount).filter(v => v != null && Number.isFinite(v))
+    const avgFacingCount = facingVals.length > 0
+      ? round1(facingVals.reduce((a, b) => a + b, 0) / facingVals.length)
+      : null
+    const scoreVals = stores.map(s => s.avgScore).filter(v => v != null && Number.isFinite(v))
+    const avgScore = scoreVals.length > 0
+      ? Math.round(scoreVals.reduce((a, b) => a + b, 0) / scoreVals.length)
+      : null
+    const shelfVisitTotal = stores.reduce((s, x) => s + (x.shelfVisitCount || 0), 0)
+    const presentTotal = stores.reduce((s, x) => s + (x.ownBrandPresentCount || 0), 0)
+    const outOfStockCount = stores.reduce((s, x) => s + (x.outOfStockCount || 0), 0)
+    const noShelfPhotoCount = stores.reduce((s, x) => s + (x.noShelfPhotoCount || 0), 0)
+    const inStockRate = shelfVisitTotal > 0 ? round1((presentTotal / shelfVisitTotal) * 100) : null
+
     const avgVisitsPerCustomer = customerCount > 0 ? round1(totalVisits / customerCount) : 0
     const lowList = stores
       .filter(s => (s.visitCount || 0) < lowVisitThreshold)
@@ -742,6 +812,7 @@ async function rebuildAll({ startedAt, lowVisitThreshold }) {
           userName: s.userName || '',
           visitCount: s.visitCount,
           avgSharePercent: s.avgSharePercent != null ? round1(s.avgSharePercent) : null,
+          avgFacingCount: s.avgFacingCount != null ? round1(s.avgFacingCount) : null,
           lastScore: s.lastScore != null ? s.lastScore : null,
           lastVisitDate
         }
@@ -754,6 +825,12 @@ async function rebuildAll({ startedAt, lowVisitThreshold }) {
       ownerOpenid: scope === 'team' ? '' : ownerOpenid,
       customerCount,
       avgSharePercent,
+      avgFacingCount,
+      avgScore,
+      inStockRate,
+      shelfVisitTotal,
+      outOfStockCount,
+      noShelfPhotoCount,
       totalVisits,
       avgVisitsPerCustomer,
       lowVisitThreshold,
@@ -878,6 +955,11 @@ async function handleDashboard({ isManager, openid, yearMonth, compareYearMonth 
       yearMonth: ym,
       customerCount: current.customerCount || 0,
       avgSharePercent: curShare,
+      avgFacingCount: current.avgFacingCount != null ? current.avgFacingCount : null,
+      avgScore: current.avgScore != null ? current.avgScore : null,
+      inStockRate: current.inStockRate != null ? current.inStockRate : null,
+      outOfStockCount: current.outOfStockCount || 0,
+      noShelfPhotoCount: current.noShelfPhotoCount || 0,
       totalVisits: current.totalVisits || 0,
       avgVisitsPerCustomer: current.avgVisitsPerCustomer != null ? current.avgVisitsPerCustomer : null,
       lowVisitThreshold: current.lowVisitThreshold != null ? current.lowVisitThreshold : DEFAULT_LOW_VISIT_THRESHOLD,
@@ -943,7 +1025,7 @@ async function handleStoreTrend({ isManager, openid, customerId, months }) {
     return { success: false, error: err.message || '查询失败' }
   }
 
-  // 管理者：同一客户可能被多个业务员拜访 → 按 yearMonth 合并（visit 相加，份额加权或再平均）
+  // 管理者：同一客户可能被多个业务员拜访 → 按 yearMonth 合并
   const byYm = new Map()
   rows.forEach(r => {
     const ym = r.yearMonth
@@ -953,6 +1035,10 @@ async function handleStoreTrend({ isManager, openid, customerId, months }) {
         visitCount: 0,
         shareSum: 0,
         shareN: 0,
+        facingSum: 0,
+        facingN: 0,
+        scoreSum: 0,
+        scoreN: 0,
         storeName: r.storeName || '',
         userName: r.userName || '',
         lastInspectionId: r.lastInspectionId || ''
@@ -964,6 +1050,14 @@ async function handleStoreTrend({ isManager, openid, customerId, months }) {
       a.shareSum += r.avgSharePercent
       a.shareN += 1
     }
+    if (r.avgFacingCount != null && Number.isFinite(r.avgFacingCount)) {
+      a.facingSum += r.avgFacingCount
+      a.facingN += 1
+    }
+    if (r.avgScore != null && Number.isFinite(r.avgScore)) {
+      a.scoreSum += r.avgScore
+      a.scoreN += 1
+    }
     if (r.storeName) a.storeName = r.storeName
     if (r.userName) a.userName = r.userName
     if (r.lastInspectionId) a.lastInspectionId = r.lastInspectionId
@@ -972,12 +1066,14 @@ async function handleStoreTrend({ isManager, openid, customerId, months }) {
   const series = yearMonths.slice().reverse().map(ym => {
     const a = byYm.get(ym)
     if (!a) {
-      return { yearMonth: ym, visitCount: 0, avgSharePercent: null, available: false }
+      return { yearMonth: ym, visitCount: 0, avgSharePercent: null, avgFacingCount: null, avgScore: null, available: false }
     }
     return {
       yearMonth: ym,
       visitCount: a.visitCount,
       avgSharePercent: a.shareN > 0 ? round1(a.shareSum / a.shareN) : null,
+      avgFacingCount: a.facingN > 0 ? round1(a.facingSum / a.facingN) : null,
+      avgScore: a.scoreN > 0 ? Math.round(a.scoreSum / a.scoreN) : null,
       storeName: a.storeName,
       userName: a.userName,
       available: true

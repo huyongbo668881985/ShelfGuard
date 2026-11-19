@@ -13,6 +13,11 @@
 //   注意：这里**不再**保留"系统无管理员则任何人可管理"的自举逻辑，那个是安全漏洞。
 
 const cloud = require('../../cloud-shim')
+const {
+  DEFAULT_SCORING_RULES,
+  validateScoringRules,
+  normalizeScoringRules
+} = require('../analyzeImage/scoring')
 
 cloud.init({
   env: cloud.DYNAMIC_CURRENT_ENV
@@ -31,7 +36,8 @@ const DEFAULT_SETTINGS = {
   windowMinutes: 180,
   batchSize: 2,
   // traffic = 多图拼成一张再传（省流量）；quality = 多图各自全分辨率直传（识别更准）
-  imageMode: 'traffic'
+  imageMode: 'traffic',
+  scoringRules: { ...DEFAULT_SCORING_RULES }
 }
 
 exports.main = async (event, context) => {
@@ -161,6 +167,7 @@ async function handleGet(openid) {
       windowMinutes: settings.windowMinutes,
       batchSize: settings.batchSize,
       imageMode: settings.imageMode === 'quality' ? 'quality' : 'traffic',
+      scoringRules: normalizeScoringRules(settings.scoringRules),
       // API Key 只回掩码，明文不出服务端
       hasApiKey: !!settings.dashscopeApiKey,
       apiKeyMasked: maskKey(settings.dashscopeApiKey),
@@ -243,6 +250,14 @@ async function handleSave(openid, input) {
       return { success: false, error: '识别模式只能是 traffic（流量优先）或 quality（精度优先）' }
     }
     data.imageMode = input.imageMode
+  }
+
+  if (input.scoringRules !== undefined) {
+    const check = validateScoringRules(input.scoringRules)
+    if (!check.ok) {
+      return { success: false, error: check.error }
+    }
+    data.scoringRules = check.rules
   }
 
   // 进销存 (jxc-app) 配置

@@ -81,80 +81,93 @@
 
     <!-- AI 分析报告 -->
     <block wx:if="{{detail.aiReport}}">
+      <!-- 照片质量 / 局部取景温和提醒（不阻断） -->
+      <view class="quality-notice-card" wx:if="{{reportView.qualityNotices && reportView.qualityNotices.length > 0}}">
+        <view class="quality-notice-body">
+          <text class="quality-notice-title">💡 拍摄与取景提示</text>
+          <text class="quality-notice-text" wx:for="{{reportView.qualityNotices}}" wx:key="index">{{item}}</text>
+        </view>
+        <view class="quality-notice-actions">
+          <text class="quality-action-link" bindtap="retryAnalysis">重新分析</text>
+          <text class="quality-action-sep">·</text>
+          <text class="quality-action-link" bindtap="goToCamera">再拍一张</text>
+        </view>
+      </view>
+
       <!-- 评分卡片 -->
       <view class="card score-card">
-        <view class="score-circle score-{{detail.aiReport.score >= 80 ? 'high' : detail.aiReport.score >= 60 ? 'mid' : 'low'}}">
+        <view
+          wx:if="{{reportView.scoreState === 'scored'}}"
+          class="score-circle score-{{detail.aiReport.score >= 80 ? 'high' : detail.aiReport.score >= 60 ? 'mid' : 'low'}}"
+        >
           <text class="score-number">{{detail.aiReport.score}}</text>
           <text class="score-level">{{detail.aiReport.scoreLevel || ''}}</text>
+        </view>
+        <view
+          wx:elif="{{reportView.scoreState === 'out_of_stock'}}"
+          class="score-circle score-oos"
+        >
+          <text class="score-status-tag">未上柜</text>
+          <text class="score-level">不计均分</text>
+        </view>
+        <view
+          wx:elif="{{reportView.scoreState === 'no_shelf'}}"
+          class="score-circle score-noshelf"
+        >
+          <text class="score-status-tag">无货架照</text>
+          <text class="score-level">不计均分</text>
+        </view>
+        <view wx:else class="score-circle score-noshelf">
+          <text class="score-status-tag">--</text>
+          <text class="score-level">{{detail.aiReport.scoreLevel || '待评估'}}</text>
         </view>
         <view class="score-summary">
           <text class="summary-text">{{detail.aiReport.summary}}</text>
         </view>
       </view>
 
-      <!-- 陈列规范度评分 -->
-      <view class="card compliance-card" wx:if="{{detail.aiReport.displayCompliance}}">
-        <view class="section-title">陈列规范度</view>
+      <!-- 独立核心指标：陈列排面 -->
+      <view class="card facing-metrics-card" wx:if="{{reportView.facingSummary}}">
+        <view class="facing-head">
+          <text class="section-title facing-title">陈列排面（核心指标）</text>
+          <text
+            wx:if="{{reportView.facingSummary.confidenceLabel}}"
+            class="facing-conf conf-{{reportView.facingSummary.confidenceLevel}}"
+          >{{reportView.facingSummary.confidenceLabel}}</text>
+        </view>
+        <view class="facing-grid">
+          <view class="facing-cell">
+            <text class="facing-val">{{reportView.facingSummary.ownFacingCount}}<text class="facing-unit">面</text></text>
+            <text class="facing-lab">我方总排面</text>
+          </view>
+          <view class="facing-divider"></view>
+          <view class="facing-cell">
+            <text class="facing-val">{{reportView.facingSummary.ownSkuCount}}<text class="facing-unit" wx:if="{{reportView.facingSummary.ownSkuCount !== '--'}}">个</text></text>
+            <text class="facing-lab">在架品规</text>
+          </view>
+          <view class="facing-divider"></view>
+          <view class="facing-cell">
+            <text class="facing-val">{{reportView.facingSummary.ownFacingShare}}</text>
+            <text class="facing-lab">排面占比</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 陈列规范度评分（新 5 维 / 旧 6 维双兼容） -->
+      <view class="card compliance-card" wx:if="{{reportView.complianceList && reportView.complianceList.length > 0}}">
+        <view class="section-title">
+          {{reportView.isV2 ? '陈列质量评分明细（5维 · 满分100）' : '陈列规范度'}}
+        </view>
         <view class="compliance-list">
-          <view class="compliance-item" wx:if="{{detail.aiReport.displayCompliance.labelOrientation}}">
+          <view class="compliance-item" wx:for="{{reportView.complianceList}}" wx:key="key">
             <view class="compliance-header">
-              <text class="compliance-name">正标朝向</text>
-              <text class="compliance-score" style="color: {{tools.getComplianceColor(detail.aiReport.displayCompliance.labelOrientation.score)}}">{{detail.aiReport.displayCompliance.labelOrientation.score}}分</text>
+              <text class="compliance-name">{{item.name}}</text>
+              <text class="compliance-score" style="color: {{item.color}}">{{item.scoreText}}</text>
             </view>
             <view class="compliance-bar">
-              <view class="compliance-fill" style="width: {{detail.aiReport.displayCompliance.labelOrientation.score}}%; background: {{tools.getComplianceColor(detail.aiReport.displayCompliance.labelOrientation.score)}}"></view>
+              <view class="compliance-fill" style="width: {{item.percent}}%; background: {{item.color}}"></view>
             </view>
-            <text class="compliance-detail">{{detail.aiReport.displayCompliance.labelOrientation.detail}}</text>
-          </view>
-          <view class="compliance-item" wx:if="{{detail.aiReport.displayCompliance.neatness}}">
-            <view class="compliance-header">
-              <text class="compliance-name">整齐度</text>
-              <text class="compliance-score" style="color: {{tools.getComplianceColor(detail.aiReport.displayCompliance.neatness.score)}}">{{detail.aiReport.displayCompliance.neatness.score}}分</text>
-            </view>
-            <view class="compliance-bar">
-              <view class="compliance-fill" style="width: {{detail.aiReport.displayCompliance.neatness.score}}%; background: {{tools.getComplianceColor(detail.aiReport.displayCompliance.neatness.score)}}"></view>
-            </view>
-            <text class="compliance-detail">{{detail.aiReport.displayCompliance.neatness.detail}}</text>
-          </view>
-          <view class="compliance-item" wx:if="{{detail.aiReport.displayCompliance.goldenPosition}}">
-            <view class="compliance-header">
-              <text class="compliance-name">黄金位置</text>
-              <text class="compliance-score" style="color: {{tools.getComplianceColor(detail.aiReport.displayCompliance.goldenPosition.score)}}">{{detail.aiReport.displayCompliance.goldenPosition.score}}分</text>
-            </view>
-            <view class="compliance-bar">
-              <view class="compliance-fill" style="width: {{detail.aiReport.displayCompliance.goldenPosition.score}}%; background: {{tools.getComplianceColor(detail.aiReport.displayCompliance.goldenPosition.score)}}"></view>
-            </view>
-            <text class="compliance-detail">{{detail.aiReport.displayCompliance.goldenPosition.detail}}</text>
-          </view>
-          <view class="compliance-item" wx:if="{{detail.aiReport.displayCompliance.brandConcentration}}">
-            <view class="compliance-header">
-              <text class="compliance-name">集中陈列</text>
-              <text class="compliance-score" style="color: {{tools.getComplianceColor(detail.aiReport.displayCompliance.brandConcentration.score)}}">{{detail.aiReport.displayCompliance.brandConcentration.score}}分</text>
-            </view>
-            <view class="compliance-bar">
-              <view class="compliance-fill" style="width: {{detail.aiReport.displayCompliance.brandConcentration.score}}%; background: {{tools.getComplianceColor(detail.aiReport.displayCompliance.brandConcentration.score)}}"></view>
-            </view>
-            <text class="compliance-detail">{{detail.aiReport.displayCompliance.brandConcentration.detail}}</text>
-          </view>
-          <view class="compliance-item" wx:if="{{detail.aiReport.displayCompliance.priceTagMatch}}">
-            <view class="compliance-header">
-              <text class="compliance-name">价签对应</text>
-              <text class="compliance-score" style="color: {{tools.getComplianceColor(detail.aiReport.displayCompliance.priceTagMatch.score)}}">{{detail.aiReport.displayCompliance.priceTagMatch.score}}分</text>
-            </view>
-            <view class="compliance-bar">
-              <view class="compliance-fill" style="width: {{detail.aiReport.displayCompliance.priceTagMatch.score}}%; background: {{tools.getComplianceColor(detail.aiReport.displayCompliance.priceTagMatch.score)}}"></view>
-            </view>
-            <text class="compliance-detail">{{detail.aiReport.displayCompliance.priceTagMatch.detail}}</text>
-          </view>
-          <view class="compliance-item" wx:if="{{detail.aiReport.displayCompliance.shelfFullness}}">
-            <view class="compliance-header">
-              <text class="compliance-name">货架饱满度</text>
-              <text class="compliance-score" style="color: {{tools.getComplianceColor(detail.aiReport.displayCompliance.shelfFullness.score)}}">{{detail.aiReport.displayCompliance.shelfFullness.score}}分</text>
-            </view>
-            <view class="compliance-bar">
-              <view class="compliance-fill" style="width: {{detail.aiReport.displayCompliance.shelfFullness.score}}%; background: {{tools.getComplianceColor(detail.aiReport.displayCompliance.shelfFullness.score)}}"></view>
-            </view>
-            <text class="compliance-detail">{{detail.aiReport.displayCompliance.shelfFullness.detail}}</text>
+            <text class="compliance-detail" wx:if="{{item.detail}}">{{item.detail}}</text>
           </view>
         </view>
       </view>

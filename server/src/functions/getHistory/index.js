@@ -9,6 +9,7 @@
 // 角色永远从服务端 users 表按 openid 查出来，不信任客户端传的任何角色声明。
 
 const cloud = require('../../cloud-shim')
+const { extractFacingSummary } = require('../analyzeImage/scoring')
 
 cloud.init({
   env: cloud.DYNAMIC_CURRENT_ENV
@@ -34,6 +35,11 @@ function normalizeScore(value) {
 
 function extractListSharePercent(aiReport) {
   if (!aiReport || typeof aiReport !== 'object') return null
+  const fm = aiReport.facingMetrics
+  if (fm && fm.ownFacingShare != null) {
+    const n = Number(fm.ownFacingShare)
+    if (Number.isFinite(n) && n >= 0 && n <= 100) return Math.round(n * 10) / 10
+  }
   const ov = aiReport.ownBrandOverview
   if (ov && ov.facingSharePercent != null) {
     const n = Number(ov.facingSharePercent)
@@ -46,7 +52,6 @@ function extractListSharePercent(aiReport) {
       const n = Number(own.sharePercent)
       if (Number.isFinite(n) && n >= 0 && n <= 100) return Math.round(n * 10) / 10
     }
-    // 列表展示：若只有一个品牌带份额，作为参考展示（完整我方识别在 shelfStats 重建时做）
     const withShare = brands.filter(b => b && b.sharePercent != null && Number.isFinite(Number(b.sharePercent)))
     if (withShare.length === 1) {
       const n = Number(withShare[0].sharePercent)
@@ -228,11 +233,13 @@ exports.main = async (event, context) => {
       const weekRes = await db.collection('inspections').where(weekConditions).count()
 
       const $ = db.command.aggregate
-      let avgScore = 0
+      let avgScore = null
+      let avgFacingCount = null
+      let inStockRate = null
       try {
         const avgRes = await db.collection('inspections')
           .aggregate()
-          .match(_.and(statsConditions, { 'aiReport.score': _.exists(true) }))
+          .match(_.and(statsConditions, { 'aiReport.score': _.gte(0) }))
           .group({
             _id: null,
             avgScore: $.avg('$aiReport.score')
@@ -243,6 +250,40 @@ exports.main = async (event, context) => {
         }
       } catch (aggErr) {
         console.error('聚合计算平均分失败，降级为空:', aggErr)
+      }
+
+      try {
+        const facingRes = await db.collection('inspections')
+          .aggregate()
+          .match(_.and(statsConditions, { 'aiReport.facingMetrics.ownFacingCount': _.gte(0) }))
+          .group({
+            _id: null,
+            avgFacingCount: $.avg('$aiReport.facingMetrics.ownFacingCount')
+          })
+          .end()
+        if (facingRes.list && facingRes.list.length > 0 && facingRes.list[0].avgFacingCount != null) {
+          avgFacingCount = Math.round(facingRes.list[0].avgFacingCount * 10) / 10
+        }
+      } catch (aggErr) {
+        console.warn('聚合计算平均排面失败:', aggErr.message || aggErr)
+      }
+
+      try {
+        const analyzedShelfCond = _.and(statsConditions, {
+          status: 'analyzed',
+          'aiReport.metadata.parseError': _.neq(true),
+          'aiReport.hasShelfPhoto': _.neq(false),
+          'aiReport.scoreLevel': _.neq('无货架照')
+        })
+        const [shelfTotalRes, oosRes] = await Promise.all([
+          db.collection('inspections').where(analyzedShelfCond).count(),
+          db.collection('inspections').where(_.and(analyzedShelfCond, { 'aiReport.ownBrandPresent': false })).count()
+        ])
+        if (shelfTotalRes.total > 0) {
+          inStockRate = Math.round(((shelfTotalRes.total - oosRes.total) / shelfTotalRes.total) * 1000) / 10
+        }
+      } catch (stockErr) {
+        console.warn('计算在架率失败:', stockErr.message || stockErr)
       }
 
       // 顺便获取最新的每日汇总结论，供历史页置顶卡片展示（严格遵守业务员数据隔离）
@@ -284,7 +325,13 @@ exports.main = async (event, context) => {
         success: true,
         isManager,
         salesUsers,
-        stats: { total: totalRes.total, thisWeek: weekRes.total, avgScore },
+        stats: {
+          total: totalRes.total,
+          thisWeek: weekRes.total,
+          avgScore,
+          avgFacingCount,
+          inStockRate
+        },
         latestDailyReport
       }
     }
@@ -479,11 +526,16 @@ exports.main = async (event, context) => {
         if (item.aiReport && typeof item.aiReport === 'object') {
           const ar = item.aiReport
           const sharePercent = extractListSharePercent(ar)
+          const fs = extractFacingSummary(ar)
           aiSummary = {
             score: ar.score,
             scoreLevel: ar.scoreLevel,
             summary: ar.summary,
-            sharePercent
+            hasShelfPhoto: fs.hasShelfPhoto,
+            ownBrandPresent: fs.ownBrandPresent,
+            facingMetrics: ar.facingMetrics || null,
+            ownFacingCount: fs.ownFacingCount,
+            sharePercent: fs.ownFacingShare != null ? fs.ownFacingShare : sharePercent
           }
         }
         return {
@@ -563,16 +615,26 @@ exports.main = async (event, context) => {
       if (item.aiReport && typeof item.aiReport === 'object') {
         const ar = item.aiReport
         const sharePercent = extractListSharePercent(ar)
-        item.sharePercent = sharePercent
+        const fs = extractFacingSummary(ar)
+        item.sharePercent = fs.ownFacingShare != null ? fs.ownFacingShare : sharePercent
+        item.ownFacingCount = fs.ownFacingCount
+        item.ownSkuCount = fs.ownSkuCount
+        item.ownBrandPresent = fs.ownBrandPresent
+        item.hasShelfPhoto = fs.hasShelfPhoto
         item.aiReport = {
           score: ar.score,
           scoreLevel: ar.scoreLevel,
           summary: ar.summary,
+          hasShelfPhoto: fs.hasShelfPhoto,
+          ownBrandPresent: fs.ownBrandPresent,
+          facingMetrics: ar.facingMetrics || null,
           metadata: ar.metadata,
-          sharePercent
+          sharePercent: item.sharePercent
         }
       } else {
         item.sharePercent = null
+        item.ownFacingCount = null
+        item.ownSkuCount = null
       }
       return item
     })

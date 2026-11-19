@@ -281,12 +281,19 @@ Page({
       const avg = scored.length
         ? Math.round(scored.reduce((s, it) => s + it.score, 0) / scored.length)
         : 0
-      const pendingCount = Math.max(0, visitItems.length - scored.length)
+      const withFacing = visitItems.filter(it => typeof it.displayFacingCount === 'number')
+      const avgFacingCount = withFacing.length
+        ? Math.round((withFacing.reduce((s, it) => s + it.displayFacingCount, 0) / withFacing.length) * 10) / 10
+        : null
+      const pendingCount = visitItems.filter(it =>
+        it.status === 'pending' || it.status === 'uploaded' || it.status === 'analyzing'
+      ).length
 
       const nextData = {
         list,
         total: visitItems.length,
         avgScore: avg,
+        avgFacingCount,
         analyzedCount: scored.length,
         pendingCount,
         page: page + 1,
@@ -338,7 +345,20 @@ Page({
       item.score = ar.score
       item.scoreColor = info.color
       item.scoreLevel = info.level
+    } else if (!isClock && ar && item.status === 'analyzed') {
+      if (ar.hasShelfPhoto === false || ar.scoreLevel === '无货架照') {
+        item.nonScoredTag = '无货架照'
+        item.nonScoredType = 'noshelf'
+      } else if (ar.ownBrandPresent === false || ar.scoreLevel === '未上柜') {
+        item.nonScoredTag = '未上柜'
+        item.nonScoredType = 'oos'
+      }
     }
+    const fm = ar && ar.facingMetrics
+    const fc = item.ownFacingCount != null
+      ? item.ownFacingCount
+      : (fm && fm.ownFacingCount != null ? fm.ownFacingCount : null)
+    item.displayFacingCount = (!isClock && fc !== null && fc !== undefined) ? fc : null
     item.timeText = formatDate(item.createdAt, 'HH:mm')
     item.statusText = isClock ? '已打卡' : (STATUS_TEXT[item.status] || '')
     if (isClock) {

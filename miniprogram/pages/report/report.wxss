@@ -471,3 +471,118 @@
   color: #888;
   margin-left: 12rpx;
 }
+
+/* 照片质量与局部取景温和提醒 */
+.quality-notice-card {
+  background: #fffbeb;
+  border: 1rpx solid #fde68a;
+  border-radius: 16rpx;
+  padding: 20rpx 24rpx;
+  margin-bottom: 20rpx;
+}
+.quality-notice-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8rpx;
+}
+.quality-notice-title {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #b45309;
+}
+.quality-notice-text {
+  font-size: 24rpx;
+  color: #92400e;
+  line-height: 1.5;
+}
+.quality-notice-actions {
+  margin-top: 12rpx;
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+.quality-action-link {
+  font-size: 24rpx;
+  color: #d97706;
+  font-weight: 600;
+}
+.quality-action-sep {
+  color: #d97706;
+  opacity: 0.5;
+}
+
+/* 未上柜 / 无货架照评分圆 */
+.score-oos {
+  background: linear-gradient(135deg, #fb923c, #ea580c);
+}
+.score-noshelf {
+  background: linear-gradient(135deg, #94a3b8, #64748b);
+}
+.score-status-tag {
+  font-size: 28rpx;
+  font-weight: 700;
+  color: #fff;
+}
+
+/* 陈列排面独立核心指标卡 */
+.facing-metrics-card {
+  border-left: 6rpx solid #1e88e5;
+}
+.facing-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20rpx;
+}
+.facing-title {
+  margin-bottom: 0;
+}
+.facing-conf {
+  font-size: 22rpx;
+  padding: 4rpx 14rpx;
+  border-radius: 20rpx;
+}
+.conf-high {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+.conf-mid {
+  background: #fff8e1;
+  color: #ef6c00;
+}
+.conf-low {
+  background: #ffebee;
+  color: #c62828;
+}
+.facing-grid {
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+}
+.facing-cell {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6rpx;
+}
+.facing-val {
+  font-size: 40rpx;
+  font-weight: 700;
+  color: #1565c0;
+}
+.facing-unit {
+  font-size: 24rpx;
+  font-weight: 500;
+  margin-left: 4rpx;
+}
+.facing-lab {
+  font-size: 24rpx;
+  color: #666;
+}
+.facing-divider {
+  width: 1rpx;
+  height: 56rpx;
+  background: #eee;
+}
+

@@ -4,6 +4,7 @@ const crypto = require('crypto')
 const db = require('./docdb')
 const files = require('./files')
 const { internalApiKey } = require('./config')
+const { extractFacingSummary } = require('./functions/analyzeImage/scoring')
 
 const _ = db.command
 
@@ -14,19 +15,73 @@ function safeEqual(a, b) {
   return crypto.timingSafeEqual(left, right)
 }
 
+function parseStrictNumber(value) {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed) return null
+    const n = Number(trimmed)
+    return Number.isFinite(n) ? n : null
+  }
+  return null
+}
+
+function isParseErrorReport(aiReport) {
+  return Boolean(aiReport && typeof aiReport === 'object' && aiReport.metadata && aiReport.metadata.parseError === true)
+}
+
+function isNoShelfPhotoReport(aiReport) {
+  return Boolean(
+    aiReport &&
+    typeof aiReport === 'object' &&
+    (aiReport.hasShelfPhoto === false || aiReport.scoreLevel === '无货架照')
+  )
+}
+
+function isNotOnShelfReport(aiReport) {
+  return Boolean(
+    aiReport &&
+    typeof aiReport === 'object' &&
+    (aiReport.ownBrandPresent === false || aiReport.scoreLevel === '未上柜')
+  )
+}
+
+function extractValidScore(aiReport) {
+  if (!aiReport || typeof aiReport !== 'object' || isParseErrorReport(aiReport)) return null
+  if (isNoShelfPhotoReport(aiReport) || isNotOnShelfReport(aiReport)) return null
+  const score = parseStrictNumber(aiReport.score)
+  if (score !== null && score >= 0 && score <= 100) return score
+  return null
+}
+
+function extractOwnFacingCount(aiReport) {
+  if (!aiReport || typeof aiReport !== 'object' || isParseErrorReport(aiReport)) return null
+  const fs = extractFacingSummary(aiReport)
+  return fs && fs.ownFacingCount != null && Number.isFinite(fs.ownFacingCount) && fs.ownFacingCount >= 0
+    ? fs.ownFacingCount
+    : null
+}
+
 function extractSharePercent(aiReport) {
-  if (!aiReport || typeof aiReport !== 'object') return null
+  if (!aiReport || typeof aiReport !== 'object' || isParseErrorReport(aiReport) || isNoShelfPhotoReport(aiReport)) return null
+  const fm = aiReport.facingMetrics
+  if (fm && typeof fm === 'object') {
+    const n = parseStrictNumber(fm.ownFacingShare)
+    if (n !== null && n >= 0 && n <= 100) return Math.round(n * 10) / 10
+  }
   const ov = aiReport.ownBrandOverview
-  if (ov && ov.facingSharePercent != null) {
-    const n = Number(ov.facingSharePercent)
-    if (Number.isFinite(n) && n >= 0 && n <= 100) return Math.round(n * 10) / 10
+  if (ov && typeof ov === 'object') {
+    const n = parseStrictNumber(ov.facingSharePercent)
+    if (n !== null && n >= 0 && n <= 100) return Math.round(n * 10) / 10
   }
   const brands = aiReport.competitiveAnalysis && aiReport.competitiveAnalysis.brands
   if (Array.isArray(brands)) {
     const own = brands.find(b => b && (b.brand === '我方品牌' || b.isOwn === true))
-    if (own && own.sharePercent != null) {
-      const n = Number(own.sharePercent)
-      if (Number.isFinite(n) && n >= 0 && n <= 100) return Math.round(n * 10) / 10
+    if (own) {
+      const n = parseStrictNumber(own.sharePercent)
+      if (n !== null && n >= 0 && n <= 100) return Math.round(n * 10) / 10
     }
   }
   return null
@@ -145,14 +200,16 @@ async function customerSummaryHandler(req, res) {
     let scoredCount = 0
     let shareSum = 0
     let shareCount = 0
+    let facingSum = 0
+    let facingCount = 0
     const issueFreq = {}
     const productFreq = {}
 
     list.forEach(item => {
       const ar = item.aiReport
-      if (ar && typeof ar === 'object') {
-        const score = Number(ar.score)
-        if (Number.isFinite(score) && score >= 0 && score <= 100) {
+      if (ar && typeof ar === 'object' && !isParseErrorReport(ar)) {
+        const score = extractValidScore(ar)
+        if (score != null) {
           scoreSum += score
           scoredCount++
         }
@@ -160,6 +217,11 @@ async function customerSummaryHandler(req, res) {
         if (share != null) {
           shareSum += share
           shareCount++
+        }
+        const ownFacing = extractOwnFacingCount(ar)
+        if (ownFacing != null) {
+          facingSum += ownFacing
+          facingCount++
         }
         if (Array.isArray(ar.issues)) {
           ar.issues.forEach(iss => {
@@ -191,7 +253,8 @@ async function customerSummaryHandler(req, res) {
       .map(([name, count]) => ({ name, count }))
 
     const recentInspections = recentSlice.map(item => {
-      const ar = item.aiReport && typeof item.aiReport === 'object' ? item.aiReport : null
+      const rawAr = item.aiReport && typeof item.aiReport === 'object' ? item.aiReport : null
+      const ar = rawAr && !isParseErrorReport(rawAr) ? rawAr : null
       const firstFileId = Array.isArray(item.photoFileIDs) && item.photoFileIDs[0] ? item.photoFileIDs[0] : ''
       const issues = ar && Array.isArray(ar.issues)
         ? ar.issues.slice(0, 3).map(i => (typeof i === 'string' ? i : (i && (i.issue || i.description || i.title)) || '')).filter(Boolean)
@@ -206,10 +269,11 @@ async function customerSummaryHandler(req, res) {
         userName: item.userName || '',
         taskName: item.taskName || '',
         status: item.status || '',
-        score: ar && Number.isFinite(Number(ar.score)) ? Number(ar.score) : null,
-        scoreLevel: ar ? (ar.scoreLevel || '') : '',
+        score: extractValidScore(ar),
+        scoreLevel: rawAr ? (rawAr.scoreLevel || '') : '',
+        ownFacingCount: extractOwnFacingCount(ar),
         sharePercent: extractSharePercent(ar),
-        summary: ar ? (ar.summary || '') : '',
+        summary: rawAr ? (rawAr.summary || '') : '',
         issues,
         suggestions,
         thumbnailURL: firstFileId ? (urlMap[firstFileId] || '') : ''
@@ -231,6 +295,7 @@ async function customerSummaryHandler(req, res) {
         visitCount: list.length,
         scoredCount,
         avgScore: scoredCount > 0 ? Math.round((scoreSum / scoredCount) * 10) / 10 : null,
+        avgOwnFacingCount: facingCount > 0 ? Math.round((facingSum / facingCount) * 10) / 10 : null,
         avgSharePercent: shareCount > 0 ? Math.round((shareSum / shareCount) * 10) / 10 : null,
         lastVisitAt: list.length > 0 ? list[0].createdAt : null,
         topIssues,
@@ -290,6 +355,8 @@ async function overviewHandler(req, res) {
         visitCount: 0,
         scoredCount: 0,
         scoreSum: 0,
+        facingCount: 0,
+        facingSum: 0,
         shareCount: 0,
         shareSum: 0,
         lastVisitAt: null,
@@ -315,6 +382,8 @@ async function overviewHandler(req, res) {
             visitCount: 0,
             scoredCount: 0,
             scoreSum: 0,
+            facingCount: 0,
+            facingSum: 0,
             shareCount: 0,
             shareSum: 0,
             lastVisitAt: null,
@@ -325,8 +394,9 @@ async function overviewHandler(req, res) {
       }
 
       const ar = ins.aiReport && typeof ins.aiReport === 'object' ? ins.aiReport : null
-      const score = ar && Number.isFinite(Number(ar.score)) ? Number(ar.score) : null
+      const score = extractValidScore(ar)
       const share = extractSharePercent(ar)
+      const ownFacing = extractOwnFacingCount(ar)
 
       if (entry) {
         entry.visitCount++
@@ -337,6 +407,10 @@ async function overviewHandler(req, res) {
         if (score != null) {
           entry.scoredCount++
           entry.scoreSum += score
+        }
+        if (ownFacing != null) {
+          entry.facingCount++
+          entry.facingSum += ownFacing
         }
         if (share != null) {
           entry.shareCount++
@@ -363,6 +437,7 @@ async function overviewHandler(req, res) {
       storeName: s.storeName,
       visitCount: s.visitCount,
       avgScore: s.scoredCount > 0 ? Math.round((s.scoreSum / s.scoredCount) * 10) / 10 : null,
+      avgOwnFacingCount: s.facingCount > 0 ? Math.round((s.facingSum / s.facingCount) * 10) / 10 : null,
       avgSharePercent: s.shareCount > 0 ? Math.round((s.shareSum / s.shareCount) * 10) / 10 : null,
       lastVisitAt: s.lastVisitAt,
       lastUserName: s.lastUserName
@@ -410,5 +485,11 @@ async function overviewHandler(req, res) {
 module.exports = {
   requireInternalKey,
   customerSummaryHandler,
-  overviewHandler
+  overviewHandler,
+  _internal: {
+    isParseErrorReport,
+    extractValidScore,
+    extractSharePercent,
+    extractOwnFacingCount
+  }
 }

@@ -70,6 +70,11 @@
       </view>
       <view class="summary-divider"></view>
       <view class="summary-item">
+        <text class="summary-value">{{avgFacingCount != null ? avgFacingCount : '--'}}</text>
+        <text class="summary-label">均排面</text>
+      </view>
+      <view class="summary-divider"></view>
+      <view class="summary-item">
         <text class="summary-value">{{pendingCount}}</text>
         <text class="summary-label">待出报告</text>
       </view>
@@ -92,7 +97,9 @@
         </view>
       </view>
       <view class="record-right">
+        <text class="record-facing" wx:if="{{item.displayFacingCount !== null && item.displayFacingCount !== undefined}}">{{item.displayFacingCount}}面</text>
         <text class="record-score" wx:if="{{item.score !== undefined}}" style="color: {{item.scoreColor}}">{{item.score}}</text>
+        <text class="record-nonscore tag-{{item.nonScoredType}}" wx:elif="{{item.nonScoredTag}}">{{item.nonScoredTag}}</text>
         <text class="record-status clocked" wx:elif="{{item.isClock}}">已打卡</text>
         <text class="record-status {{item.status === 'analyze_failed' ? 'failed' : ''}}" wx:elif="{{item.statusText}}">{{item.statusText}}</text>
         <text class="record-status" wx:else>已提交</text>

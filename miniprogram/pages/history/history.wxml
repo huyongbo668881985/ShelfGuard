@@ -18,8 +18,13 @@
     </view>
     <view class="stats-divider"></view>
     <view class="stats-item">
-      <text class="stats-value">{{stats.avgScore}}</text>
+      <text class="stats-value">{{stats.avgScore != null ? stats.avgScore : '--'}}</text>
       <text class="stats-label">平均分</text>
+    </view>
+    <view class="stats-divider"></view>
+    <view class="stats-item">
+      <text class="stats-value">{{stats.avgFacingCount != null ? stats.avgFacingCount : '--'}}</text>
+      <text class="stats-label">均排面</text>
     </view>
     <view class="stats-divider"></view>
     <view class="stats-item">
@@ -51,12 +56,20 @@
         <text class="daily-icon">📊</text>
         <view>
           <text class="daily-main-title">{{latestDailyReport.report.summaryTitle || '今日终端拜访综合分析日报'}}</text>
-          <text class="daily-date-sub">{{latestDailyReport.date}} · 汇总 {{latestDailyReport.inspectionCount}} 家门店</text>
+          <text class="daily-date-sub">
+            {{latestDailyReport.date}} · 汇总 {{latestDailyReport.inspectionCount}} 家门店<block wx:if="{{latestDailyReport.report.ownBrandOverview && latestDailyReport.report.ownBrandOverview.avgFacingCount != null}}"> · 均排面 {{latestDailyReport.report.ownBrandOverview.avgFacingCount}}面</block>
+          </text>
         </view>
       </view>
-      <view class="daily-score-badge score-{{latestDailyReport.report.overallScore >= 80 ? 'high' : latestDailyReport.report.overallScore >= 60 ? 'mid' : 'low'}}">
+      <view
+        wx:if="{{latestDailyReport.report.overallScore !== null && latestDailyReport.report.overallScore !== undefined}}"
+        class="daily-score-badge score-{{latestDailyReport.report.overallScore >= 80 ? 'high' : latestDailyReport.report.overallScore >= 60 ? 'mid' : 'low'}}"
+      >
         <text class="daily-score-number">{{latestDailyReport.report.overallScore}}</text>
         <text class="daily-score-text">{{latestDailyReport.report.overallLevel || '良好'}}</text>
+      </view>
+      <view wx:else class="daily-score-badge score-muted">
+        <text class="daily-score-text">{{latestDailyReport.report.overallLevel || '暂无分'}}</text>
       </view>
     </view>
 
@@ -153,8 +166,14 @@
       <view class="item-header">
         <text class="item-title">{{item.storeName || item.taskName || '未命名'}}</text>
         <view class="item-status status-{{item.status}}" wx:if="{{item.statusText}}">{{item.statusText}}</view>
+        <view class="item-facing-pill" wx:if="{{item.displayFacingCount !== null && item.displayFacingCount !== undefined}}">
+          <text>{{item.displayFacingCount}}面</text>
+        </view>
         <view class="item-score" wx:if="{{item.aiReport && item.aiReport.score !== undefined && item.aiReport.score !== null}}" style="background: {{item.scoreColor}}">
           <text>{{item.aiReport.score}}</text>
+        </view>
+        <view class="item-nonscore tag-{{item.nonScoredType}}" wx:elif="{{item.nonScoredTag}}">
+          <text>{{item.nonScoredTag}}</text>
         </view>
       </view>
         
@@ -281,9 +300,15 @@
     <scroll-view class="daily-modal-scroll" scroll-y="true">
       <!-- 总评卡片 -->
       <view class="daily-score-block">
-        <view class="score-circle score-{{latestDailyReport.report.overallScore >= 80 ? 'high' : (latestDailyReport.report.overallScore >= 60 ? 'mid' : 'low')}}">
+        <view
+          wx:if="{{latestDailyReport.report.overallScore !== null && latestDailyReport.report.overallScore !== undefined}}"
+          class="score-circle score-{{latestDailyReport.report.overallScore >= 80 ? 'high' : (latestDailyReport.report.overallScore >= 60 ? 'mid' : 'low')}}"
+        >
           <text class="score-big">{{latestDailyReport.report.overallScore}}</text>
           <text class="score-lvl">{{latestDailyReport.report.overallLevel || '良好'}}</text>
+        </view>
+        <view wx:else class="score-circle score-muted">
+          <text class="score-lvl">{{latestDailyReport.report.overallLevel || '暂无评分'}}</text>
         </view>
         <view class="conclusion-desc">
           <text class="desc-title">💡 综合诊断结论</text>
@@ -295,7 +320,15 @@
       <view class="daily-section-card" wx:if="{{latestDailyReport.report.ownBrandOverview}}">
         <text class="section-badge">🏷️ 我方品牌终端大盘</text>
         <view class="overview-grid">
-          <view class="overview-item">
+          <view class="overview-item" wx:if="{{latestDailyReport.report.ownBrandOverview.avgFacingCount != null}}">
+            <text class="ov-label">平均排面</text>
+            <text class="ov-val">{{latestDailyReport.report.ownBrandOverview.avgFacingCount}}面</text>
+          </view>
+          <view class="overview-item" wx:if="{{latestDailyReport.report.ownBrandOverview.inStockRate != null}}">
+            <text class="ov-label">门店在架率</text>
+            <text class="ov-val">{{latestDailyReport.report.ownBrandOverview.inStockRate}}%</text>
+          </view>
+          <view class="overview-item" wx:if="{{latestDailyReport.report.ownBrandOverview.facingSharePercent != null}}">
             <text class="ov-label">排面占比</text>
             <text class="ov-val">{{latestDailyReport.report.ownBrandOverview.facingSharePercent}}%</text>
           </view>
@@ -304,7 +337,7 @@
             <text class="ov-val">{{latestDailyReport.report.ownBrandOverview.goldenPositionRatio || '--'}}</text>
           </view>
         </view>
-        <text class="ov-sit">{{latestDailyReport.report.ownBrandOverview.competitiveSituation}}</text>
+        <text class="ov-sit" wx:if="{{latestDailyReport.report.ownBrandOverview.competitiveSituation}}">{{latestDailyReport.report.ownBrandOverview.competitiveSituation}}</text>
       </view>
 
       <!-- 今日共性问题 Top3 -->
@@ -341,7 +374,11 @@
         <view class="ranking-list">
           <view class="ranking-item" wx:for="{{latestDailyReport.report.storeRankings}}" wx:key="index">
             <text class="rk-store">{{item.storeName}}</text>
-            <text class="rk-score">{{item.score}}分 · {{item.status}}</text>
+            <text class="rk-score">
+              <block wx:if="{{item.ownFacingCount !== null && item.ownFacingCount !== undefined}}">{{item.ownFacingCount}}面 · </block>
+              <block wx:if="{{item.score !== null && item.score !== undefined}}">{{item.score}}分 · {{item.status}}</block>
+              <block wx:else>{{item.status || '暂无分'}}</block>
+            </text>
           </view>
         </view>
       </view>

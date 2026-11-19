@@ -5,10 +5,140 @@ const api = require('../../utils/api')
 const { formatDate } = require('../../utils/date')
 const { saveImagesToAlbum } = require('../../utils/album')
 
+const V2_DIMENSIONS = [
+  { key: 'facingCount', name: '排面数量', defaultMax: 50 },
+  { key: 'goldenPosition', name: '黄金位置', defaultMax: 20 },
+  { key: 'labelOrientation', name: '正标朝向', defaultMax: 10 },
+  { key: 'priceTag', name: '价签规范', defaultMax: 10 },
+  { key: 'horizontalBanner', name: '横签露出', defaultMax: 10 }
+]
+
+const LEGACY_DIMENSIONS = [
+  { key: 'labelOrientation', name: '正标朝向', defaultMax: 100 },
+  { key: 'neatness', name: '整齐度', defaultMax: 100 },
+  { key: 'goldenPosition', name: '黄金位置', defaultMax: 100 },
+  { key: 'brandConcentration', name: '集中陈列', defaultMax: 100 },
+  { key: 'priceTagMatch', name: '价签对应', defaultMax: 100 },
+  { key: 'shelfFullness', name: '货架饱满度', defaultMax: 100 }
+]
+
+function ratioColor(ratio) {
+  if (ratio >= 0.8) return '#2e7d32'
+  if (ratio >= 0.6) return '#ff9800'
+  return '#f44336'
+}
+
+function buildReportViewModel(aiReport) {
+  if (!aiReport || typeof aiReport !== 'object') {
+    return {
+      scoreState: 'none',
+      isV2: false,
+      complianceList: [],
+      facingSummary: null,
+      qualityNotices: []
+    }
+  }
+
+  const hasScore = typeof aiReport.score === 'number' && !isNaN(aiReport.score)
+  let scoreState = 'scored'
+  if (!hasScore) {
+    if (aiReport.hasShelfPhoto === false || aiReport.scoreLevel === '无货架照') {
+      scoreState = 'no_shelf'
+    } else if (aiReport.ownBrandPresent === false || aiReport.scoreLevel === '未上柜') {
+      scoreState = 'out_of_stock'
+    } else {
+      scoreState = 'other'
+    }
+  }
+
+  const dc = aiReport.displayCompliance && typeof aiReport.displayCompliance === 'object'
+    ? aiReport.displayCompliance
+    : {}
+  const isV2 = aiReport.scoringVersion === 'v2' ||
+    Boolean(dc.facingCount || dc.horizontalBanner || dc.priceTag)
+
+  const schema = isV2 ? V2_DIMENSIONS : LEGACY_DIMENSIONS
+  const complianceList = []
+  schema.forEach(dim => {
+    const entry = dc[dim.key]
+    if (!entry || typeof entry.score !== 'number') return
+    const maxScore = (typeof entry.maxScore === 'number' && entry.maxScore > 0)
+      ? entry.maxScore
+      : dim.defaultMax
+    const pct = Math.max(0, Math.min(100, Math.round((entry.score / maxScore) * 100)))
+    complianceList.push({
+      key: dim.key,
+      name: dim.name,
+      score: entry.score,
+      maxScore,
+      scoreText: isV2 ? `${entry.score}/${maxScore}分` : `${entry.score}分`,
+      percent: pct,
+      color: ratioColor(entry.score / maxScore),
+      detail: entry.detail || ''
+    })
+  })
+
+  // 独立核心指标：陈列排面
+  let facingSummary = null
+  const fm = aiReport.facingMetrics && typeof aiReport.facingMetrics === 'object'
+    ? aiReport.facingMetrics
+    : null
+  if (fm && (fm.ownFacingCount !== null && fm.ownFacingCount !== undefined)) {
+    const conf = typeof fm.countingConfidence === 'number' ? fm.countingConfidence : null
+    let confidenceLabel = ''
+    let confidenceLevel = 'high'
+    if (conf !== null) {
+      if (conf >= 0.8) {
+        confidenceLabel = '高置信'
+        confidenceLevel = 'high'
+      } else if (conf >= 0.6) {
+        confidenceLabel = '中置信'
+        confidenceLevel = 'mid'
+      } else {
+        confidenceLabel = '低置信(建议核对)'
+        confidenceLevel = 'low'
+      }
+    }
+    facingSummary = {
+      ownFacingCount: fm.ownFacingCount,
+      ownSkuCount: fm.ownSkuCount != null ? fm.ownSkuCount : '--',
+      ownFacingShare: fm.ownFacingShare != null ? `${fm.ownFacingShare}%` : '--',
+      confidenceLabel,
+      confidenceLevel
+    }
+  }
+
+  // 照片质量与局部取景温和提醒（不阻断）
+  const qualityNotices = []
+  const meta = aiReport.metadata && typeof aiReport.metadata === 'object' ? aiReport.metadata : {}
+  if (meta.imageQuality === 'poor') {
+    const reason = meta.imageQualityReason ? `（${meta.imageQualityReason}）` : ''
+    qualityNotices.push(`照片偏模糊/反光${reason}，可能影响排面计数与价签识别，可清晰重拍或重新分析。`)
+  }
+  if (meta.framingType === 'closeup') {
+    qualityNotices.push('当前仅拍到货架局部特写，排面数与黄金位评估可能不完整，建议下次补充货架全景照。')
+  }
+
+  return {
+    scoreState,
+    isV2,
+    complianceList,
+    facingSummary,
+    qualityNotices
+  }
+}
+
 Page({
   data: {
     inspectionId: '',
     detail: null,
+    reportView: {
+      scoreState: 'none',
+      isV2: false,
+      complianceList: [],
+      facingSummary: null,
+      qualityNotices: []
+    },
     loading: true,
     refreshTimer: null,
     analyzeTime: '21:00',
@@ -97,18 +227,12 @@ Page({
         detail.analyzedAtFormatted = formatDate(detail.analyzedAt, 'YYYY-MM-DD HH:mm')
       }
 
-      // 照片临时链接由 getReport 云函数在服务端统一获取（photoURLs 字段）。
-      // 收紧云存储权限后，前端直连 wx.cloud.getTempFileURL 只能读本人文件，
-      // 管理者查看他人巡检记录的照片会被存储安全规则拦截，所以这里不再自己取。
-
-      this.setData({ detail, loading: false, currentPhotoIndex: 0 })
+      const reportView = buildReportViewModel(detail.aiReport)
+      this.setData({ detail, reportView, loading: false, currentPhotoIndex: 0 })
 
       // 最佳努力获取集中分析时间，用于"排队中"提示（失败不影响主流程）
       this.refreshAnalyzeTime()
 
-      // 还没出报告且处于实时分析状态（即时模式的 analyzing / 旧字段 uploaded）才轮询，
-      // pending（集中模式排队中）不轮询——它只会在设定时间被定时任务处理，
-      // 轮询也只是空转；用户可下拉刷新查看。
       const realtimeAnalyzing = detail.status === 'analyzing' || detail.status === 'uploaded'
       if (!detail.aiReport && realtimeAnalyzing) {
         this.startPolling(id)
@@ -122,12 +246,14 @@ Page({
   },
 
   // 轮询检查分析状态
-  startPolling(id) {
+  // waitForNewerThan：对已有报告点击「重新分析」时传入旧的 analyzedAt，
+  // 防止第一次轮询读到旧 aiReport 就误判已完成而提前退出。
+  startPolling(id, { waitForNewerThan = '' } = {}) {
     if (this.data.refreshTimer) {
       clearInterval(this.data.refreshTimer)
     }
     let attempts = 0
-    const maxAttempts = 30 // 最多轮询 30 次（约 1 分钟）
+    const maxAttempts = 30 // 最多轮询 30 次（约 90 秒）
 
     const timer = setInterval(async () => {
       attempts++
@@ -145,12 +271,13 @@ Page({
         if (!res.result || !res.result.success) return
         const detail = res.result.detail
 
-        if (detail.status === 'analyzed' || detail.aiReport) {
+        const isNewResult = !waitForNewerThan || (detail.analyzedAt && detail.analyzedAt !== waitForNewerThan)
+        if (isNewResult && (detail.status === 'analyzed' || detail.aiReport)) {
           clearInterval(timer)
           if (this.data.refreshTimer === timer) this.setData({ refreshTimer: null })
           // 重新加载完整详情
           this.loadDetail(id)
-        } else if (detail.status === 'analyze_failed') {
+        } else if (isNewResult && detail.status === 'analyze_failed') {
           // 熔断：云端已确定分析失败，立即中止轮询，避免持续空转 90 秒
           clearInterval(timer)
           if (this.data.refreshTimer === timer) this.setData({ refreshTimer: null })
@@ -164,32 +291,42 @@ Page({
     this.setData({ refreshTimer: timer })
   },
 
-  // 真正的重试 AI 分析（不再只是空刷页面）
+  // 真正的重试 AI 分析（不再只是空刷页面；同时兼容对已有报告点击「重新分析」）
   async retryAnalysis() {
     const { detail, inspectionId } = this.data
     if (!detail) return
 
-    wx.showLoading({ title: '正在重新触发...', mask: true })
+    const prevAnalyzedAt = detail.analyzedAt || ''
+    wx.showLoading({ title: '正在重新分析...', mask: true })
     try {
       this.setData({
         'detail.status': 'analyzing',
         'detail.analyzeError': ''
       })
-      // 触发 analyzeImage 云函数
-      api.callFunction({
+      // 先启动带版本号守卫的轮询兜底（应对网络超时但服务端仍在跑的场景）
+      this.startPolling(inspectionId, { waitForNewerThan: prevAnalyzedAt })
+      wx.hideLoading()
+      wx.showToast({ title: '已开始重新分析，请稍候', icon: 'none' })
+
+      // 触发 analyzeImage 云函数，完成后立即停止轮询并刷新最新报告
+      const res = await api.callFunction({
         name: 'analyzeImage',
         data: {
           inspectionId,
           fileIDs: detail.photoFileIDs || []
         }
-      }).catch(err => console.error('后台分析请求:', err))
-
-      wx.hideLoading()
-      wx.showToast({ title: '已开始重新分析', icon: 'none' })
-      this.startPolling(inspectionId)
+      })
+      if (this.data.refreshTimer) {
+        clearInterval(this.data.refreshTimer)
+        this.setData({ refreshTimer: null })
+      }
+      if (res && res.result && !res.result.success) {
+        wx.showToast({ title: res.result.error || '重新分析失败', icon: 'none' })
+      }
+      this.loadDetail(inspectionId)
     } catch (err) {
       wx.hideLoading()
-      wx.showToast({ title: err.message || '重试失败', icon: 'none' })
+      console.error('后台分析请求异常（轮询将继续兜底）:', err)
     }
   },
 

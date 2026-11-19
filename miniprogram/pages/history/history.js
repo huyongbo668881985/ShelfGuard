@@ -42,7 +42,9 @@ Page({
     // 统计信息
     stats: {
       total: 0,
-      avgScore: 0,
+      avgScore: null,
+      avgFacingCount: null,
+      inStockRate: null,
       thisWeek: 0
     },
 
@@ -222,7 +224,22 @@ Page({
       const scoreInfo = formatScoreLevel(item.aiReport.score)
       item.scoreColor = scoreInfo.color
       item.scoreLevel = scoreInfo.level
+    } else if (item.aiReport && item.status === 'analyzed') {
+      if (item.aiReport.hasShelfPhoto === false || item.aiReport.scoreLevel === '无货架照') {
+        item.nonScoredTag = '无货架照'
+        item.nonScoredType = 'noshelf'
+      } else if (item.aiReport.ownBrandPresent === false || item.aiReport.scoreLevel === '未上柜') {
+        item.nonScoredTag = '未上柜'
+        item.nonScoredType = 'oos'
+      }
     }
+
+    // 独立排面指标
+    const fm = item.aiReport && item.aiReport.facingMetrics
+    const fc = item.ownFacingCount != null
+      ? item.ownFacingCount
+      : (fm && fm.ownFacingCount != null ? fm.ownFacingCount : null)
+    item.displayFacingCount = (fc !== null && fc !== undefined) ? fc : null
 
     // 列表项状态标记：还没出报告的记录用轻量文案提示，避免用户以为"丢单了"
     const STATUS_TEXT = {
@@ -282,16 +299,24 @@ Page({
     const report = this.data.latestDailyReport && this.data.latestDailyReport.report
     if (!report) return
 
+    const ov = report.ownBrandOverview || {}
+    const scoreLine = (report.overallScore !== null && report.overallScore !== undefined)
+      ? `⭐ 综合评分：${report.overallScore}分（${report.overallLevel || '良好'}）`
+      : `⭐ 综合评分：${report.overallLevel || '暂无评分'}`
+
     const lines = [
       `📋【${report.summaryTitle || '白酒终端拜访综合分析日报'}】`,
       `📅 日期：${this.data.latestDailyReport.date || '今日'}`,
-      `⭐ 综合评分：${report.overallScore}分（${report.overallLevel || '良好'}）`,
-      `🏬 拜访门店：${this.data.latestDailyReport.inspectionCount || 0}家`,
-      `\n💡 核心结论：\n${report.summaryConclusion || '暂无'}`,
-      `\n⚠️ 今日共性问题：`
+      scoreLine,
+      `🏬 拜访门店：${this.data.latestDailyReport.inspectionCount || 0}家`
     ]
+    if (ov.avgFacingCount !== null && ov.avgFacingCount !== undefined) {
+      lines.push(`📦 平均排面：${ov.avgFacingCount}面${ov.inStockRate != null ? ` · 在架率 ${ov.inStockRate}%` : ''}`)
+    }
+    lines.push(`\n💡 核心结论：\n${report.summaryConclusion || '暂无'}`)
 
-    if (Array.isArray(report.commonIssues)) {
+    if (Array.isArray(report.commonIssues) && report.commonIssues.length > 0) {
+      lines.push(`\n⚠️ 今日共性问题：`)
       report.commonIssues.forEach((issue, idx) => {
         lines.push(`${idx + 1}. [${issue.category}] ${issue.description} (${issue.affectStores || ''})`)
       })

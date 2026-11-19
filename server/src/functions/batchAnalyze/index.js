@@ -145,9 +145,8 @@ async function drainQueue({ settings, startedAt, ignoreDeadlineForFirst = false 
   const batchSize = Math.max(1, Math.min(10, settings.batchSize || DEFAULT_SETTINGS.batchSize))
   const results = { processed: 0, succeeded: 0, failed: 0, reclaimed, remaining: 0, details: [] }
 
-  // 核心特性：集中分析模式下，按业务员（_openid）聚合其待分析的全部巡检照片，生成《今日巡检综合分析日报》
-  // 先找到第一位有 pending 记录的业务员，将其名下待分析记录加锁（pending -> analyzing）后统一汇总分析。
-  // 单轮只处理一位业务员的汇总，确保单次执行稳稳控制在 60 秒硬上限内。
+  // 核心特性：集中分析模式下，按业务员（_openid）逐条执行标准单次拜访分析（拿到完整 5 维 + 排面指标 + 物料清单），
+  // 再基于当天已分析的结构化单条结果汇总生成《今日综合日报》，彻底消除批量/单条口径不一致问题。
   let claimedIdsForRollback = []
   try {
     const firstPendingRes = await db.collection('inspections')
@@ -166,10 +165,19 @@ async function drainQueue({ settings, startedAt, ignoreDeadlineForFirst = false 
         .field({ _id: true, storeName: true, analyzeAttempts: true, photoFileIDs: true })
         .get()
 
-      // 认领数与 dailySummary 喂图上限对齐（每店首图、最多 8）
       const candidates = (userPendingRes.data || []).filter(
         r => Array.isArray(r.photoFileIDs) && r.photoFileIDs.length > 0
       ).slice(0, MAX_DAILY_SUMMARY_STORES)
+
+      // 清理没有照片的脏 pending 记录，避免队列卡死
+      const emptyPhotoRecords = (userPendingRes.data || []).filter(
+        r => !Array.isArray(r.photoFileIDs) || r.photoFileIDs.length === 0
+      )
+      for (const bad of emptyPhotoRecords) {
+        await db.collection('inspections').where({ _id: bad._id, status: 'pending' }).update({
+          data: { status: 'analyze_failed', analyzeError: '记录中没有照片', analyzedAt: db.serverDate() }
+        }).catch(() => {})
+      }
 
       if (candidates.length > 0) {
         const candidateIds = candidates.map(c => c._id)
@@ -190,38 +198,73 @@ async function drainQueue({ settings, startedAt, ignoreDeadlineForFirst = false 
         const claimedCount = (claimBatchRes.stats && claimBatchRes.stats.updated) || 0
         if (claimedCount > 0) {
           claimedIdsForRollback = candidateIds
-          console.log(`[batchAnalyze] 已锁定业务员(${targetOpenid})的 ${claimedCount} 条巡检记录，正在聚合生成今日汇总结论...`)
-          results.processed += claimedCount
-          const summaryRes = await cloud.callFunction({
-            name: 'analyzeImage',
-            data: {
-              action: 'dailySummary',
-              inspectionIds: candidateIds
-            }
-          })
-          const ok = summaryRes.result && summaryRes.result.success
-          if (ok) {
-            console.log('[batchAnalyze] 今日汇总结论生成成功！')
-            results.dailyReportGenerated = true
-            results.succeeded += claimedCount
-          } else {
-            results.failed += claimedCount
-            const errMsg = (summaryRes.result && summaryRes.result.error) || '日报汇总未返回成功'
-            for (const c of candidates) {
+          console.log(`[batchAnalyze] 已锁定业务员(${targetOpenid})的 ${claimedCount} 条拜访记录，开始逐条执行标准单条分析...`)
+
+          const succeededIds = []
+          for (const c of candidates) {
+            results.processed += 1
+            try {
+              const singleRes = await cloud.callFunction({
+                name: 'analyzeImage',
+                data: { inspectionId: c._id }
+              })
+              const ok = singleRes.result && singleRes.result.success
+              if (ok) {
+                results.succeeded += 1
+                succeededIds.push(c._id)
+                results.details.push({ id: c._id, storeName: c.storeName || '', ok: true, error: '' })
+              } else {
+                const errMsg = (singleRes.result && singleRes.result.error) || '单条分析未返回成功'
+                results.failed += 1
+                await markFailedIfNeeded(
+                  { _id: c._id, analyzeAttempts: (c.analyzeAttempts || 0) + 1 },
+                  errMsg
+                )
+                results.details.push({ id: c._id, storeName: c.storeName || '', ok: false, error: errMsg })
+              }
+            } catch (singleErr) {
+              const errMsg = singleErr.message || '调用单条 analyzeImage 失败'
+              results.failed += 1
               await markFailedIfNeeded(
                 { _id: c._id, analyzeAttempts: (c.analyzeAttempts || 0) + 1 },
                 errMsg
               )
+              results.details.push({ id: c._id, storeName: c.storeName || '', ok: false, error: errMsg })
             }
           }
+
+          // 单条分析全部跑完后，已不再需要回滚单条状态
+          claimedIdsForRollback = []
+
+          // 基于本批已成功完成单条分析的结构化结果，汇总生成《今日综合日报》
+          if (succeededIds.length > 0) {
+            try {
+              const summaryRes = await cloud.callFunction({
+                name: 'analyzeImage',
+                data: {
+                  action: 'dailySummary',
+                  inspectionIds: succeededIds
+                }
+              })
+              if (summaryRes.result && summaryRes.result.success) {
+                console.log('[batchAnalyze] 今日综合日报汇总生成成功！')
+                results.dailyReportGenerated = true
+              } else {
+                console.warn('[batchAnalyze] 今日综合日报汇总失败（单条报告已保留）:', summaryRes.result && summaryRes.result.error)
+              }
+            } catch (dailyErr) {
+              console.warn('[batchAnalyze] 调用 dailySummary 异常（单条报告已保留）:', dailyErr.message || dailyErr)
+            }
+          }
+
           results.remaining = await countPending()
           return results
         }
       }
     }
   } catch (summaryErr) {
-    console.error('[batchAnalyze] 聚合今日汇总结论异常:', summaryErr)
-    const errMsg = summaryErr.message || '调用 dailySummary 失败'
+    console.error('[batchAnalyze] 批量分析流程异常:', summaryErr)
+    const errMsg = summaryErr.message || '批量分析异常'
     if (claimedIdsForRollback.length > 0) {
       results.failed += claimedIdsForRollback.length
       for (const id of claimedIdsForRollback) {
