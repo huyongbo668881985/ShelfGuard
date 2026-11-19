@@ -118,17 +118,18 @@ test('文档库支持筛选、自增和聚合', async () => {
 
 test('定时任务时刻判断', () => {
   const morning = { year: '2026', month: '11', day: '02', hour: 3, minute: 0, second: 0 }
-  const jobs = decideJobs(morning, { lastBatch: '', lastJxc: '', lastStats: '' })
-  assert.deepEqual(jobs.map(job => job.name), ['batchAnalyze', 'syncJxc', 'shelfStats'])
+  const jobs = decideJobs(morning, { lastBatch: '', lastReviewMaint: '', lastJxc: '', lastStats: '' })
+  assert.deepEqual(jobs.map(job => job.name), ['batchAnalyze', 'reviewMaintenance', 'syncJxc', 'shelfStats'])
   const again = decideJobs(morning, {
     lastBatch: '2026-11-02T03:00',
+    lastReviewMaint: '2026-11-02T03:00',
     lastJxc: '2026-11-02T03:00',
     lastStats: '2026-11-02'
   })
   assert.equal(again.length, 0)
   const later = decideJobs(
     { year: '2026', month: '11', day: '02', hour: 21, minute: 2, second: 10 },
-    { lastBatch: '', lastJxc: '', lastStats: '2026-11-02' }
+    { lastBatch: '', lastReviewMaint: '', lastJxc: '', lastStats: '2026-11-02' }
   )
   assert.deepEqual(later.map(job => job.name), ['batchAnalyze'])
 })
