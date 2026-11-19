@@ -51,10 +51,7 @@
         <text class="ov-label">下班：</text>
         <text class="ov-val {{clockOutPoint ? 'done' : ''}}" data-id="{{clockOutPoint._id}}" bindtap="onQuickSelectById">{{clockOutPoint ? clockOutPoint.timeText : '未打卡'}}</text>
       </view>
-      <view class="ov-actions">
-        <view class="ov-anim-btn {{animPlaying ? 'playing' : ''}}" wx:if="{{canAnimate}}" bindtap="toggleAnimation">{{animPlaying ? '⏸ 动画' : '▶ 动画'}}</view>
-        <view class="ov-fit-btn" wx:if="{{hasValidCoords}}" bindtap="fitAllPoints">全览</view>
-      </view>
+      <view class="ov-fit-btn" wx:if="{{hasValidCoords}}" bindtap="fitAllPoints">全览</view>
     </view>
   </view>
 

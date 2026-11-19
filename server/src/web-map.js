@@ -1114,30 +1114,12 @@ function renderHtml(prefix) {
       display: block;
     }
 
-    /* Static Directional Arrow & Slow Animated Route Cursor */
-    .sg-line-arrow {
-      transform: translate(-50%, -50%);
+    /* Route Flow Canvas Overlay */
+    .sg-flow-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
       pointer-events: none;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .sg-anim-cursor {
-      transform: translate(-50%, -50%);
-      pointer-events: none;
-      width: 26px;
-      height: 26px;
-      border-radius: 50%;
-      background: var(--gold);
-      border: 2px solid #fff;
-      box-shadow: 0 2px 10px rgba(194,147,59,0.6), 0 0 0 5px rgba(194,147,59,0.22);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .sg-anim-arrow-svg {
-      display: block;
-      transition: transform 0.12s linear;
     }
 
     /* Right/Floating Detail Drawer */
@@ -1484,7 +1466,7 @@ function renderHtml(prefix) {
     <main class="map-stage">
       <div id="map"></div>
       <div class="map-toolbar">
-        <button class="map-tool-btn" id="toggleAnimBtn" style="display:none">⏸ 暂停轨迹</button>
+        <button class="map-tool-btn" id="toggleAnimBtn" style="display:none">⏸ 暂停流动</button>
         <button class="map-tool-btn" id="fitBoundsBtn">🎯 全览当前轨迹</button>
       </div>
 
@@ -1576,8 +1558,6 @@ function renderHtml(prefix) {
 
       const SUN_SVG = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="#FFFBEB" stroke-width="2.1" stroke-linecap="round"><circle cx="12" cy="12" r="4.4" fill="#FEF3C7" stroke="none"/><line x1="12" y1="2.5" x2="12" y2="5.2"/><line x1="12" y1="18.8" x2="12" y2="21.5"/><line x1="2.5" y1="12" x2="5.2" y2="12"/><line x1="18.8" y1="12" x2="21.5" y2="12"/><line x1="5.3" y1="5.3" x2="7.2" y2="7.2"/><line x1="16.8" y1="16.8" x2="18.7" y2="18.7"/><line x1="18.7" y1="5.3" x2="16.8" y2="7.2"/><line x1="7.2" y1="16.8" x2="5.3" y2="18.7"/></svg>';
       const MOON_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="#FFFBEB"><path d="M19.2 14.9A7.8 7.8 0 0 1 9.1 4.8a8.2 8.2 0 1 0 10.1 10.1Z"/></svg>';
-      const STATIC_ARROW_SVG = '<svg viewBox="0 0 16 16" width="14" height="14" style="display:block"><path d="M8 2L13 12L8 9.2L3 12Z" fill="#FFFFFF" stroke="COLOR_PLACEHOLDER" stroke-width="1.6" stroke-linejoin="round"/></svg>';
-      const CURSOR_ARROW_SVG = '<svg class="sg-anim-arrow-svg" viewBox="0 0 16 16" width="14" height="14"><path d="M8 2L13 12L8 9.3L3 12Z" fill="#FFFFFF"/></svg>';
 
       const todayStr = toDateStr(new Date());
       let selectedDate = todayStr;
@@ -1588,13 +1568,15 @@ function renderHtml(prefix) {
       let map = null;
       let markersLayer = null;
       let linesLayer = null;
-      let arrowsLayer = null;
-      let animLayer = null;
+      let flowCanvas = null;
+      let flowCtx = null;
+      let isMapZooming = false;
       let markerInstances = [];
       let routeSegmentsByUser = [];
       let animPaused = false;
       let animRafId = 0;
-      let animToken = 0;
+      let flowPhase = 0;
+      let flowLastTs = 0;
 
       // Lightbox state
       let lbUrls = [];
@@ -1625,12 +1607,29 @@ function renderHtml(prefix) {
         }).addTo(map);
 
         linesLayer = L.layerGroup().addTo(map);
-        arrowsLayer = L.layerGroup().addTo(map);
+        const flowPane = map.createPane('flowPane');
+        flowPane.style.zIndex = 450;
+        flowPane.style.pointerEvents = 'none';
+        flowCanvas = document.createElement('canvas');
+        flowCanvas.className = 'sg-flow-canvas';
+        flowPane.appendChild(flowCanvas);
+        flowCtx = flowCanvas.getContext('2d');
         markersLayer = L.layerGroup().addTo(map);
-        animLayer = L.layerGroup().addTo(map);
 
+        map.on('zoomstart', () => {
+          isMapZooming = true;
+          if (flowCanvas) flowCanvas.style.opacity = '0';
+        });
         map.on('zoomend', () => {
-          renderStaticArrows();
+          isMapZooming = false;
+          if (flowCanvas) flowCanvas.style.opacity = '1';
+          drawFlowFrame();
+        });
+        map.on('move', () => {
+          if (!isMapZooming) drawFlowFrame();
+        });
+        map.on('resize', () => {
+          drawFlowFrame();
         });
         map.on('click', () => {
           if (activeIndex !== -1) {
@@ -1882,52 +1881,107 @@ function renderHtml(prefix) {
       }
 
       function stopRouteAnimation() {
-        animToken += 1;
         if (animRafId) {
           cancelAnimationFrame(animRafId);
           animRafId = 0;
         }
-        if (animLayer) animLayer.clearLayers();
+        flowLastTs = 0;
       }
 
       function updateAnimToggleBtn() {
         const btn = document.getElementById('toggleAnimBtn');
         if (!btn) return;
-        const coordPoints = points.filter(p => p.hasCoord);
-        const canAnimate = selectedUserId !== '__ALL__' && coordPoints.length >= 2;
+        const canAnimate = routeSegmentsByUser.length > 0;
         btn.style.display = canAnimate ? '' : 'none';
-        btn.textContent = animPaused ? '▶ 播放轨迹' : '⏸ 暂停轨迹';
+        btn.textContent = animPaused ? '▶ 流动方向' : '⏸ 暂停流动';
       }
 
-      function renderStaticArrows() {
-        if (!map || !arrowsLayer) return;
-        arrowsLayer.clearLayers();
+      function drawFlowFrame() {
+        if (!map || !flowCanvas || !flowCtx) return;
+        const size = map.getSize();
+        if (!size || size.x <= 0 || size.y <= 0) return;
+
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        const targetW = Math.round(size.x * dpr);
+        const targetH = Math.round(size.y * dpr);
+        if (flowCanvas.width !== targetW || flowCanvas.height !== targetH) {
+          flowCanvas.width = targetW;
+          flowCanvas.height = targetH;
+          flowCanvas.style.width = size.x + 'px';
+          flowCanvas.style.height = size.y + 'px';
+        }
+
+        const topLeft = map.containerPointToLayerPoint([0, 0]);
+        L.DomUtil.setPosition(flowCanvas, topLeft);
+
+        flowCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        flowCtx.clearRect(0, 0, size.x, size.y);
+        if (isMapZooming || routeSegmentsByUser.length === 0) return;
+
+        const SPACING = 44;
+        const phase = flowPhase % SPACING;
+
         routeSegmentsByUser.forEach(group => {
           const pts = group.points;
           const color = group.color;
-          for (let i = 0; i < pts.length - 1; i++) {
-            const p1 = pts[i];
-            const p2 = pts[i + 1];
-            const pt1 = map.latLngToLayerPoint([p1.lat, p1.lng]);
-            const pt2 = map.latLngToLayerPoint([p2.lat, p2.lng]);
-            const dx = pt2.x - pt1.x;
-            const dy = pt2.y - pt1.y;
-            const dist = Math.hypot(dx, dy);
-            if (dist < 36) continue;
-            const deg = Math.atan2(dx, -dy) * 180 / Math.PI;
-            const ratios = dist > 240 ? [0.35, 0.65] : [0.5];
-            ratios.forEach(t => {
-              const midLayerPt = L.point(pt1.x + dx * t, pt1.y + dy * t);
-              const midLatLng = map.layerPointToLatLng(midLayerPt);
-              const svg = STATIC_ARROW_SVG.replace('COLOR_PLACEHOLDER', color);
-              const icon = L.divIcon({
-                className: 'sg-custom-div-icon',
-                html: '<div class="sg-line-arrow" style="transform:translate(-50%,-50%) rotate(' + deg.toFixed(1) + 'deg)">' + svg + '</div>',
-                iconSize: [0, 0],
-                iconAnchor: [0, 0]
-              });
-              L.marker(midLatLng, { icon, interactive: false, zIndexOffset: 200 }).addTo(arrowsLayer);
-            });
+          if (!pts || pts.length < 2) return;
+
+          const screenPts = pts.map(p => map.latLngToContainerPoint([p.lat, p.lng]));
+          let cumDist = 0;
+
+          for (let i = 0; i < screenPts.length - 1; i++) {
+            const p1 = screenPts[i];
+            const p2 = screenPts[i + 1];
+            const dx = p2.x - p1.x;
+            const dy = p2.y - p1.y;
+            const segLen = Math.hypot(dx, dy);
+
+            if (segLen >= 20) {
+              const angle = Math.atan2(dy, dx);
+              const ux = dx / segLen;
+              const uy = dy / segLen;
+
+              // 计算当前线段内满足 (cumDist + d - phase) % SPACING === 0 的所有箭头位置
+              const startD = phase - (cumDist % SPACING);
+              let d = startD;
+              while (d < 9) d += SPACING;
+              while (d <= segLen - 9) {
+                const ax = p1.x + ux * d;
+                const ay = p1.y + uy * d;
+                if (ax >= -20 && ax <= size.x + 20 && ay >= -20 && ay <= size.y + 20) {
+                  flowCtx.save();
+                  flowCtx.translate(ax, ay);
+                  flowCtx.rotate(angle);
+
+                  // 箭头背后垫一个小空白格子（微微切断连线，让同色小箭头清清楚楚又不违和）
+                  flowCtx.fillStyle = 'rgba(255, 255, 255, 0.94)';
+                  flowCtx.fillRect(-6.2, -2.5, 9.2, 5.0);
+
+                  // 与连线同色、只比连线(3.5px)略粗一点的方向小箭头
+                  flowCtx.lineCap = 'round';
+                  flowCtx.lineJoin = 'round';
+                  flowCtx.strokeStyle = 'rgba(255, 255, 255, 0.92)';
+                  flowCtx.lineWidth = 3.8;
+                  flowCtx.beginPath();
+                  flowCtx.moveTo(-2.4, -3.5);
+                  flowCtx.lineTo(2.4, 0);
+                  flowCtx.lineTo(-2.4, 3.5);
+                  flowCtx.stroke();
+
+                  flowCtx.strokeStyle = color;
+                  flowCtx.lineWidth = 2.1;
+                  flowCtx.beginPath();
+                  flowCtx.moveTo(-2.4, -3.5);
+                  flowCtx.lineTo(2.4, 0);
+                  flowCtx.lineTo(-2.4, 3.5);
+                  flowCtx.stroke();
+
+                  flowCtx.restore();
+                }
+                d += SPACING;
+              }
+            }
+            cumDist += segLen;
           }
         });
       }
@@ -1935,90 +1989,27 @@ function renderHtml(prefix) {
       function startRouteAnimation() {
         stopRouteAnimation();
         updateAnimToggleBtn();
-        if (!map || !animLayer || animPaused || selectedUserId === '__ALL__') return;
-        const coordPoints = points.filter(p => p.hasCoord);
-        if (coordPoints.length < 2) return;
+        drawFlowFrame();
+        if (!map || animPaused || routeSegmentsByUser.length === 0) return;
 
-        const token = animToken;
-        const cursorIcon = L.divIcon({
-          className: 'sg-custom-div-icon',
-          html: '<div class="sg-anim-cursor">' + CURSOR_ARROW_SVG + '</div>',
-          iconSize: [0, 0],
-          iconAnchor: [0, 0]
-        });
-        const cursorMarker = L.marker([coordPoints[0].lat, coordPoints[0].lng], {
-          icon: cursorIcon,
-          interactive: false,
-          zIndexOffset: 850
-        }).addTo(animLayer);
-
-        // Precompute Mercator points at zoom 16 for linear glide & exact bearing
-        const projPts = coordPoints.map(p => map.project([p.lat, p.lng], 16));
-        let segIdx = 0;
-        let phase = 'move'; // 'move' | 'dwell'
-        let phaseStart = performance.now();
-        let segDuration = 2800;
-        let dwellDuration = 850;
-
-        function prepareSegment(idx) {
-          const p1 = map.latLngToLayerPoint([coordPoints[idx].lat, coordPoints[idx].lng]);
-          const p2 = map.latLngToLayerPoint([coordPoints[idx + 1].lat, coordPoints[idx + 1].lng]);
-          const pxDist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
-          // Slow, calm movement: 2.4s to 4.8s per leg depending on visual distance
-          segDuration = Math.max(2400, Math.min(4800, 2200 + pxDist * 7));
-          const m1 = projPts[idx];
-          const m2 = projPts[idx + 1];
-          const deg = Math.atan2(m2.x - m1.x, -(m2.y - m1.y)) * 180 / Math.PI;
-          const el = cursorMarker.getElement();
-          const svgEl = el ? el.querySelector('.sg-anim-arrow-svg') : null;
-          if (svgEl) {
-            svgEl.style.transform = 'rotate(' + deg.toFixed(1) + 'deg)';
+        // 慢速平稳流动：每秒仅推进约 15 像素，直观指示方向又不眼花缭乱
+        const FLOW_SPEED_PX_PER_SEC = 15;
+        function tick(ts) {
+          if (animPaused || routeSegmentsByUser.length === 0) return;
+          if (flowLastTs > 0) {
+            const dt = Math.min(0.08, Math.max(0, (ts - flowLastTs) / 1000));
+            flowPhase = (flowPhase + dt * FLOW_SPEED_PX_PER_SEC) % 4400;
           }
-        }
-
-        prepareSegment(0);
-
-        function tick(now) {
-          if (token !== animToken) return;
-          if (phase === 'move') {
-            const elapsed = now - phaseStart;
-            const t = Math.min(1, elapsed / segDuration);
-            // Smooth ease-in-out sine curve
-            const eased = 0.5 - 0.5 * Math.cos(Math.PI * t);
-            const m1 = projPts[segIdx];
-            const m2 = projPts[segIdx + 1];
-            const curProj = L.point(
-              m1.x + (m2.x - m1.x) * eased,
-              m1.y + (m2.y - m1.y) * eased
-            );
-            cursorMarker.setLatLng(map.unproject(curProj, 16));
-            if (t >= 1) {
-              phase = 'dwell';
-              phaseStart = now;
-              dwellDuration = (segIdx >= coordPoints.length - 2) ? 1600 : 850;
-            }
-          } else {
-            if (now - phaseStart >= dwellDuration) {
-              segIdx += 1;
-              if (segIdx >= coordPoints.length - 1) {
-                segIdx = 0;
-                cursorMarker.setLatLng([coordPoints[0].lat, coordPoints[0].lng]);
-              }
-              prepareSegment(segIdx);
-              phase = 'move';
-              phaseStart = now;
-            }
-          }
+          flowLastTs = ts;
+          drawFlowFrame();
           animRafId = requestAnimationFrame(tick);
         }
-
         animRafId = requestAnimationFrame(tick);
       }
 
       function renderMapLayers(shouldFit) {
         if (!map) return;
         linesLayer.clearLayers();
-        arrowsLayer.clearLayers();
         markersLayer.clearLayers();
         stopRouteAnimation();
         markerInstances = [];
@@ -2041,7 +2032,7 @@ function renderHtml(prefix) {
           L.polyline(latlngs, {
             color: color,
             weight: 3.5,
-            opacity: 0.8
+            opacity: 0.85
           }).addTo(linesLayer);
           routeSegmentsByUser.push({ color, points: uPoints });
         });
@@ -2091,7 +2082,6 @@ function renderHtml(prefix) {
         if (shouldFit && coordPoints.length > 0) {
           fitBounds();
         }
-        renderStaticArrows();
         startRouteAnimation();
       }
 
@@ -2350,6 +2340,7 @@ function renderHtml(prefix) {
         if (animPaused) {
           stopRouteAnimation();
           updateAnimToggleBtn();
+          drawFlowFrame();
         } else {
           startRouteAnimation();
         }

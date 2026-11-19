@@ -9,15 +9,6 @@ const app = getApp()
 const WEEK_NAMES = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
 // 默认地图中心（北京天安门兜底，有实际坐标时会自动缩放至轨迹区域）
 const DEFAULT_CENTER = { latitude: 39.908823, longitude: 116.39747 }
-const CURSOR_MARKER_ID = 999999
-
-function calcSegmentDuration(from, to) {
-  const dLat = (to.lat - from.lat) * 111000
-  const dLng = (to.lng - from.lng) * 95000
-  const meters = Math.hypot(dLat, dLng)
-  // 慢速平稳移动：每段 2.4s ~ 4.2s，避免过快眼花缭乱
-  return Math.round(Math.max(2400, Math.min(4200, 2200 + meters * 0.35)))
-}
 
 function pad(n) {
   return String(n).padStart(2, '0')
@@ -65,10 +56,6 @@ Page({
     activeIndex: -1,
     activePoint: null,
 
-    // 轨迹动画控制
-    canAnimate: false,
-    animPlaying: true,
-
     // 地图组件数据
     mapCenter: DEFAULT_CENTER,
     mapScale: 13,
@@ -90,20 +77,6 @@ Page({
     })
     this.updateDateLabel(initDate)
     this.loadRoute()
-  },
-
-  onShow() {
-    if (this.data.canAnimate && this.data.animPlaying && !this.data.loading) {
-      this.startRouteAnimation()
-    }
-  },
-
-  onHide() {
-    this.stopRouteAnimation()
-  },
-
-  onUnload() {
-    this.stopRouteAnimation()
   },
 
   updateDateLabel(dateStr) {
@@ -271,7 +244,6 @@ Page({
 
       const coordPoints = points.filter(p => p.hasCoord)
       const hasValidCoords = coordPoints.length > 0
-      const canAnimate = coordPoints.length >= 2
       const activeIndex = -1
       const activePoint = null
 
@@ -295,8 +267,7 @@ Page({
         ? { latitude: coordPoints[0].lat, longitude: coordPoints[0].lng }
         : DEFAULT_CENTER
 
-      this.stopRouteAnimation()
-      const markers = this.buildMarkers(points, activeIndex, coordPoints)
+      const markers = this.buildMarkers(points, activeIndex)
 
       this.setData({
         isManager: !!result.isManager,
@@ -309,7 +280,6 @@ Page({
         clockOutPoint,
         noCoordCount,
         hasValidCoords,
-        canAnimate,
         activeIndex,
         activePoint,
         mapCenter,
@@ -320,12 +290,7 @@ Page({
       })
 
       if (includePoints.length > 0) {
-        setTimeout(() => {
-          this.fitAllPoints()
-          if (canAnimate && this.data.animPlaying) {
-            this.startRouteAnimation()
-          }
-        }, 180)
+        setTimeout(() => this.fitAllPoints(), 180)
       }
     } catch (err) {
       console.error('加载拜访地图失败:', err)
@@ -457,103 +422,10 @@ Page({
     return marker
   },
 
-  buildMarkers(points, activeIndex, coordPoints) {
-    const list = (points || [])
+  buildMarkers(points, activeIndex) {
+    return (points || [])
       .filter(p => p.hasCoord)
       .map(p => this.buildPointMarker(p, p.index === activeIndex))
-
-    const coords = coordPoints || (points || []).filter(p => p.hasCoord)
-    if (coords.length >= 2) {
-      list.push({
-        id: CURSOR_MARKER_ID,
-        latitude: coords[0].lat,
-        longitude: coords[0].lng,
-        iconPath: '/images/map-arrow.png',
-        width: 24,
-        height: 24,
-        anchor: { x: 0.5, y: 0.5 },
-        zIndex: 60
-      })
-    }
-    return list
-  },
-
-  stopRouteAnimation() {
-    this._animToken = (this._animToken || 0) + 1
-    if (this._animTimer) {
-      clearTimeout(this._animTimer)
-      this._animTimer = null
-    }
-  },
-
-  startRouteAnimation() {
-    this.stopRouteAnimation()
-    if (!this.data.animPlaying) return
-    const coordPoints = (this.data.points || []).filter(p => p.hasCoord)
-    if (coordPoints.length < 2) return
-
-    const token = this._animToken
-    const mapCtx = wx.createMapContext('visitMap', this)
-    let stepIdx = 0
-
-    const resetCursorToStart = (cb) => {
-      const markers = this.data.markers || []
-      const cursorIdx = markers.findIndex(m => m.id === CURSOR_MARKER_ID)
-      if (cursorIdx >= 0) {
-        this.setData({
-          [`markers[${cursorIdx}].latitude`]: coordPoints[0].lat,
-          [`markers[${cursorIdx}].longitude`]: coordPoints[0].lng
-        }, () => {
-          if (token !== this._animToken) return
-          this._animTimer = setTimeout(cb, 260)
-        })
-      }
-    }
-
-    const runNextHop = () => {
-      if (token !== this._animToken || !this.data.animPlaying) return
-      if (stepIdx >= coordPoints.length - 1) {
-        stepIdx = 0
-        resetCursorToStart(runNextHop)
-        return
-      }
-      const from = coordPoints[stepIdx]
-      const to = coordPoints[stepIdx + 1]
-      const duration = calcSegmentDuration(from, to)
-
-      try {
-        mapCtx.translateMarker({
-          markerId: CURSOR_MARKER_ID,
-          destination: { latitude: to.lat, longitude: to.lng },
-          autoRotate: true,
-          moveWithRotate: true,
-          duration,
-          animationEnd: () => {
-            if (token !== this._animToken || !this.data.animPlaying) return
-            stepIdx += 1
-            const dwell = stepIdx >= coordPoints.length - 1 ? 1500 : 750
-            this._animTimer = setTimeout(runNextHop, dwell)
-          },
-          fail: () => {
-            // 如果某次移动被系统取消，温和退避后重试
-            if (token !== this._animToken || !this.data.animPlaying) return
-            this._animTimer = setTimeout(runNextHop, 1200)
-          }
-        })
-      } catch (e) {}
-    }
-
-    resetCursorToStart(runNextHop)
-  },
-
-  toggleAnimation() {
-    const next = !this.data.animPlaying
-    this.setData({ animPlaying: next })
-    if (next) {
-      this.startRouteAnimation()
-    } else {
-      this.stopRouteAnimation()
-    }
   },
 
   selectPointByIndex(idx) {
@@ -567,7 +439,6 @@ Page({
       activePoint: pt
     }
 
-    // 仅局部更新旧点与新点 marker，避免整体替换 markers 打断移动光标动画
     if (prevIdx >= 0 && prevIdx !== idx) {
       const oldMarkerPos = markers.findIndex(m => m.id === prevIdx)
       if (oldMarkerPos >= 0 && points[prevIdx]) {
@@ -609,7 +480,6 @@ Page({
 
   onMarkerTap(e) {
     const markerId = e && e.detail ? Number(e.detail.markerId) : -1
-    if (markerId === CURSOR_MARKER_ID) return
     if (Number.isFinite(markerId) && markerId >= 0) {
       this.selectPointByIndex(markerId)
     }

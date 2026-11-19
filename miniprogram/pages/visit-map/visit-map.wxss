@@ -166,29 +166,8 @@
   margin: 0 18rpx;
 }
 
-.ov-actions {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 10rpx;
-}
-
-.ov-anim-btn {
-  padding: 6rpx 16rpx;
-  font-size: 22rpx;
-  color: #627D98;
-  background: #F4F6F9;
-  border-radius: 20rpx;
-  font-weight: 500;
-}
-
-.ov-anim-btn.playing {
-  color: #C2933B;
-  background: #FFF8EB;
-  font-weight: 600;
-}
-
 .ov-fit-btn {
+  margin-left: auto;
   padding: 6rpx 18rpx;
   font-size: 22rpx;
   color: #1C3D5A;
