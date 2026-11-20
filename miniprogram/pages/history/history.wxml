@@ -1,4 +1,5 @@
 <!--pages/history/history.wxml-->
+<page-meta page-style="{{showDailyModal ? 'overflow: hidden;' : ''}}" />
 <view class="history-page">
   <!-- 品牌头 -->
   <view class="brand-header brand-header--with-action">
@@ -365,9 +366,9 @@
   </view>
 
   <!-- 今日巡检汇总结论完整弹窗 -->
-  <view class="daily-modal-mask" wx:if="{{showDailyModal}}" bindtap="closeDailyModal"></view>
+  <view class="daily-modal-mask" wx:if="{{showDailyModal}}" bindtap="closeDailyModal" catchtouchmove="noop"></view>
   <view class="daily-modal-panel {{showDailyModal ? 'show' : ''}}" wx:if="{{showDailyModal}}">
-    <view class="daily-modal-header">
+    <view class="daily-modal-header" catchtouchmove="noop">
       <view class="daily-modal-title">
         <text class="title-main">{{latestDailyReport.report.summaryTitle || '今日拜访综合分析日报'}}</text>
         <text class="title-sub">{{latestDailyReport.date}} · 共评估 {{latestDailyReport.inspectionCount}} 家门店</text>
@@ -376,94 +377,96 @@
     </view>
 
     <scroll-view class="daily-modal-scroll" scroll-y="true">
-      <!-- 总评卡片 -->
-      <view class="daily-score-block">
-        <view
-          wx:if="{{latestDailyReport.report.overallScore !== null && latestDailyReport.report.overallScore !== undefined}}"
-          class="score-circle score-{{latestDailyReport.report.overallScore >= 80 ? 'high' : (latestDailyReport.report.overallScore >= 60 ? 'mid' : 'low')}}"
-        >
-          <text class="score-big">{{latestDailyReport.report.overallScore}}</text>
-          <text class="score-lvl">{{latestDailyReport.report.overallLevel || '良好'}}</text>
+      <view class="daily-modal-body">
+        <!-- 总评卡片 -->
+        <view class="daily-score-block">
+          <view
+            wx:if="{{latestDailyReport.report.overallScore !== null && latestDailyReport.report.overallScore !== undefined}}"
+            class="score-circle score-{{latestDailyReport.report.overallScore >= 80 ? 'high' : (latestDailyReport.report.overallScore >= 60 ? 'mid' : 'low')}}"
+          >
+            <text class="score-big">{{latestDailyReport.report.overallScore}}</text>
+            <text class="score-lvl">{{latestDailyReport.report.overallLevel || '良好'}}</text>
+          </view>
+          <view wx:else class="score-circle score-muted">
+            <text class="score-lvl">{{latestDailyReport.report.overallLevel || '暂无评分'}}</text>
+          </view>
+          <view class="conclusion-desc">
+            <text class="desc-title">💡 综合诊断结论</text>
+            <text class="desc-body">{{latestDailyReport.report.summaryConclusion}}</text>
+          </view>
         </view>
-        <view wx:else class="score-circle score-muted">
-          <text class="score-lvl">{{latestDailyReport.report.overallLevel || '暂无评分'}}</text>
-        </view>
-        <view class="conclusion-desc">
-          <text class="desc-title">💡 综合诊断结论</text>
-          <text class="desc-body">{{latestDailyReport.report.summaryConclusion}}</text>
-        </view>
-      </view>
 
-      <!-- 我方品牌表现 -->
-      <view class="daily-section-card" wx:if="{{latestDailyReport.report.ownBrandOverview}}">
-        <text class="section-badge">🏷️ 我方品牌终端大盘</text>
-        <view class="overview-grid">
-          <view class="overview-item" wx:if="{{latestDailyReport.report.ownBrandOverview.avgFacingCount != null}}">
-            <text class="ov-label">平均排面</text>
-            <text class="ov-val">{{latestDailyReport.report.ownBrandOverview.avgFacingCount}}面</text>
-          </view>
-          <view class="overview-item" wx:if="{{latestDailyReport.report.ownBrandOverview.inStockRate != null}}">
-            <text class="ov-label">门店在架率</text>
-            <text class="ov-val">{{latestDailyReport.report.ownBrandOverview.inStockRate}}%</text>
-          </view>
-          <view class="overview-item" wx:if="{{latestDailyReport.report.ownBrandOverview.facingSharePercent != null}}">
-            <text class="ov-label">排面占比</text>
-            <text class="ov-val">{{latestDailyReport.report.ownBrandOverview.facingSharePercent}}%</text>
-          </view>
-          <view class="overview-item">
-            <text class="ov-label">黄金位占比</text>
-            <text class="ov-val">{{latestDailyReport.report.ownBrandOverview.goldenPositionRatio || '--'}}</text>
-          </view>
-        </view>
-        <text class="ov-sit" wx:if="{{latestDailyReport.report.ownBrandOverview.competitiveSituation}}">{{latestDailyReport.report.ownBrandOverview.competitiveSituation}}</text>
-      </view>
-
-      <!-- 今日共性问题 Top3 -->
-      <view class="daily-section-card" wx:if="{{latestDailyReport.report.commonIssues && latestDailyReport.report.commonIssues.length > 0}}">
-        <text class="section-badge">⚠️ 今日共性问题</text>
-        <view class="issue-list">
-          <view class="daily-issue-item" wx:for="{{latestDailyReport.report.commonIssues}}" wx:key="index">
-            <view class="issue-top">
-              <text class="issue-cat">{{item.category}}</text>
-              <text class="issue-aff">{{item.affectStores}}</text>
+        <!-- 我方品牌表现 -->
+        <view class="daily-section-card" wx:if="{{latestDailyReport.report.ownBrandOverview}}">
+          <text class="section-badge">🏷️ 我方品牌终端大盘</text>
+          <view class="overview-grid">
+            <view class="overview-item" wx:if="{{latestDailyReport.report.ownBrandOverview.avgFacingCount != null}}">
+              <text class="ov-label">平均排面</text>
+              <text class="ov-val">{{latestDailyReport.report.ownBrandOverview.avgFacingCount}}面</text>
             </view>
-            <text class="issue-desc">{{item.description}}</text>
+            <view class="overview-item" wx:if="{{latestDailyReport.report.ownBrandOverview.inStockRate != null}}">
+              <text class="ov-label">门店在架率</text>
+              <text class="ov-val">{{latestDailyReport.report.ownBrandOverview.inStockRate}}%</text>
+            </view>
+            <view class="overview-item" wx:if="{{latestDailyReport.report.ownBrandOverview.facingSharePercent != null}}">
+              <text class="ov-label">排面占比</text>
+              <text class="ov-val">{{latestDailyReport.report.ownBrandOverview.facingSharePercent}}%</text>
+            </view>
+            <view class="overview-item">
+              <text class="ov-label">黄金位占比</text>
+              <text class="ov-val">{{latestDailyReport.report.ownBrandOverview.goldenPositionRatio || '--'}}</text>
+            </view>
           </view>
+          <text class="ov-sit" wx:if="{{latestDailyReport.report.ownBrandOverview.competitiveSituation}}">{{latestDailyReport.report.ownBrandOverview.competitiveSituation}}</text>
         </view>
-      </view>
 
-      <!-- 明日整改行动指南 -->
-      <view class="daily-section-card" wx:if="{{latestDailyReport.report.actionPlanTomorrow && latestDailyReport.report.actionPlanTomorrow.length > 0}}">
-        <text class="section-badge">🎯 明日行动指南</text>
-        <view class="action-list">
-          <view class="daily-action-item" wx:for="{{latestDailyReport.report.actionPlanTomorrow}}" wx:key="index">
-            <text class="action-prio">{{item.priority || 'P' + (index + 1)}}</text>
-            <view class="action-text-group">
-              <text class="action-main">{{item.action}}</text>
-              <text class="action-target" wx:if="{{item.target}}">目标：{{item.target}}</text>
+        <!-- 今日共性问题 Top3 -->
+        <view class="daily-section-card" wx:if="{{latestDailyReport.report.commonIssues && latestDailyReport.report.commonIssues.length > 0}}">
+          <text class="section-badge">⚠️ 今日共性问题</text>
+          <view class="issue-list">
+            <view class="daily-issue-item" wx:for="{{latestDailyReport.report.commonIssues}}" wx:key="index">
+              <view class="issue-top">
+                <text class="issue-cat">{{item.category}}</text>
+                <text class="issue-aff">{{item.affectStores}}</text>
+              </view>
+              <text class="issue-desc">{{item.description}}</text>
             </view>
           </view>
         </view>
-      </view>
 
-      <!-- 门店红黑榜简表 -->
-      <view class="daily-section-card" wx:if="{{latestDailyReport.report.storeRankings && latestDailyReport.report.storeRankings.length > 0}}">
-        <text class="section-badge">🏬 拜访门店表现简表</text>
-        <view class="ranking-list">
-          <view class="ranking-item" wx:for="{{latestDailyReport.report.storeRankings}}" wx:key="index">
-            <text class="rk-store">{{item.storeName}}</text>
-            <text class="rk-score">
-              <block wx:if="{{item.ownFacingCount !== null && item.ownFacingCount !== undefined}}">{{item.ownFacingCount}}面 · </block>
-              <block wx:if="{{item.score !== null && item.score !== undefined}}">{{item.score}}分 · {{item.status}}</block>
-              <block wx:else>{{item.status || '暂无分'}}</block>
-            </text>
+        <!-- 明日整改行动指南 -->
+        <view class="daily-section-card" wx:if="{{latestDailyReport.report.actionPlanTomorrow && latestDailyReport.report.actionPlanTomorrow.length > 0}}">
+          <text class="section-badge">🎯 明日行动指南</text>
+          <view class="action-list">
+            <view class="daily-action-item" wx:for="{{latestDailyReport.report.actionPlanTomorrow}}" wx:key="index">
+              <text class="action-prio">{{item.priority || 'P' + (index + 1)}}</text>
+              <view class="action-text-group">
+                <text class="action-main">{{item.action}}</text>
+                <text class="action-target" wx:if="{{item.target}}">目标：{{item.target}}</text>
+              </view>
+            </view>
+          </view>
+        </view>
+
+        <!-- 门店红黑榜简表 -->
+        <view class="daily-section-card" wx:if="{{latestDailyReport.report.storeRankings && latestDailyReport.report.storeRankings.length > 0}}">
+          <text class="section-badge">🏬 拜访门店表现简表</text>
+          <view class="ranking-list">
+            <view class="ranking-item" wx:for="{{latestDailyReport.report.storeRankings}}" wx:key="index">
+              <text class="rk-store">{{item.storeName}}</text>
+              <text class="rk-score">
+                <block wx:if="{{item.ownFacingCount !== null && item.ownFacingCount !== undefined}}">{{item.ownFacingCount}}面 · </block>
+                <block wx:if="{{item.score !== null && item.score !== undefined}}">{{item.score}}分 · {{item.status}}</block>
+                <block wx:else>{{item.status || '暂无分'}}</block>
+              </text>
+            </view>
           </view>
         </view>
       </view>
     </scroll-view>
 
     <!-- 底部操作栏：一键复制发微信群 / 关闭 -->
-    <view class="daily-modal-footer">
+    <view class="daily-modal-footer" catchtouchmove="noop">
       <button class="btn-secondary modal-btn" bindtap="closeDailyModal">关闭</button>
       <button class="btn-primary modal-btn" bindtap="copyDailySummary">📋 复制日报发微信群</button>
     </view>

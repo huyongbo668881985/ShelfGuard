@@ -341,6 +341,9 @@ Page({
     this.setData({ showDailyModal: false })
   },
 
+  // 阻止弹窗非滚动区域与遮罩层的触摸事件穿透到底层页面
+  noop() {},
+
   // 复制日报结论文字到剪贴板，方便一键转发到微信工作群
   copyDailySummary() {
     const report = this.data.latestDailyReport && this.data.latestDailyReport.report

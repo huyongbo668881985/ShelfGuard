@@ -561,6 +561,7 @@ Page({
     if (typeof wx.showShareImageMenu === 'function') {
       wx.showShareImageMenu({
         path: sharePath,
+        needShowEntrance: false,
         fail: (err) => {
           if (err && err.errMsg && !err.errMsg.includes('cancel')) {
             wx.previewImage({ current: sharePath, urls })

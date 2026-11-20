@@ -583,6 +583,7 @@
   z-index: 1001;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .daily-modal-header {
@@ -591,6 +592,7 @@
   align-items: center;
   padding: 30rpx 40rpx 20rpx;
   border-bottom: 1rpx solid #eee;
+  flex-shrink: 0;
 }
 
 .daily-modal-title .title-main {
@@ -613,6 +615,12 @@
 
 .daily-modal-scroll {
   flex: 1;
+  min-height: 0;
+  width: 100%;
+  max-height: calc(82vh - 280rpx);
+}
+
+.daily-modal-body {
   padding: 24rpx 36rpx;
   box-sizing: border-box;
 }
@@ -815,6 +823,7 @@
   gap: 20rpx;
   padding: 24rpx 36rpx 40rpx;
   border-top: 1rpx solid #eee;
+  flex-shrink: 0;
 }
 
 .daily-modal-footer .modal-btn {

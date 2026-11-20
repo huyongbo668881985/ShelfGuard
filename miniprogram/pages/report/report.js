@@ -431,6 +431,7 @@ Page({
       if (typeof wx.showShareImageMenu === 'function') {
         wx.showShareImageMenu({
           path: localPath,
+          needShowEntrance: false,
           fail: (err) => {
             if (err && err.errMsg && !err.errMsg.includes('cancel')) {
               // 降级为大图预览长按保存/转发
