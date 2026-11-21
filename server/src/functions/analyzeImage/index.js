@@ -63,9 +63,9 @@ function parseBoolEnv(name, fallback) {
 }
 
 const DEFAULT_DASHSCOPE_MODEL = 'qwen3.8-flash'
-const DEFAULT_MAX_TOKENS = 4096
+const DEFAULT_MAX_TOKENS = 6144
 const DEFAULT_ENABLE_THINKING = true
-const DEFAULT_THINKING_BUDGET = 1024
+const DEFAULT_THINKING_BUDGET = 2560
 const MAX_PRODUCT_REFS = parseBoundedIntEnv('AI_MAX_PRODUCT_REFS', 4, 0, 8)
 const MAX_BANNER_REFS = parseBoundedIntEnv('AI_MAX_BANNER_REFS', 3, 0, 5)
 const MAX_TOTAL_IMAGES = parseBoundedIntEnv('AI_MAX_TOTAL_IMAGES', 12, 4, 20)
@@ -82,17 +82,18 @@ const AI_CONFIG = {
 
 const CURRENT_MODEL = 'qwen'
 
-// 采样参数：陈列评分追求稳定可复现，温度压低；输出上限提升至 4096 防大货架 SKU 多时截断 JSON。
+// 采样参数：陈列评分追求稳定可复现，温度压低；思考预算提升至 2560 防密集货架思考撞墙截断，
+// 输出上限同步提升至 6144 防思考+大货架多 SKU JSON 截断或触发 reasoning_only 降级。
 const TEMPERATURE = 0.1
 const MAX_TOKENS = parseBoundedIntEnv('DASHSCOPE_MAX_TOKENS', DEFAULT_MAX_TOKENS, 1024, 16384)
 const ENABLE_THINKING = parseBoolEnv('DASHSCOPE_ENABLE_THINKING', DEFAULT_ENABLE_THINKING)
 const THINKING_BUDGET = parseBoundedIntEnv('DASHSCOPE_THINKING_BUDGET', DEFAULT_THINKING_BUDGET, 0, 8192)
 
-// 自建后端已无微信云函数 60 秒硬上限，开启有界思考后留 120s 硬超时 / 110s HTTP 超时。
-const AI_HARD_TIMEOUT_MS = parseBoundedIntEnv('DASHSCOPE_HARD_TIMEOUT_MS', 120 * 1000, 30 * 1000, 300 * 1000)
+// 自建后端已无微信云函数 60 秒硬上限，思考预算提升至 2560 后留 150s 硬超时 / 140s HTTP 超时。
+const AI_HARD_TIMEOUT_MS = parseBoundedIntEnv('DASHSCOPE_HARD_TIMEOUT_MS', 150 * 1000, 30 * 1000, 300 * 1000)
 const AI_HTTP_TIMEOUT_MS = Math.min(
   AI_HARD_TIMEOUT_MS - 5000,
-  parseBoundedIntEnv('DASHSCOPE_HTTP_TIMEOUT_MS', 110 * 1000, 25 * 1000, 290 * 1000)
+  parseBoundedIntEnv('DASHSCOPE_HTTP_TIMEOUT_MS', 140 * 1000, 25 * 1000, 290 * 1000)
 )
 
 

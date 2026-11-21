@@ -54,8 +54,8 @@ function parseArgs(argv) {
     runs: 1,
     model: process.env.EVAL_MODEL || process.env.DASHSCOPE_MODEL || 'qwen3.8-flash',
     enableThinking: parseBoolFlag(process.env.DASHSCOPE_ENABLE_THINKING, true),
-    thinkingBudget: parseBoundedInt(process.env.DASHSCOPE_THINKING_BUDGET, 1024, 0, 8192),
-    maxTokens: parseBoundedInt(process.env.DASHSCOPE_MAX_TOKENS, 4096, 1024, 16384),
+    thinkingBudget: parseBoundedInt(process.env.DASHSCOPE_THINKING_BUDGET, 2560, 0, 8192),
+    maxTokens: parseBoundedInt(process.env.DASHSCOPE_MAX_TOKENS, 6144, 1024, 16384),
     out: '',
     dryRun: false
   }
@@ -69,7 +69,7 @@ function parseArgs(argv) {
       args.enableThinking = args.thinkingBudget > 0
     }
     else if (k === '--no-thinking') { args.enableThinking = false; args.thinkingBudget = 0 }
-    else if (k === '--max-tokens' && argv[i + 1]) args.maxTokens = parseBoundedInt(argv[++i], 4096, 1024, 16384)
+    else if (k === '--max-tokens' && argv[i + 1]) args.maxTokens = parseBoundedInt(argv[++i], 6144, 1024, 16384)
     else if (k === '--out' && argv[i + 1]) args.out = argv[++i]
     else if (k === '--dry-run') args.dryRun = true
   }
@@ -96,8 +96,8 @@ async function callDashScope({
   userContent,
   systemPrompt,
   enableThinking = true,
-  thinkingBudget = 1024,
-  maxTokens = 4096
+  thinkingBudget = 2560,
+  maxTokens = 6144
 }) {
   const body = {
     model,

@@ -1061,7 +1061,7 @@ test('修复5：closeup / poor 独立控制与未上柜模糊图复核提醒及�
   assert.equal(merged.storeStats.needsReviewStores, 2)
 })
 
-test('修复6：analyzeImage 有界思考参数、MAX_TOKENS=4096、参考图预算分配与响应提取诊断', () => {
+test('修复6：analyzeImage 有界思考参数、MAX_TOKENS=6144、参考图预算分配与响应提取诊断', () => {
   const axiosStubPath = require.resolve('node:path')
   // 用临时 require 钩子隔离外部依赖 axios / cloud-shim，直接单测 analyzeImage/_internal
   const Module = require('node:module')
@@ -1098,11 +1098,11 @@ test('修复6：analyzeImage 有界思考参数、MAX_TOKENS=4096、参考图预
   }
   assert.ok(axiosStubPath && internal)
 
-  // 1. Qwen3.x 混合思考模型默认开启有界思考 + max_tokens=4096
+  // 1. Qwen3.x 混合思考模型默认开启有界思考 + max_tokens=6144
   const pDefault = internal.buildQwenRequestParameters({ model: 'qwen3.8-flash' })
-  assert.equal(pDefault.max_tokens, 4096)
+  assert.equal(pDefault.max_tokens, 6144)
   assert.equal(pDefault.enable_thinking, true)
-  assert.equal(pDefault.thinking_budget, 1024)
+  assert.equal(pDefault.thinking_budget, 2560)
   assert.equal(pDefault.vl_high_resolution_images, undefined)
 
   // 2. dailySummary 显式关闭思考
@@ -1434,11 +1434,11 @@ test('端到端集成（Mock）：analyzeImage 全链路加载产品参考图+�
   const res = await analyzeMain({ inspectionId: 'ins-e2e-1' }, {})
   assert.equal(res.success, true)
 
-  // 验证发送给 DashScope 的请求体：图文交错 + 产品参考图 + 横签参考图 + 有界思考 + max_tokens=4096
+  // 验证发送给 DashScope 的请求体：图文交错 + 产品参考图 + 横签参考图 + 有界思考 + max_tokens=6144
   assert.ok(capturedAxiosBody)
-  assert.equal(capturedAxiosBody.parameters.max_tokens, 4096)
+  assert.equal(capturedAxiosBody.parameters.max_tokens, 6144)
   assert.equal(capturedAxiosBody.parameters.enable_thinking, true)
-  assert.equal(capturedAxiosBody.parameters.thinking_budget, 1024)
+  assert.equal(capturedAxiosBody.parameters.thinking_budget, 2560)
   const userContent = capturedAxiosBody.input.messages[1].content
   const imgNodes = userContent.map((p, idx) => (p.image ? { idx, url: p.image } : null)).filter(Boolean)
   assert.equal(imgNodes.length, 4) // 2 实拍 + 1 产品参考图 + 1 横签参考图

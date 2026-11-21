@@ -61,8 +61,8 @@ function parseArgs(argv) {
     model: process.env.EVAL_MODEL || process.env.DASHSCOPE_MODEL || 'qwen3.8-flash',
     runs: 2,
     enableThinking: parseBoolFlag(process.env.DASHSCOPE_ENABLE_THINKING, true),
-    thinkingBudget: parseIntFlag(process.env.DASHSCOPE_THINKING_BUDGET, 1024, 0, 8192),
-    maxTokens: parseIntFlag(process.env.DASHSCOPE_MAX_TOKENS, 4096, 1024, 16384),
+    thinkingBudget: parseIntFlag(process.env.DASHSCOPE_THINKING_BUDGET, 2560, 0, 8192),
+    maxTokens: parseIntFlag(process.env.DASHSCOPE_MAX_TOKENS, 6144, 1024, 16384),
     maxProductRefs: parseIntFlag(process.env.AI_MAX_PRODUCT_REFS, 4, 0, 8),
     maxBannerRefs: parseIntFlag(process.env.AI_MAX_BANNER_REFS, 3, 0, 5),
     store: '',
@@ -74,12 +74,12 @@ function parseArgs(argv) {
     if (k === '--dir' && argv[i + 1]) args.dir = path.resolve(process.cwd(), argv[++i])
     else if (k === '--model' && argv[i + 1]) args.model = argv[++i]
     else if (k === '--runs' && argv[i + 1]) args.runs = parseIntFlag(argv[++i], 2, 1, 10)
-    else if (k === '--thinking-budget' && argv[i + 1]) args.thinkingBudget = parseIntFlag(argv[++i], 1024, 0, 8192)
+    else if (k === '--thinking-budget' && argv[i + 1]) args.thinkingBudget = parseIntFlag(argv[++i], 2560, 0, 8192)
     else if (k === '--no-thinking') {
       args.enableThinking = false
       args.thinkingBudget = 0
     } else if (k === '--enable-thinking') args.enableThinking = true
-    else if (k === '--max-tokens' && argv[i + 1]) args.maxTokens = parseIntFlag(argv[++i], 4096, 1024, 16384)
+    else if (k === '--max-tokens' && argv[i + 1]) args.maxTokens = parseIntFlag(argv[++i], 6144, 1024, 16384)
     else if (k === '--store' && argv[i + 1]) args.store = argv[++i].trim()
     else if (k === '--out' && argv[i + 1]) args.out = argv[++i]
     else if (k === '--dry-run') args.dryRun = true
