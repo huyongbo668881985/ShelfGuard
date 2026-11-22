@@ -39,7 +39,7 @@ DASHSCOPE_API_KEY=sk-xxxx
 # 1) 本地演练：检查目录扫描、参考图挑选与图文交错组装（不消耗 API 额度）
 npm --prefix server run eval:local -- --dry-run
 
-# 2) 使用默认线上配置（qwen3.8-flash + 有界思考 2560 + max_tokens 6144）每店跑 2 轮
+# 2) 使用默认线上配置（qwen3.8-flash + 有界思考 2560 + max_tokens 8192）每店跑 2 轮
 npm --prefix server run eval:local -- --runs 2
 
 # 3) 切换模型对比效果（例如 qwen3.7-plus）

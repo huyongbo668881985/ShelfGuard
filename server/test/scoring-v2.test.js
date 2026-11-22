@@ -1061,7 +1061,7 @@ test('修复5：closeup / poor 独立控制与未上柜模糊图复核提醒及�
   assert.equal(merged.storeStats.needsReviewStores, 2)
 })
 
-test('修复6：analyzeImage 有界思考参数、MAX_TOKENS=6144、参考图预算分配与响应提取诊断', () => {
+test('修复6：analyzeImage 有界思考参数、MAX_TOKENS=8192、参考图预算分配与响应提取诊断', () => {
   const axiosStubPath = require.resolve('node:path')
   // 用临时 require 钩子隔离外部依赖 axios / cloud-shim，直接单测 analyzeImage/_internal
   const Module = require('node:module')
@@ -1098,9 +1098,9 @@ test('修复6：analyzeImage 有界思考参数、MAX_TOKENS=6144、参考图预
   }
   assert.ok(axiosStubPath && internal)
 
-  // 1. Qwen3.x 混合思考模型默认开启有界思考 + max_tokens=6144
+  // 1. Qwen3.x 混合思考模型默认开启有界思考 + max_tokens=8192
   const pDefault = internal.buildQwenRequestParameters({ model: 'qwen3.8-flash' })
-  assert.equal(pDefault.max_tokens, 6144)
+  assert.equal(pDefault.max_tokens, 8192)
   assert.equal(pDefault.enable_thinking, true)
   assert.equal(pDefault.thinking_budget, 2560)
   assert.equal(pDefault.vl_high_resolution_images, undefined)
@@ -1434,9 +1434,9 @@ test('端到端集成（Mock）：analyzeImage 全链路加载产品参考图+�
   const res = await analyzeMain({ inspectionId: 'ins-e2e-1' }, {})
   assert.equal(res.success, true)
 
-  // 验证发送给 DashScope 的请求体：图文交错 + 产品参考图 + 横签参考图 + 有界思考 + max_tokens=6144
+  // 验证发送给 DashScope 的请求体：图文交错 + 产品参考图 + 横签参考图 + 有界思考 + max_tokens=8192
   assert.ok(capturedAxiosBody)
-  assert.equal(capturedAxiosBody.parameters.max_tokens, 6144)
+  assert.equal(capturedAxiosBody.parameters.max_tokens, 8192)
   assert.equal(capturedAxiosBody.parameters.enable_thinking, true)
   assert.equal(capturedAxiosBody.parameters.thinking_budget, 2560)
   const userContent = capturedAxiosBody.input.messages[1].content
@@ -1940,7 +1940,14 @@ test('回归5：颈挂价签 Prompt 声明、JSON 语法错自动重试(json_par
   assert.equal(evalLocal.isHeicBuffer(Buffer.from([0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63])), true)
   assert.equal(evalLocal.isHeicBuffer(Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46, 0, 1])), false)
 
-  // 3. analyzeWithVision 首次返回 finish_reason='stop' 但含未转义引号导致 JSON 语法错 -> 自动触发 json_parse_retry 自愈
+  // 3. 本地 JSON 容错修复 + 非截断 json_parse_retry 保留思考配置
+  const { parseJsonWithRepair } = require('../src/functions/analyzeImage/json-repair')
+  const repairedComma = parseJsonWithRepair('{"summary":"第1层见"红标", "蓝标"共2面","arr":["门头照","货架照",],"score":40}')
+  assert.equal(repairedComma.repaired, true)
+  assert.equal(repairedComma.value.score, 40)
+  assert.deepEqual(repairedComma.value.arr, ['门头照', '货架照'])
+  assert.throws(() => parseJsonWithRepair('{"hasShelfPhoto":true,"productIdent'))
+
   const Module = require('node:module')
   const origLoad = Module._load
   const analyzePath = require.resolve('../src/functions/analyzeImage/index.js')
@@ -1978,13 +1985,33 @@ test('回归5：颈挂价签 Prompt 声明、JSON 语法错自动重试(json_par
     }
   }
 
+  let scenario = 'repairable_quotes'
   let callCount = 0
   const mockAxios = {
     async post(url, body) {
       callCount += 1
       capturedBodies.push(body)
+      if (scenario === 'repairable_quotes') {
+        // 字符串内部含未转义英文双引号：本地即可修复，不触发第二次重试且保留深度思考
+        return {
+          data: {
+            request_id: 'req-repairable-1',
+            output: {
+              choices: [{
+                finish_reason: 'stop',
+                message: {
+                  reasoning_content: '深度思考完成...',
+                  content: [{
+                    text: '{"metadata":{"photoRoles":["货架陈列照"],"imageQuality":"good","framingType":"panorama"},"hasShelfPhoto":true,"ownBrandPresent":true,"productIdentification":[{"brand":"永丰","productLine":"特8","isOwn":true,"facingCount":5}],"adMaterials":[],"displayCompliance":{"facingCount":{"observedFacings":5,"score":25,"detail":"5面"},"goldenPosition":{"goldenFacings":5,"totalOwnFacings":5,"score":20,"detail":"黄金位"},"labelOrientation":{"frontLabelFacings":5,"totalOwnFacings":5,"score":10,"detail":"朝外"},"priceTag":{"score":10,"detail":"见"40"价签"},"horizontalBanner":{"score":0,"detail":"无横签"}},"facingMetrics":{"ownFacingCount":5,"ownSkuCount":1,"totalShelfFacingCount":20,"countingConfidence":0.9},"score":65,"summary":"发现"+2元换购"横签"}'
+                  }]
+                }
+              }]
+            }
+          }
+        }
+      }
       if (callCount === 1) {
-        // 模拟 finish_reason='stop' 但字符串里带未转义英文双引号破坏 JSON 语法
+        // 不可修复的非截断语法错（finish_reason='stop'）-> 触发 json_parse_retry 但保留 enable_thinking=true
         return {
           data: {
             request_id: 'req-bad-json-1',
@@ -1992,7 +2019,8 @@ test('回归5：颈挂价签 Prompt 声明、JSON 语法错自动重试(json_par
               choices: [{
                 finish_reason: 'stop',
                 message: {
-                  content: [{ text: '{"metadata":{"photoRoles":["货架陈列照"]},"summary":"发现"+2元换购"横签"}' }]
+                  reasoning_content: '首次思考...',
+                  content: [{ text: '{"metadata":{"photoRoles":["货架陈列照"]}, invalid_unquoted_token}' }]
                 }
               }]
             }
@@ -2006,6 +2034,7 @@ test('回归5：颈挂价签 Prompt 声明、JSON 语法错自动重试(json_par
             choices: [{
               finish_reason: 'stop',
               message: {
+                reasoning_content: '重试思考...',
                 content: [{
                   text: JSON.stringify({
                     metadata: { photoRoles: ['货架陈列照'], imageQuality: 'good', framingType: 'panorama' },
@@ -2048,11 +2077,29 @@ test('回归5：颈挂价签 Prompt 声明、JSON 语法错自动重试(json_par
     else delete require.cache[analyzePath]
   }
 
+  // 3a. 未转义引号在本地直接自愈，仅发起 1 次请求且保留思考
+  scenario = 'repairable_quotes'
+  callCount = 0
+  capturedBodies.length = 0
+  savedUpdate = null
+  const resRepair = await analyzeMain({ inspectionId: 'ins-json-retry' }, {})
+  assert.equal(resRepair.success, true)
+  assert.equal(capturedBodies.length, 1)
+  assert.equal(savedUpdate.aiReport.score, 65)
+  assert.equal(savedUpdate.aiDebug.jsonRepaired, true)
+  assert.equal(savedUpdate.aiDebug.thinkingFallback, undefined)
+
+  // 3b. 非截断不可修复语法错触发 json_parse_retry，但重试仍保留 enable_thinking=true
+  scenario = 'unrepairable_stop'
+  callCount = 0
+  capturedBodies.length = 0
+  savedUpdate = null
   const res = await analyzeMain({ inspectionId: 'ins-json-retry' }, {})
   assert.equal(res.success, true)
   assert.equal(capturedBodies.length, 2)
   assert.equal(capturedBodies[0].parameters.enable_thinking, true)
-  assert.equal(capturedBodies[1].parameters.enable_thinking, false)
+  assert.equal(capturedBodies[1].parameters.enable_thinking, true)
+  assert.equal(capturedBodies[1].parameters.thinking_budget, 2560)
   assert.equal(savedUpdate.status, 'analyzed')
   assert.equal(savedUpdate.aiReport.score, 65)
   assert.equal(savedUpdate.aiDebug.thinkingFallback, 'json_parse_retry')

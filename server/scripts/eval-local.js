@@ -32,6 +32,7 @@ const {
   selectProductRefs,
   validateAndNormalizeReport
 } = require('../src/functions/analyzeImage/scoring')
+const { parseJsonWithRepair } = require('../src/functions/analyzeImage/json-repair')
 const { summarizeResults } = require('./eval-golden-set')
 
 const DASHSCOPE_URL = 'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation'
@@ -62,7 +63,7 @@ function parseArgs(argv) {
     runs: 2,
     enableThinking: parseBoolFlag(process.env.DASHSCOPE_ENABLE_THINKING, true),
     thinkingBudget: parseIntFlag(process.env.DASHSCOPE_THINKING_BUDGET, 2560, 0, 8192),
-    maxTokens: parseIntFlag(process.env.DASHSCOPE_MAX_TOKENS, 6144, 1024, 16384),
+    maxTokens: parseIntFlag(process.env.DASHSCOPE_MAX_TOKENS, 8192, 1024, 16384),
     maxProductRefs: parseIntFlag(process.env.AI_MAX_PRODUCT_REFS, 4, 0, 8),
     maxBannerRefs: parseIntFlag(process.env.AI_MAX_BANNER_REFS, 3, 0, 5),
     store: '',
@@ -79,7 +80,7 @@ function parseArgs(argv) {
       args.enableThinking = false
       args.thinkingBudget = 0
     } else if (k === '--enable-thinking') args.enableThinking = true
-    else if (k === '--max-tokens' && argv[i + 1]) args.maxTokens = parseIntFlag(argv[++i], 6144, 1024, 16384)
+    else if (k === '--max-tokens' && argv[i + 1]) args.maxTokens = parseIntFlag(argv[++i], 8192, 1024, 16384)
     else if (k === '--store' && argv[i + 1]) args.store = argv[++i].trim()
     else if (k === '--out' && argv[i + 1]) args.out = argv[++i]
     else if (k === '--dry-run') args.dryRun = true
@@ -323,15 +324,7 @@ function loadLocalEvalConfig(evalDir, options = {}) {
 }
 
 function parseRawJson(text) {
-  let jsonStr = String(text || '').trim()
-  const m = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/)
-  if (m) jsonStr = m[1].trim()
-  if (!jsonStr.startsWith('{') || !jsonStr.endsWith('}')) {
-    const s = jsonStr.indexOf('{')
-    const e = jsonStr.lastIndexOf('}')
-    if (s !== -1 && e > s) jsonStr = jsonStr.slice(s, e + 1)
-  }
-  return JSON.parse(jsonStr)
+  return parseJsonWithRepair(text).value
 }
 
 function extractQwenText(data, enableThinking) {
@@ -436,11 +429,12 @@ async function callWithProductionFallback(callParams) {
     parsed = parseRawJson(res.text)
   } catch (parseErr) {
     if (!fallback) {
-      fallback = (thinkingAttempted && res.finishReason === 'length') ? 'truncated_json' : 'json_parse_retry'
+      const isTruncated = res.finishReason === 'length'
+      fallback = (thinkingAttempted && isTruncated) ? 'truncated_json' : 'json_parse_retry'
       const retryRes = await callDashScopeOnce({
         ...callParams,
-        enableThinking: thinkingAttempted ? false : callParams.enableThinking,
-        thinkingBudget: thinkingAttempted ? 0 : callParams.thinkingBudget
+        enableThinking: (thinkingAttempted && isTruncated) ? false : callParams.enableThinking,
+        thinkingBudget: (thinkingAttempted && isTruncated) ? 0 : callParams.thinkingBudget
       })
       res = retryRes
       parsed = parseRawJson(res.text)

@@ -11,6 +11,7 @@
 
 const cloud = require('../../cloud-shim')
 const axios = require('axios')
+const { parseJsonWithRepair } = require('./json-repair')
 const {
   PROMPT_VERSION,
   SYSTEM_PROMPT,
@@ -63,7 +64,7 @@ function parseBoolEnv(name, fallback) {
 }
 
 const DEFAULT_DASHSCOPE_MODEL = 'qwen3.8-flash'
-const DEFAULT_MAX_TOKENS = 6144
+const DEFAULT_MAX_TOKENS = 8192
 const DEFAULT_ENABLE_THINKING = true
 const DEFAULT_THINKING_BUDGET = 2560
 const MAX_PRODUCT_REFS = parseBoundedIntEnv('AI_MAX_PRODUCT_REFS', 4, 0, 8)
@@ -82,8 +83,8 @@ const AI_CONFIG = {
 
 const CURRENT_MODEL = 'qwen'
 
-// 采样参数：陈列评分追求稳定可复现，温度压低；思考预算提升至 2560 防密集货架思考撞墙截断，
-// 输出上限同步提升至 6144 防思考+大货架多 SKU JSON 截断或触发 reasoning_only 降级。
+// 采样参数：陈列评分追求稳定可复现，温度压低；思考预算为 2560 防密集货架思考撞墙截断，
+// 输出上限提升至 8192（为思考 2560 后留足 ~5600 tokens 正文缓冲），避免思考耗尽预算触发 reasoning_only 或截断。
 const TEMPERATURE = 0.1
 const MAX_TOKENS = parseBoundedIntEnv('DASHSCOPE_MAX_TOKENS', DEFAULT_MAX_TOKENS, 1024, 16384)
 const ENABLE_THINKING = parseBoolEnv('DASHSCOPE_ENABLE_THINKING', DEFAULT_ENABLE_THINKING)
@@ -874,20 +875,28 @@ async function analyzeWithVision(imageUrls, options = {}) {
   }
 
   let parsed = parseAIResponse(text, parseOpts)
-  // 若首次响应解析失败（输出被 max_tokens 截断，或偶发未转义引号等 JSON 语法错），自动重试一次提升稳定性
+  if (parsed.metadata && parsed.metadata.jsonRepaired) {
+    debug.jsonRepaired = true
+  }
+  // 若经本地容错修复仍解析失败：
+  // - 因输出撞上限截断（finishReason='length'）：触发 truncated_json，降级关闭思考重试；
+  // - 非截断偶发 JSON 语法错（json_parse_retry）：保留原思考配置重试一次，不丢弃深度思考能力。
   if (!thinkingFallback && parsed.metadata && parsed.metadata.parseError) {
     const isTruncated = Boolean(debug && debug.finishReason === 'length')
     thinkingFallback = (thinkingAttempted && isTruncated) ? 'truncated_json' : 'json_parse_retry'
     console.warn(
       `[analyzeWithVision] 首次响应 JSON 解析失败(${thinkingFallback}, finishReason=${(debug && debug.finishReason) || 'unknown'})，自动重试一次`
     )
-    const retryOpts = thinkingAttempted
+    const retryOpts = (thinkingAttempted && isTruncated)
       ? { enableThinking: false, thinkingBudget: 0, maxTokens: config.maxTokens }
       : { ...primaryCallOpts }
     const retryRes = await callQwen(config, apiKey, userContent, systemPrompt, retryOpts)
     text = retryRes.text
     debug = retryRes.debug
     parsed = parseAIResponse(text, parseOpts)
+    if (parsed.metadata && parsed.metadata.jsonRepaired) {
+      debug.jsonRepaired = true
+    }
   }
 
   debug.parsedOk = !(parsed.metadata && parsed.metadata.parseError)
@@ -1061,26 +1070,13 @@ function extractQwenText(data, options = {}) {
 // ============================================================
 function parseAIResponse(responseText, options = {}) {
   try {
-    let jsonStr = (responseText || '').trim()
-
-    // 提取 markdown 代码块中的 JSON
-    const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/)
-    if (jsonMatch) {
-      jsonStr = jsonMatch[1].trim()
-    }
-
-    // 兜底：截取第一个 { 到最后一个 } 之间的内容再解析（兼容前后带解释文字的情况）
-    if (!jsonStr.startsWith('{') || !jsonStr.endsWith('}')) {
-      const start = jsonStr.indexOf('{')
-      const end = jsonStr.lastIndexOf('}')
-      if (start !== -1 && end > start) {
-        jsonStr = jsonStr.slice(start, end + 1)
-      }
-    }
-
-    const result = JSON.parse(jsonStr)
+    const { value: result, repaired } = parseJsonWithRepair(responseText)
     const opts = Array.isArray(options) ? { activeMaterials: options } : (options || {})
-    return validateAndNormalizeReport(result, responseText, opts)
+    const normalized = validateAndNormalizeReport(result, responseText, opts)
+    if (repaired && normalized && normalized.metadata && typeof normalized.metadata === 'object') {
+      normalized.metadata.jsonRepaired = true
+    }
+    return normalized
   } catch (err) {
     console.error('解析 AI 返回结果失败:', err)
     return {
@@ -1237,15 +1233,7 @@ function buildDeterministicDailyFallback(aggregated, inspections) {
 }
 
 function parseDailySummaryNarrative(responseText) {
-  let jsonStr = (responseText || '').trim()
-  const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/)
-  if (jsonMatch) jsonStr = jsonMatch[1].trim()
-  if (!jsonStr.startsWith('{') || !jsonStr.endsWith('}')) {
-    const start = jsonStr.indexOf('{')
-    const end = jsonStr.lastIndexOf('}')
-    if (start !== -1 && end > start) jsonStr = jsonStr.slice(start, end + 1)
-  }
-  return JSON.parse(jsonStr)
+  return parseJsonWithRepair(responseText).value
 }
 
 async function handleDailySummary(event, wxContext) {
