@@ -37,6 +37,7 @@ async function bumpKnowledgeVersion() {
 const MATERIAL_CATEGORIES = [
   '灯箱',
   '横签',
+  '柜眉',
   'POP海报',
   '台卡/桌贴',
   '门头店招',
@@ -73,7 +74,7 @@ function pickMaterialEditableFields(material) {
 function sanitizePhotos(photos) {
   const src = photos && typeof photos === 'object' ? photos : {}
   const out = {}
-  ;['front', 'back', 'side'].forEach(slot => {
+  ;['front', 'back', 'side', 'combo'].forEach(slot => {
     if (src[slot] === '' || src[slot] === null || src[slot] === undefined) {
       // 允许显式清空
       if (src[slot] === '') out[slot] = ''
@@ -132,7 +133,7 @@ async function buildPhotoUrlMap(list) {
   const photoIDs = []
   for (const p of list) {
     const photos = p.photos || {}
-    ;['front', 'back', 'side'].forEach(slot => {
+    ;['front', 'back', 'side', 'combo'].forEach(slot => {
       if (photos[slot]) photoIDs.push(photos[slot])
     })
   }
@@ -211,8 +212,8 @@ exports.main = async (event, context) => {
 
         const list = res.data.map(p => {
           const photos = p.photos || {}
-          const photoURLs = { front: '', back: '', side: '' }
-          ;['front', 'back', 'side'].forEach(slot => {
+          const photoURLs = { front: '', back: '', side: '', combo: '' }
+          ;['front', 'back', 'side', 'combo'].forEach(slot => {
             if (photos[slot]) photoURLs[slot] = urlMap[photos[slot]] || ''
           })
           return { ...p, photoURLs }
@@ -293,14 +294,17 @@ exports.main = async (event, context) => {
         if (updateData.photos !== undefined) {
           try {
             updateData.photos = sanitizePhotos(updateData.photos)
+            if (product && product.photos && product.photos.combo === undefined && oldPhotos.combo) {
+              updateData.photos.combo = oldPhotos.combo
+            }
           } catch (photoErr) {
             return { success: false, error: photoErr.message }
           }
           const toDelete = []
-          ;['front', 'back', 'side'].forEach(slot => {
+          ;['front', 'back', 'side', 'combo'].forEach(slot => {
             const next = updateData.photos[slot]
             const prev = oldPhotos[slot]
-            if (prev && isCloudFileId(prev) && next !== prev) {
+            if (prev && isCloudFileId(prev) && next !== undefined && next !== prev) {
               toDelete.push(prev)
             }
           })

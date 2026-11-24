@@ -133,6 +133,9 @@
         data-value="confirmed"
         bindtap="onSelectReviewFilter"
       >✓ 已确认</view>
+      <picker mode="date" value="{{batchConfirmDate}}" bindchange="onBatchConfirmDatePick">
+        <view class="user-pill">✓ 按日确认未改</view>
+      </picker>
       <view
         class="user-pill"
         bindtap="goReflection"

@@ -21,6 +21,7 @@ Page({
     materialCategories: [
       '灯箱',
       '横签',
+      '柜眉',
       'POP海报',
       '台卡/桌贴',
       '门头店招',

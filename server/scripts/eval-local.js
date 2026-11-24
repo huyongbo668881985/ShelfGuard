@@ -24,11 +24,13 @@ const { execFileSync } = require('child_process')
 const {
   buildSystemPrompt,
   buildUserPrompt,
-  buildMultimodalUserContent
+  buildMultimodalUserContent,
+  buildConfusableSection
 } = require('../src/functions/analyzeImage/prompt')
 const {
   normalizeScoringRules,
   selectHorizontalBannerRefs,
+  selectMaterialRefs,
   selectProductRefs,
   validateAndNormalizeReport
 } = require('../src/functions/analyzeImage/scoring')
@@ -217,7 +219,7 @@ function loadLocalEvalConfig(evalDir, options = {}) {
 
       const photos = {}
       if (p.photos && typeof p.photos === 'object') {
-        ;['front', 'side', 'back'].forEach(slot => {
+        ;['front', 'side', 'back', 'combo'].forEach(slot => {
           if (p.photos[slot]) {
             const abs = path.resolve(evalDir, p.photos[slot])
             if (fs.existsSync(abs)) photos[slot] = abs
@@ -226,14 +228,17 @@ function loadLocalEvalConfig(evalDir, options = {}) {
       }
       if (p.photoFile) {
         const abs = path.resolve(evalDir, p.photoFile)
-        const slot = ['front', 'side', 'back'].includes(p.slot) ? p.slot : 'front'
+        const slot = ['front', 'side', 'back', 'combo'].includes(p.slot) ? p.slot : 'front'
         if (fs.existsSync(abs) && !photos[slot]) photos[slot] = abs
       }
       return {
+        _id: p._id || '',
         brandName: String(p.brandName).trim(),
         productLine: String(p.productLine || '').trim(),
         aliases,
         visualFeatures: String(p.visualFeatures || '').trim(),
+        confusionNotes: String(p.confusionNotes || '').trim(),
+        refPriority: Number.isFinite(Number(p.refPriority)) ? Number(p.refPriority) : 0,
         photos,
         isActive: p.isActive !== false
       }
@@ -256,6 +261,7 @@ function loadLocalEvalConfig(evalDir, options = {}) {
     })
 
   // 3. 拼装与线上 loadAnalysisContext 一致的 brandReferenceText
+  const confusables = Array.isArray(info.confusables) ? info.confusables : []
   let brandReferenceText = ''
   if (normalizedProducts.length > 0) {
     const lines = normalizedProducts.map(p => {
@@ -263,9 +269,13 @@ function loadLocalEvalConfig(evalDir, options = {}) {
       if (p.productLine) parts.push(`产品线：${p.productLine}`)
       if (p.aliases.length > 0) parts.push(`别名/简称：${p.aliases.join('、')}`)
       if (p.visualFeatures) parts.push(`视觉特征：${p.visualFeatures}`)
+      if (p.confusionNotes) parts.push(`区分要点：${p.confusionNotes}`)
       return `- ${parts.join('，')}`
     })
     brandReferenceText += `\n\n## 本品牌产品资料（识别时优先参考，遇到下列品牌/别名要统一按标准品牌名归类并标注 isOwn: true，其余品牌视为竞品 isOwn: false）\n${lines.join('\n')}`
+  }
+  if (confusables.length > 0) {
+    brandReferenceText += buildConfusableSection(confusables, normalizedProducts)
   }
   if (activeMaterials.length > 0) {
     const mLines = activeMaterials.map(m => {
@@ -278,9 +288,10 @@ function loadLocalEvalConfig(evalDir, options = {}) {
     brandReferenceText += `\n\n## 本品牌广告物料库（识别画面中的广告物料时必须优先比对下列物料，并在 adMaterials[].name 中严格输出对应的「标准名称」）\n${mLines.join('\n')}`
   }
 
-  // 4. 筛选参考图（复用线上同款 selectProductRefs / selectHorizontalBannerRefs）
+  // 4. 筛选参考图（复用线上同款 selectProductRefs / selectHorizontalBannerRefs / selectMaterialRefs）
   const selectedProductRefs = selectProductRefs(normalizedProducts, maxProductRefs)
   const selectedBannerRefs = selectHorizontalBannerRefs(activeMaterials, maxBannerRefs)
+  const selectedMaterialRefs = selectMaterialRefs(activeMaterials, 2)
 
   // 5. 发现门店拜访样本：合并 info.visits 配置与 visits/ 下全部非空子目录
   const visitMetaById = new Map()
@@ -315,10 +326,12 @@ function loadLocalEvalConfig(evalDir, options = {}) {
   return {
     scoringRules: normalizeScoringRules(info.scoringRules),
     ownBrandNames,
+    confusables,
     activeMaterials,
     brandReferenceText,
     selectedProductRefs,
     selectedBannerRefs,
+    selectedMaterialRefs,
     stores
   }
 }
@@ -491,6 +504,9 @@ async function main() {
   const bannerRefs = args.dryRun
     ? cfg.selectedBannerRefs.map(b => ({ ...b, url: 'dry-run://banner' }))
     : cfg.selectedBannerRefs.map(b => ({ ...b, url: prepareImageDataUrl(b.photo, args.dir) }))
+  const materialRefs = args.dryRun
+    ? (cfg.selectedMaterialRefs || []).map(m => ({ ...m, url: 'dry-run://material' }))
+    : (cfg.selectedMaterialRefs || []).map(m => ({ ...m, url: prepareImageDataUrl(m.photo, args.dir) }))
 
   const systemPrompt = buildSystemPrompt(cfg.scoringRules)
   const caseReports = []
@@ -500,11 +516,12 @@ async function main() {
       ? store.images.map((_, i) => `dry-run://visit-${i + 1}`)
       : store.images.map(imgPath => prepareImageDataUrl(imgPath, args.dir))
 
-    const userPrompt = buildUserPrompt(visitUrls.length, cfg.brandReferenceText, bannerRefs, productRefs)
+    const userPrompt = buildUserPrompt(visitUrls.length, cfg.brandReferenceText, bannerRefs, productRefs, materialRefs)
     const userContent = buildMultimodalUserContent({
       visitImageUrls: visitUrls,
       productRefs,
       bannerRefs,
+      materialRefs,
       userPrompt
     })
 
@@ -531,6 +548,7 @@ async function main() {
           activeMaterials: cfg.activeMaterials,
           scoringRules: cfg.scoringRules,
           ownBrandNames: cfg.ownBrandNames,
+          confusables: cfg.confusables,
           visitImageCount: visitUrls.length
         })
 

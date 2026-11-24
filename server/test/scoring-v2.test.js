@@ -909,7 +909,7 @@ test('修复3：Prompt 字段顺序先观察后打分 + 服务端以 productIden
   const idxProd = sys.indexOf('"productIdentification":')
   const idxDc = sys.indexOf('"displayCompliance":')
   const idxFm = sys.indexOf('"facingMetrics":')
-  const idxTopScore = sys.indexOf('"score": 74')
+  const idxTopScore = sys.indexOf('\n  "score":')
   assert.ok(idxMeta > 0 && idxMeta < idxObs && idxObs < idxProd && idxProd < idxDc && idxDc < idxFm && idxFm < idxTopScore)
 
   // displayCompliance 每个维度内部 detail 排在 score 之前

@@ -107,8 +107,9 @@ async function loadSettingsAndBrandSet(activeProducts = []) {
     settingsDoc = (sRes && sRes.data) || null
   } catch (_) {}
   const scoringRules = normalizeScoringRules(settingsDoc && settingsDoc.scoringRules)
-  const knowledgeVersion = Number.isFinite(Number(settingsDoc && settingsDoc.knowledgeVersion))
-    ? Math.max(1, Math.round(Number(settingsDoc.knowledgeVersion)))
+  const rawKv = settingsDoc && settingsDoc.knowledgeVersion
+  const knowledgeVersion = (rawKv !== undefined && rawKv !== null && Number.isFinite(Number(rawKv)))
+    ? Math.max(1, Math.round(Number(rawKv)))
     : 1
 
   const ownBrandNames = new Set()
@@ -333,6 +334,119 @@ exports.main = async (event, context) => {
         correctedCount: correctedRes.total || 0,
         confirmedCount: confirmedRes.total || 0
       }
+    }
+  }
+
+  // ============================================================
+  // action === 'batchConfirmDate'：按北京自然日一键将该日其余未改已分析记录标为「确认无误」正样本
+  // ============================================================
+  if (action === 'batchConfirmDate') {
+    const dateStr = String((event && event.date) || '').trim()
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+      return { success: false, error: '请提供合法日期（格式 YYYY-MM-DD）' }
+    }
+    const startDate = new Date(`${dateStr}T00:00:00.000+08:00`)
+    if (Number.isNaN(startDate.getTime())) {
+      return { success: false, error: '日期无效' }
+    }
+    const endDate = new Date(startDate.getTime() + 24 * 60 * 60 * 1000)
+
+    const dayRes = await db.collection('inspections')
+      .where(_.and([
+        { status: 'analyzed' },
+        { createdAt: _.gte(startDate.toISOString()) },
+        { createdAt: _.lt(endDate.toISOString()) }
+      ]))
+      .limit(500)
+      .get()
+
+    const validDocs = (dayRes.data || []).filter(d => (
+      d &&
+      d.aiReport &&
+      typeof d.aiReport === 'object' &&
+      !(d.aiReport.metadata && d.aiReport.metadata.isMock === true)
+    ))
+    const correctedList = validDocs.filter(d => d.reviewStatus === 'corrected')
+    const confirmedList = validDocs.filter(d => d.reviewStatus === 'confirmed')
+    const unreviewedList = validDocs.filter(d => !['corrected', 'confirmed'].includes(d.reviewStatus))
+
+    if (event && event.dryRun === true) {
+      return {
+        success: true,
+        date: dateStr,
+        totalAnalyzed: validDocs.length,
+        correctedCount: correctedList.length,
+        alreadyConfirmedCount: confirmedList.length,
+        unreviewedCount: unreviewedList.length
+      }
+    }
+
+    const activeProductsForBatch = await loadActiveProducts()
+    const { knowledgeVersion: kvBatch } = await loadSettingsAndBrandSet(activeProductsForBatch)
+    const batchNote = String((event && event.note) || `按日(${dateStr})批量确认未改记录无误`).trim().slice(0, 200)
+
+    for (const item of unreviewedList) {
+      const nextRev = (Number(item.reviewRevision) || 0) + 1
+      const baseForLog = item.aiReportOriginal || item.aiReport
+      const currentFacts = extractFacts(item.aiReport, activeProductsForBatch)
+      const rvLevel = item.reviewLevel || computeReviewLevel(baseForLog)
+      const spCheck = typeof item.spotCheck === 'boolean'
+        ? item.spotCheck
+        : computeSpotCheck(item._id, undefined, rvLevel)
+      const meta = (baseForLog && baseForLog.metadata) || {}
+      const fm = (baseForLog && baseForLog.facingMetrics) || {}
+
+      await db.collection('inspections').doc(item._id).update({
+        data: {
+          reviewLevel: rvLevel,
+          spotCheck: spCheck,
+          reviewStatus: 'confirmed',
+          reviewRevision: nextRev,
+          reviewedAt: db.serverDate(),
+          reviewedBy: openid,
+          reviewedByName: adminName,
+          keepOriginal: true
+        }
+      })
+
+      await db.collection('reviewLogs').add({
+        data: {
+          inspectionId: item._id,
+          revision: nextRev,
+          action: 'confirm',
+          adminOpenid: openid,
+          adminName,
+          createdAt: db.serverDate(),
+          storeName: item.storeName || '',
+          customerId: item.customerId || '',
+          salesOpenid: item._openid || '',
+          userName: item.userName || '',
+          aiMeta: {
+            model: item.analyzedModel || '',
+            promptVersion: meta.promptVersion || PROMPT_VERSION,
+            knowledgeVersion: meta.knowledgeVersion || kvBatch,
+            countingConfidence: fm.countingConfidence != null ? fm.countingConfidence : null,
+            reviewLevel: rvLevel,
+            spotCheck: spCheck,
+            imageQuality: meta.imageQuality || 'good',
+            framingType: meta.framingType || 'panorama',
+            needsReview: Boolean(meta.needsReview)
+          },
+          beforeFacts: currentFacts,
+          afterFacts: currentFacts,
+          changes: [],
+          note: batchNote
+        }
+      })
+    }
+
+    return {
+      success: true,
+      date: dateStr,
+      confirmedNowCount: unreviewedList.length,
+      totalAnalyzed: validDocs.length,
+      correctedCount: correctedList.length,
+      alreadyConfirmedCount: confirmedList.length
     }
   }
 

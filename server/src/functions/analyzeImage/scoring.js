@@ -61,7 +61,25 @@ function normalizeReviewThresholds(raw) {
 function computeReviewLevel(aiReport, rawThresholds) {
   if (!aiReport || typeof aiReport !== 'object') return 'low'
   const meta = (aiReport.metadata && typeof aiReport.metadata === 'object') ? aiReport.metadata : {}
+  if (meta.corrected === true) return 'high'
   if (meta.parseError) return 'low'
+
+  const qFlags = Array.isArray(meta.qualityFlags) ? meta.qualityFlags : []
+  if (
+    qFlags.includes('banner_present_but_oos') ||
+    qFlags.includes('unanchored_distant_own_claim')
+  ) {
+    return 'low'
+  }
+  // 即使未预先跑过 qualityFlags，若存在货架我方横签但判定未上柜，属于明显逻辑冲突，强制列为 low 重点待审
+  if (
+    aiReport.hasShelfPhoto !== false &&
+    (aiReport.ownBrandPresent === false || aiReport.scoreLevel === '未上柜') &&
+    Array.isArray(aiReport.adMaterials) &&
+    aiReport.adMaterials.some(m => isOwnHorizontalBannerEntry(m) && !/门头|店外|室外|门口/.test(String((m && m.position) || '')))
+  ) {
+    return 'low'
+  }
 
   const t = normalizeReviewThresholds(rawThresholds)
   const fm = (aiReport.facingMetrics && typeof aiReport.facingMetrics === 'object') ? aiReport.facingMetrics : {}
@@ -80,17 +98,37 @@ function computeReviewLevel(aiReport, rawThresholds) {
 
   const imageQuality = normalizeImageQuality(meta.imageQuality)
   const framingType = normalizeFramingType(meta.framingType)
+  const dc = (aiReport.displayCompliance && typeof aiReport.displayCompliance === 'object') ? aiReport.displayCompliance : {}
+  const hasShelfBanner = Boolean(dc.horizontalBanner && Number(dc.horizontalBanner.score) > 0)
+
+  // 远景/一般画质且无我方货架横签锚点时，若计数或单品置信偏弱(<0.7)，易发生竞品误认，优先归入 low 重点复核
+  const unanchoredWeakClaim = (
+    aiReport.hasShelfPhoto !== false &&
+    aiReport.ownBrandPresent === true &&
+    !hasShelfBanner &&
+    imageQuality !== 'good' &&
+    ((countingConf !== null && countingConf < 0.7) || (minOwnSkuConf !== null && minOwnSkuConf < 0.7))
+  )
 
   if (
     imageQuality === 'poor' ||
+    unanchoredWeakClaim ||
     (countingConf !== null && countingConf < t.lowCountingConfidence) ||
     (minOwnSkuConf !== null && minOwnSkuConf < t.lowSkuConfidence)
   ) {
     return 'low'
   }
 
+  // 贴有换购横签且检出多瓶红标/蓝标大瓶，但未检出168ml小酒时，存在「红标吞并小酒」或漏小酒风险，降为 mid 待核
+  const activeOwnSkus = ownSkus.filter(p => (Number(p.facingCount) || 0) > 0)
+  const totalActiveOwnFacings = activeOwnSkus.reduce((s, p) => s + (Number(p.facingCount) || 0), 0)
+  const hasMainRedOrBlue = activeOwnSkus.some(p => /红标|蓝标/.test(`${p.brand || ''} ${p.productLine || ''}`))
+  const hasMiniBottle = activeOwnSkus.some(p => /小酒|168/.test(`${p.brand || ''} ${p.productLine || ''}`))
+  const missingCompanionMini = hasShelfBanner && hasMainRedOrBlue && totalActiveOwnFacings >= 3 && !hasMiniBottle
+
   if (
     Boolean(meta.needsReview) ||
+    missingCompanionMini ||
     (aiReport.hasShelfPhoto !== false && framingType === 'closeup') ||
     (countingConf !== null && countingConf < t.midCountingConfidence) ||
     (minOwnSkuConf !== null && minOwnSkuConf < t.midSkuConfidence)
@@ -372,12 +410,40 @@ function normalizeFramingType(raw) {
 }
 
 /**
+ * 判断物料是否为「柜眉」（独立于货架横签，不参与横签得分）
+ */
+function isCabinetHeaderMaterial(m) {
+  if (!m || typeof m !== 'object') return false
+  if (m.isActive === false) return false
+  const cat = String(m.category || '').trim()
+  const name = String(m.materialName || m.name || '')
+  if (cat === '柜眉') return true
+  if (/柜眉/.test(name)) return true
+  if (Array.isArray(m.aliases) && m.aliases.some(a => /柜眉/.test(String(a || '')))) return true
+  return false
+}
+
+/**
+ * 判断识别出的广告物料条目是否为我方柜眉
+ */
+function isOwnCabinetHeaderEntry(item) {
+  if (!item || typeof item !== 'object') return false
+  if (item.isOwn === false) return false
+  const cat = String(item.category || '').trim()
+  const name = String(item.name || item.materialName || '')
+  if (cat === '柜眉') return true
+  if (/柜眉/.test(name)) return true
+  return false
+}
+
+/**
  * 判断物料是否为需要作为参考图喂给 AI 的「横签」
  */
 function isHorizontalBannerMaterial(m) {
   if (!m || typeof m !== 'object') return false
   if (m.isActive === false) return false
   if (!m.photo || typeof m.photo !== 'string' || !m.photo.trim()) return false
+  if (String(m.category || '').trim() === '柜眉') return false
   if (String(m.category || '').trim() === '横签') return true
   if (/横签/.test(String(m.materialName || ''))) return true
   if (Array.isArray(m.aliases) && m.aliases.some(a => /横签/.test(String(a || '')))) return true
@@ -390,6 +456,7 @@ function isHorizontalBannerMaterial(m) {
 function isOwnHorizontalBannerEntry(item) {
   if (!item || typeof item !== 'object') return false
   if (item.isOwn === false) return false
+  if (String(item.category || '').trim() === '柜眉') return false
   if (String(item.category || '').trim() === '横签') return true
   if (/横签/.test(String(item.name || item.materialName || ''))) return true
   return false
@@ -401,6 +468,32 @@ function isOwnHorizontalBannerEntry(item) {
 function selectHorizontalBannerRefs(activeMaterials = [], maxRefs = 3) {
   if (!Array.isArray(activeMaterials)) return []
   return activeMaterials.filter(isHorizontalBannerMaterial).slice(0, Math.max(0, maxRefs))
+}
+
+/**
+ * 从启用的物料库中筛选最多 maxRefs 张带参考图的重点非横签物料（如柜眉，柜眉优先）
+ */
+function selectMaterialRefs(activeMaterials = [], maxRefs = 2) {
+  if (!Array.isArray(activeMaterials)) return []
+  const limit = Math.max(0, maxRefs)
+  if (limit === 0) return []
+  const candidates = activeMaterials
+    .map((m, idx) => ({ m, idx }))
+    .filter(({ m }) => (
+      m &&
+      typeof m === 'object' &&
+      m.isActive !== false &&
+      typeof m.photo === 'string' &&
+      m.photo.trim() &&
+      !isHorizontalBannerMaterial(m)
+    ))
+    .sort((a, b) => {
+      const aHdr = isCabinetHeaderMaterial(a.m) ? 1 : 0
+      const bHdr = isCabinetHeaderMaterial(b.m) ? 1 : 0
+      if (bHdr !== aHdr) return bHdr - aHdr
+      return a.idx - b.idx
+    })
+  return candidates.slice(0, limit).map(({ m }) => m)
 }
 
 /**
@@ -460,6 +553,27 @@ function selectProductRefs(activeProducts = [], maxRefs = 4) {
   tryPick(['front'])
   if (out.length < limit) {
     tryPick(['side', 'back'])
+  }
+  // 第三轮：若仍有剩余参考图名额（如 3 个单品仅用 3 张，MAX_PRODUCT_REFS=4 还剩 1 张），补充终端三品同框比例图(combo)
+  if (out.length < limit) {
+    for (let i = 0; i < ordered.length; i++) {
+      if (out.length >= limit) break
+      const p = ordered[i]
+      if (!p || typeof p !== 'object' || p.isActive === false) continue
+      const photos = p.photos && typeof p.photos === 'object' ? p.photos : {}
+      const comboPhoto = typeof photos.combo === 'string' ? photos.combo.trim() : ''
+      if (!comboPhoto || seenFiles.has(comboPhoto)) continue
+      seenFiles.add(comboPhoto)
+      out.push({
+        brandName: String(p.brandName || '').trim(),
+        productLine: String(p.productLine || '').trim(),
+        aliases: Array.isArray(p.aliases) ? p.aliases.filter(Boolean) : [],
+        visualFeatures: String(p.visualFeatures || '').trim(),
+        confusionNotes: String(p.confusionNotes || '').trim(),
+        photo: comboPhoto,
+        slot: 'combo'
+      })
+    }
   }
   return out
 }
@@ -1011,6 +1125,19 @@ function validateAndNormalizeReport(rawResult, rawResponse, options = {}) {
 
   // 情况 B：拍了货架照但全图无我方品牌 → 未上柜，score = null，不计入均分
   if (!ownBrandPresent) {
+    const isNonShelfBannerPos = (b) => /门头|店外|室外|门口|收银|前台/.test(String((b && b.position) || ''))
+    const shelfOwnBannersWhenOos = result.adMaterials.filter(b => isOwnHorizontalBannerEntry(b) && !isNonShelfBannerPos(b))
+    const rawBannerScoreWhenOos = snapThreeTierScore((rawDc.horizontalBanner || {}).score, rules.horizontalBannerMaxScore)
+    if (!options.isHumanCorrected && (shelfOwnBannersWhenOos.length > 0 || rawBannerScoreWhenOos > 0)) {
+      needsReview = true
+      scoreReliability = 'low'
+      if (!qualityFlags.includes('banner_present_but_oos')) {
+        qualityFlags.push('banner_present_but_oos')
+      }
+      const oosBannerMsg = '画面检出我方货架横签但判定为未上柜(0面)，高度疑似颈挂牌遮挡或远景漏检，请重点人工复核'
+      consistencyAdjustments.push(oosBannerMsg)
+      reviewReasons.push(oosBannerMsg)
+    }
     result.score = null
     result.scoreLevel = '未上柜'
     result.displayCompliance = {}
@@ -1140,9 +1267,26 @@ function validateAndNormalizeReport(rawResult, rawResponse, options = {}) {
     labelScore = clampIntScore(labelRaw, rules.labelOrientationMaxScore)
   }
 
-  // 兼容 priceTag / priceTagMatch 键名
+  // 兼容 priceTag / priceTagMatch 键名 + 制式颈挂价签一致性保底（消除远景已见35/40/15挂牌却误扣价签分）
   const rawPriceTag = rawDc.priceTag || rawDc.priceTagMatch || {}
-  const priceTagScore = snapThreeTierScore(rawPriceTag.score, rules.priceTagMaxScore)
+  let priceTagScore = snapThreeTierScore(rawPriceTag.score, rules.priceTagMaxScore)
+  let priceTagDetail = String(rawPriceTag.detail || '').trim()
+  if (!options.isHumanCorrected && ownFacingCount > 0 && rules.priceTagMaxScore > 0 && priceTagScore < rules.priceTagMaxScore) {
+    const obsSummaries = (result.shelfObservations && Array.isArray(result.shelfObservations.photoFacings))
+      ? result.shelfObservations.photoFacings.map(f => String((f && f.layerSummary) || '')).join(' ')
+      : ''
+    const facingDetailStr = String((rawDc.facingCount && rawDc.facingCount.detail) || '')
+    const combinedObsText = `${obsSummaries} ${facingDetailStr} ${priceTagDetail}`
+    const hasOwnNeckPriceTag = /(?:挂|贴|带|标)[^。；\n]{0,14}?(?:35|40|15)\s*(?:元|价签|挂牌|圆牌|黄牌|白牌|颈牌|牌)|(?:35|40|15)\s*(?:元|黄|白|红)?(?:价签|挂牌|圆牌|颈牌|黄红挂卡)/.test(combinedObsText)
+    const explicitlyDamagedPriceTag = /破损|残缺|严重遮挡|脱落|偏离/.test(priceTagDetail)
+    if (hasOwnNeckPriceTag && !explicitlyDamagedPriceTag) {
+      const prevPt = priceTagScore
+      priceTagScore = rules.priceTagMaxScore
+      const ptSyncNote = `观测记录已确认我方瓶身挂有35/40/15制式价格牌，价签规范得分由 ${prevPt} 保底校准为 ${priceTagScore}/${rules.priceTagMaxScore} 分`
+      consistencyAdjustments.push(ptSyncNote)
+      priceTagDetail = priceTagDetail ? `${priceTagDetail}（${ptSyncNote}）` : ptSyncNote
+    }
+  }
 
   // 横签露出 + 与 adMaterials 双向一致性交叉校验
   const rawBanner = rawDc.horizontalBanner || {}
@@ -1235,7 +1379,7 @@ function validateAndNormalizeReport(rawResult, rawResponse, options = {}) {
       score: priceTagScore,
       maxScore: rules.priceTagMaxScore,
       status: deriveDimensionStatus(priceTagScore, rules.priceTagMaxScore),
-      detail: String(rawPriceTag.detail || '').trim()
+      detail: priceTagDetail
     },
     horizontalBanner: {
       score: bannerScore,
@@ -1591,7 +1735,10 @@ module.exports = {
   normalizeFramingType,
   isHorizontalBannerMaterial,
   isOwnHorizontalBannerEntry,
+  isCabinetHeaderMaterial,
+  isOwnCabinetHeaderEntry,
   selectHorizontalBannerRefs,
+  selectMaterialRefs,
   selectProductRefs,
   normalizeAdMaterials,
   isOwnBrandProduct,

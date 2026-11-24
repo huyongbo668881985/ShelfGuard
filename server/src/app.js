@@ -38,9 +38,10 @@ function createApp() {
     }
   })
 
-  // 供进销存 (jxc-app) 经营诊断助手调用的内部只读接口（使用 INTERNAL_API_KEY 鉴权）
+  // 供进销存 (jxc-app) 经营诊断助手及 n8n 日报调用的内部只读接口（使用 INTERNAL_API_KEY 鉴权）
   router.get('/api/internal/customer-summary', internal.requireInternalKey, internal.customerSummaryHandler)
   router.get('/api/internal/overview', internal.requireInternalKey, internal.overviewHandler)
+  router.get('/api/internal/daily-report', internal.requireInternalKey, internal.dailyReportHandler)
 
   // 电脑端 Chrome 拜访地图大屏页与数据接口
   router.get('/map', webMap.mapPageHandler)

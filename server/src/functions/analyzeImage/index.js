@@ -30,6 +30,7 @@ const {
   computeSpotCheck,
   DEFAULT_SPOT_CHECK_RATE,
   selectHorizontalBannerRefs,
+  selectMaterialRefs,
   selectProductRefs,
   normalizeAdMaterials,
   validateAndNormalizeReport,
@@ -69,6 +70,7 @@ const DEFAULT_ENABLE_THINKING = true
 const DEFAULT_THINKING_BUDGET = 2560
 const MAX_PRODUCT_REFS = parseBoundedIntEnv('AI_MAX_PRODUCT_REFS', 4, 0, 8)
 const MAX_BANNER_REFS = parseBoundedIntEnv('AI_MAX_BANNER_REFS', 3, 0, 5)
+const MAX_MATERIAL_REFS = parseBoundedIntEnv('AI_MAX_MATERIAL_REFS', 2, 0, 4)
 const MAX_TOTAL_IMAGES = parseBoundedIntEnv('AI_MAX_TOTAL_IMAGES', 12, 4, 20)
 
 const AI_CONFIG = {
@@ -339,11 +341,12 @@ async function analyzeSingleInspection(inspectionDoc, idsToAnalyze, preloadedCon
       bannerRefs = [],
       bannerRefMaterials = [],
       bannerRefUrls = [],
+      materialRefs = [],
       runtimeSettings = null
     } = ctx
-    console.log(`[2/5] 上下文加载完成（产品参考图 ${productRefs.length} 张，横签参考图 ${bannerRefs.length} 张）`)
+    console.log(`[2/5] 上下文加载完成（产品参考图 ${productRefs.length} 张，横签参考图 ${bannerRefs.length} 张，重点物料参考图 ${materialRefs.length} 张）`)
 
-    // 3. 调用 AI 视觉模型分析（图文交错：实拍图 + 产品参考图 + 横签参考图）
+    // 3. 调用 AI 视觉模型分析（图文交错：实拍图 + 产品参考图 + 横签参考图 + 重点物料参考图）
     const runtimeConfig = resolveRuntimeAIConfig(runtimeSettings)
     console.log(`[3/5] 调用 ${CURRENT_MODEL}/${runtimeConfig.model} 视觉分析（thinking=${runtimeConfig.enableThinking}, budget=${runtimeConfig.thinkingBudget}, maxTokens=${runtimeConfig.maxTokens}）...`)
     const analysis = await withHardTimeout(
@@ -359,6 +362,7 @@ async function analyzeSingleInspection(inspectionDoc, idsToAnalyze, preloadedCon
         bannerRefs,
         bannerRefMaterials,
         bannerRefUrls,
+        materialRefs,
         runtimeSettings
       }),
       AI_HARD_TIMEOUT_MS,
@@ -535,12 +539,14 @@ function buildQwenRequestParameters(config, callOptions = {}) {
   return params
 }
 
-function allocateReferenceBudget(visitCount, productRefs = [], bannerRefs = [], maxTotalImages = MAX_TOTAL_IMAGES) {
+function allocateReferenceBudget(visitCount, productRefs = [], bannerRefs = [], maxTotalImages = MAX_TOTAL_IMAGES, materialRefs = []) {
   const remainingAfterVisits = Math.max(0, maxTotalImages - Math.max(0, visitCount))
   const banners = Array.isArray(bannerRefs) ? bannerRefs.slice(0, Math.min(MAX_BANNER_REFS, remainingAfterVisits)) : []
   const remainingForProducts = Math.max(0, remainingAfterVisits - banners.length)
   const products = Array.isArray(productRefs) ? productRefs.slice(0, Math.min(MAX_PRODUCT_REFS, remainingForProducts)) : []
-  return { productRefs: products, bannerRefs: banners }
+  const remainingForMaterials = Math.max(0, remainingForProducts - products.length)
+  const materials = Array.isArray(materialRefs) ? materialRefs.slice(0, Math.min(MAX_MATERIAL_REFS, remainingForMaterials)) : []
+  return { productRefs: products, bannerRefs: banners, materialRefs: materials }
 }
 
 async function resolveApiKey(config, settingsDoc = null) {
@@ -605,15 +611,15 @@ async function loadAnalysisContext(overrides = {}) {
   const reviewThresholds = normalizeReviewThresholds(
     overrides.reviewThresholds || (runtimeSettings && runtimeSettings.reviewThresholds)
   )
-  const spotCheckRate = Number.isFinite(Number(
-    overrides.spotCheckRate !== undefined ? overrides.spotCheckRate : (runtimeSettings && runtimeSettings.spotCheckRate)
-  ))
-    ? Math.max(0, Math.min(100, Math.round(Number(
-        overrides.spotCheckRate !== undefined ? overrides.spotCheckRate : runtimeSettings.spotCheckRate
-      ))))
+  const rawSpotRate = overrides.spotCheckRate !== undefined
+    ? overrides.spotCheckRate
+    : (runtimeSettings && runtimeSettings.spotCheckRate)
+  const spotCheckRate = (rawSpotRate !== undefined && rawSpotRate !== null && Number.isFinite(Number(rawSpotRate)))
+    ? Math.max(0, Math.min(100, Math.round(Number(rawSpotRate))))
     : DEFAULT_SPOT_CHECK_RATE
-  const knowledgeVersion = Number.isFinite(Number(runtimeSettings && runtimeSettings.knowledgeVersion))
-    ? Math.max(1, Math.round(Number(runtimeSettings.knowledgeVersion)))
+  const rawKv = runtimeSettings && runtimeSettings.knowledgeVersion
+  const knowledgeVersion = (rawKv !== undefined && rawKv !== null && Number.isFinite(Number(rawKv)))
+    ? Math.max(1, Math.round(Number(rawKv)))
     : 1
   const learnedRules = Array.isArray(overrides.learnedRules)
     ? overrides.learnedRules
@@ -728,6 +734,29 @@ async function loadAnalysisContext(overrides = {}) {
     }
   }
 
+  // 筛选启用且带参考图 photo 的非横签重点物料（如柜眉），最多取 MAX_MATERIAL_REFS 张
+  const candidateMaterialRefs = selectMaterialRefs(activeMaterials, MAX_MATERIAL_REFS)
+  const materialRefs = []
+  if (candidateMaterialRefs.length > 0) {
+    try {
+      const matFileRes = await cloud.readFilesAsDataUrls({
+        fileList: candidateMaterialRefs.map(m => m.photo)
+      })
+      const byFileId = new Map()
+      ;(matFileRes.fileList || []).forEach(f => {
+        if (f && f.fileID && f.tempFileURL) byFileId.set(f.fileID, f.tempFileURL)
+      })
+      candidateMaterialRefs.forEach(m => {
+        const url = byFileId.get(m.photo)
+        if (url) {
+          materialRefs.push({ ...m, url })
+        }
+      })
+    } catch (err) {
+      console.warn('读取重点物料参考图失败，降级为纯文本特征识别:', err.message || err)
+    }
+  }
+
   return {
     runtimeSettings,
     scoringRules,
@@ -743,7 +772,8 @@ async function loadAnalysisContext(overrides = {}) {
     productRefs,
     bannerRefs,
     bannerRefMaterials,
-    bannerRefUrls
+    bannerRefUrls,
+    materialRefs
   }
 }
 
@@ -808,7 +838,8 @@ async function analyzeWithVision(imageUrls, options = {}) {
     productRefs = [],
     bannerRefs = [],
     bannerRefMaterials = [],
-    bannerRefUrls = []
+    bannerRefUrls = [],
+    materialRefs = []
   } = options
 
   // 兼容旧调用方仅传 bannerRefMaterials + bannerRefUrls 的形式
@@ -816,18 +847,20 @@ async function analyzeWithVision(imageUrls, options = {}) {
     ? bannerRefs
     : bannerRefMaterials.map((m, idx) => ({ ...m, url: bannerRefUrls[idx] })).filter(r => r && r.url)
 
-  const allocated = allocateReferenceBudget(imageUrls.length, productRefs, rawBannerRefs, MAX_TOTAL_IMAGES)
+  const allocated = allocateReferenceBudget(imageUrls.length, productRefs, rawBannerRefs, MAX_TOTAL_IMAGES, materialRefs)
   const systemPrompt = buildSystemPrompt(scoringRules)
   const userPrompt = buildUserPrompt(
     imageUrls.length,
     brandReferenceText,
     allocated.bannerRefs,
-    allocated.productRefs
+    allocated.productRefs,
+    allocated.materialRefs
   )
   const userContent = buildMultimodalUserContent({
     visitImageUrls: imageUrls,
     productRefs: allocated.productRefs,
     bannerRefs: allocated.bannerRefs,
+    materialRefs: allocated.materialRefs,
     userPrompt
   })
 

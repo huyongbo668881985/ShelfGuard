@@ -26,6 +26,12 @@
         <text class="h-lab">生效规则补丁</text>
       </view>
     </view>
+
+    <view class="hero-batch-bar">
+      <picker mode="date" value="{{batchConfirmDate}}" bindchange="onBatchConfirmDatePick">
+        <view class="hero-batch-btn">✓ 按日将未改记录批量确认为正样本</view>
+      </picker>
+    </view>
   </view>
 
   <!-- 切换标签：复盘报告 / 已生效修正记录 -->

@@ -339,17 +339,29 @@ function buildFallbackAttribution(cluster, knowledgeSnapshot = {}) {
       })
     }
   } else if (cluster.errorType === 'facing_count') {
-    rootCause = 'depth_double_count'
+    const isSkuMerged = cluster.reason === 'sku_misclassified'
+    rootCause = isSkuMerged ? 'similar_name' : 'depth_double_count'
     explanation = `${cluster.title}（共 ${cluster.count} 次）。`
-    rawProposals.push({
-      fixType: 'learned_rule_add',
-      target: {},
-      payload: {
-        category: 'facing_count',
-        rule: '排面计数只统计货架最前排正面可见瓶数，同品规向后纵深陈列的后排库存严禁重复计入排面数'
-      },
-      rationale: '强化最前排排面计数口径补丁'
-    })
+    if (isSkuMerged && targetProd) {
+      rawProposals.push({
+        fixType: 'product_confusion_notes',
+        target: { productId: targetProd._id },
+        payload: {
+          confusionNotes: `逐瓶核对瓶身高矮与颈牌数字，切勿将相邻半高矮扁瓶（挂15白底红圈牌）或不同色标品规合并计入「${[targetProd.brandName, targetProd.productLine].filter(Boolean).join(' ')}」`
+        },
+        rationale: '防止相邻同系矮瓶/其他品规被吞并多计'
+      })
+    } else {
+      rawProposals.push({
+        fixType: 'learned_rule_add',
+        target: {},
+        payload: {
+          category: 'facing_count',
+          rule: '排面计数只统计货架最前排正面可见瓶数，同品规向后纵深陈列的后排库存严禁重复计入排面数'
+        },
+        rationale: '强化最前排排面计数口径补丁'
+      })
+    }
   } else if (cluster.errorType === 'price_tag' || cluster.errorType === 'banner') {
     rootCause = 'banner_or_pricetag_confusion'
     explanation = `${cluster.title}（共 ${cluster.count} 次）。`

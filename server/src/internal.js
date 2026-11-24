@@ -4,9 +4,57 @@ const crypto = require('crypto')
 const db = require('./docdb')
 const files = require('./files')
 const { internalApiKey } = require('./config')
-const { extractFacingSummary } = require('./functions/analyzeImage/scoring')
+const {
+  extractFacingSummary,
+  isOwnHorizontalBannerEntry,
+  isOwnCabinetHeaderEntry
+} = require('./functions/analyzeImage/scoring')
 
 const _ = db.command
+const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000
+const DAY_MS = 24 * 60 * 60 * 1000
+
+function round1(val) {
+  if (val == null || !Number.isFinite(val)) return null
+  return Math.round(val * 10) / 10
+}
+
+function parseShanghaiDayRange(dateStr, nowMs = Date.now()) {
+  if (dateStr) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateStr).trim())
+    if (!m) return null
+    const y = Number(m[1])
+    const mo = Number(m[2])
+    const d = Number(m[3])
+    const check = new Date(Date.UTC(y, mo - 1, d))
+    if (check.getUTCFullYear() !== y || check.getUTCMonth() !== mo - 1 || check.getUTCDate() !== d) {
+      return null
+    }
+    const startMs = Date.UTC(y, mo - 1, d) - SHANGHAI_OFFSET_MS
+    return {
+      date: `${m[1]}-${m[2]}-${m[3]}`,
+      startDate: new Date(startMs),
+      endDate: new Date(startMs + DAY_MS)
+    }
+  }
+  const shNow = new Date(nowMs + SHANGHAI_OFFSET_MS)
+  const todayStartMs = Date.UTC(shNow.getUTCFullYear(), shNow.getUTCMonth(), shNow.getUTCDate()) - SHANGHAI_OFFSET_MS
+  const startMs = todayStartMs - DAY_MS
+  const date = new Date(startMs + SHANGHAI_OFFSET_MS).toISOString().slice(0, 10)
+  return {
+    date,
+    startDate: new Date(startMs),
+    endDate: new Date(todayStartMs)
+  }
+}
+
+function formatShanghaiHM(value) {
+  if (!value) return ''
+  const ms = value instanceof Date ? value.getTime() : Date.parse(value)
+  if (!Number.isFinite(ms)) return ''
+  const sh = new Date(ms + SHANGHAI_OFFSET_MS)
+  return `${String(sh.getUTCHours()).padStart(2, '0')}:${String(sh.getUTCMinutes()).padStart(2, '0')}`
+}
 
 function safeEqual(a, b) {
   const left = Buffer.from(String(a || ''))
@@ -482,14 +530,296 @@ async function overviewHandler(req, res) {
   }
 }
 
+async function buildDailyReportData({ dateStr = '', includeAdmin = false, nowMs = Date.now() } = {}) {
+  const range = parseShanghaiDayRange(dateStr, nowMs)
+  if (!range) {
+    return { ok: false, error: '日期格式无效，请使用 YYYY-MM-DD' }
+  }
+
+  // 1. 加载在职已审批人员名单（默认排除 admin 账号）
+  const staffMap = new Map()
+  const adminOpenids = new Set()
+  let uSkip = 0
+  while (uSkip < 1000) {
+    const uRes = await db.collection('users')
+      .orderBy('createdAt', 'asc')
+      .skip(uSkip)
+      .limit(200)
+      .get()
+    const uBatch = uRes.data || []
+    if (uBatch.length === 0) break
+
+    uBatch.forEach(u => {
+      if (!u) return
+      if (u.role === 'admin' && u._openid) adminOpenids.add(u._openid)
+      if (!includeAdmin && u.role === 'admin') return
+      if (u.disabled) return
+      const isApproved = u.approved === true || (
+        (u.approved === undefined || u.approved === null) &&
+        (u.role === 'admin' || u.role === 'manager')
+      )
+      if (!isApproved) return
+
+      const key = u._openid || `id:${u._id}`
+      staffMap.set(key, {
+        userId: u._id || key,
+        _openid: u._openid || '',
+        userName: (u.name && u.name.trim()) ? u.name.trim() : '未命名业务员',
+        department: u.department || '',
+        role: u.role || 'sales',
+        clockInTime: '',
+        clockOutTime: '',
+        firstVisitTime: '',
+        lastVisitTime: '',
+        visitSubmissionCount: 0,
+        pendingAnalyzeCount: 0,
+        analyzeFailedCount: 0,
+        stores: new Map()
+      })
+    })
+    uSkip += uBatch.length
+    if (uBatch.length < 200) break
+  }
+
+  // 2. 分页拉取目标北京自然日内的全部打卡与拜访记录
+  let records = []
+  let iSkip = 0
+  while (iSkip < 5000) {
+    const iRes = await db.collection('inspections')
+      .where(_.and(
+        { createdAt: _.gte(range.startDate) },
+        { createdAt: _.lt(range.endDate) },
+        { 'aiReport.metadata.isMock': _.neq(true) }
+      ))
+      .orderBy('createdAt', 'asc')
+      .skip(iSkip)
+      .limit(500)
+      .get()
+    const batch = iRes.data || []
+    if (batch.length === 0) break
+    records = records.concat(batch)
+    iSkip += batch.length
+    if (batch.length < 500) break
+  }
+
+  if (!includeAdmin && adminOpenids.size > 0) {
+    records = records.filter(r => !(r._openid && adminOpenids.has(r._openid)))
+  }
+
+  // 3. 按人、按店（同店同日去重）聚合
+  records.forEach(r => {
+    const key = r._openid || `name:${(r.userName && r.userName.trim()) || '未知业务员'}`
+    if (!staffMap.has(key)) {
+      staffMap.set(key, {
+        userId: key,
+        _openid: r._openid || '',
+        userName: (r.userName && r.userName.trim()) ? r.userName.trim() : '未命名业务员',
+        department: '',
+        role: 'sales',
+        clockInTime: '',
+        clockOutTime: '',
+        firstVisitTime: '',
+        lastVisitTime: '',
+        visitSubmissionCount: 0,
+        pendingAnalyzeCount: 0,
+        analyzeFailedCount: 0,
+        stores: new Map()
+      })
+    }
+    const staff = staffMap.get(key)
+    if ((!staff.userName || staff.userName === '未命名业务员') && r.userName && r.userName.trim()) {
+      staff.userName = r.userName.trim()
+    }
+
+    const hm = formatShanghaiHM(r.createdAt)
+    const recType = (r.recordType === 'clock_in' || r.recordType === 'clock_out')
+      ? r.recordType
+      : (r.status === 'clocked' ? 'clock_in' : 'visit')
+
+    if (recType === 'clock_in') {
+      if (hm && !staff.clockInTime) staff.clockInTime = hm
+      return
+    }
+    if (recType === 'clock_out') {
+      if (hm) staff.clockOutTime = hm
+      return
+    }
+
+    staff.visitSubmissionCount += 1
+    if (hm) {
+      if (!staff.firstVisitTime) staff.firstVisitTime = hm
+      staff.lastVisitTime = hm
+    }
+    if (r.status === 'pending' || r.status === 'analyzing') {
+      staff.pendingAnalyzeCount += 1
+    } else if (r.status === 'analyze_failed') {
+      staff.analyzeFailedCount += 1
+    }
+
+    const cleanStoreName = (r.storeName && String(r.storeName).trim()) || ''
+    const storeKey = (r.customerId && String(r.customerId).trim())
+      ? `cid:${String(r.customerId).trim()}`
+      : (cleanStoreName ? `name:${cleanStoreName}` : `id:${r._id || staff.visitSubmissionCount}`)
+
+    if (!staff.stores.has(storeKey)) {
+      staff.stores.set(storeKey, {
+        storeKey,
+        storeName: cleanStoreName || '未命名门店',
+        hasOwnProduct: false,
+        inStockScores: [],
+        inStockFacings: [],
+        hasHorizontalBanner: false,
+        hasCabinetHeader: false
+      })
+    }
+    const store = staff.stores.get(storeKey)
+    const ar = r.aiReport && typeof r.aiReport === 'object' ? r.aiReport : null
+    if (ar && !isParseErrorReport(ar)) {
+      if (ar.ownBrandPresent === true && !isNoShelfPhotoReport(ar)) {
+        store.hasOwnProduct = true
+        const score = extractValidScore(ar)
+        if (score != null) store.inStockScores.push(score)
+        const facing = extractOwnFacingCount(ar)
+        if (facing != null) store.inStockFacings.push(facing)
+      }
+      const dcHbScore = parseStrictNumber(
+        ar.displayCompliance && ar.displayCompliance.horizontalBanner && ar.displayCompliance.horizontalBanner.score
+      )
+      const adMats = Array.isArray(ar.adMaterials) ? ar.adMaterials : []
+      if ((dcHbScore != null && dcHbScore > 0) || adMats.some(isOwnHorizontalBannerEntry)) {
+        store.hasHorizontalBanner = true
+      }
+      if (adMats.some(isOwnCabinetHeaderEntry)) {
+        store.hasCabinetHeader = true
+      }
+    }
+  })
+
+  // 4. 输出分人与团队汇总（平均分/平均排面均仅统计有货门店）
+  let teamScoreSum = 0
+  let teamScoreCount = 0
+  let teamFacingSum = 0
+  let teamFacingCount = 0
+
+  const salespersons = Array.from(staffMap.values()).map(st => {
+    const storeList = Array.from(st.stores.values())
+    const inStockStores = storeList.filter(s => s.hasOwnProduct)
+
+    let scoreSum = 0
+    let scoreCount = 0
+    let facingSum = 0
+    let facingCount = 0
+
+    inStockStores.forEach(s => {
+      if (s.inStockScores.length > 0) {
+        const storeScore = s.inStockScores.reduce((a, b) => a + b, 0) / s.inStockScores.length
+        scoreSum += storeScore
+        scoreCount += 1
+        teamScoreSum += storeScore
+        teamScoreCount += 1
+      }
+      if (s.inStockFacings.length > 0) {
+        const storeFacing = s.inStockFacings.reduce((a, b) => a + b, 0) / s.inStockFacings.length
+        facingSum += storeFacing
+        facingCount += 1
+        teamFacingSum += storeFacing
+        teamFacingCount += 1
+      }
+    })
+
+    const visitCount = storeList.length
+    const visitTimeRange = st.firstVisitTime
+      ? (st.lastVisitTime && st.lastVisitTime !== st.firstVisitTime
+          ? `${st.firstVisitTime}~${st.lastVisitTime}`
+          : st.firstVisitTime)
+      : ''
+
+    return {
+      userId: st.userId,
+      userName: st.userName,
+      department: st.department,
+      role: st.role,
+      clockInTime: st.clockInTime || null,
+      clockOutTime: st.clockOutTime || null,
+      visitCount,
+      visitSubmissionCount: st.visitSubmissionCount,
+      firstVisitTime: st.firstVisitTime || null,
+      lastVisitTime: st.lastVisitTime || null,
+      visitTimeRange,
+      inStockStoreCount: inStockStores.length,
+      inStockAvgScore: scoreCount > 0 ? round1(scoreSum / scoreCount) : null,
+      inStockAvgFacing: facingCount > 0 ? round1(facingSum / facingCount) : null,
+      horizontalBannerStoreCount: storeList.filter(s => s.hasHorizontalBanner).length,
+      cabinetHeaderStoreCount: storeList.filter(s => s.hasCabinetHeader).length,
+      pendingAnalyzeCount: st.pendingAnalyzeCount,
+      analyzeFailedCount: st.analyzeFailedCount
+    }
+  }).sort((a, b) => {
+    const aActive = Boolean(a.clockInTime || a.clockOutTime || a.visitCount > 0)
+    const bActive = Boolean(b.clockInTime || b.clockOutTime || b.visitCount > 0)
+    if (bActive !== aActive) return bActive ? 1 : -1
+    if (b.visitCount !== a.visitCount) return b.visitCount - a.visitCount
+    return String(a.userName).localeCompare(String(b.userName), 'zh-CN')
+  })
+
+  const totals = {
+    totalStaffCount: salespersons.length,
+    activeStaffCount: salespersons.filter(p => p.clockInTime || p.clockOutTime || p.visitCount > 0).length,
+    clockInCount: salespersons.filter(p => p.clockInTime).length,
+    clockOutCount: salespersons.filter(p => p.clockOutTime).length,
+    visitCount: salespersons.reduce((sum, p) => sum + p.visitCount, 0),
+    visitSubmissionCount: salespersons.reduce((sum, p) => sum + p.visitSubmissionCount, 0),
+    inStockStoreCount: salespersons.reduce((sum, p) => sum + p.inStockStoreCount, 0),
+    inStockAvgScore: teamScoreCount > 0 ? round1(teamScoreSum / teamScoreCount) : null,
+    inStockAvgFacing: teamFacingCount > 0 ? round1(teamFacingSum / teamFacingCount) : null,
+    horizontalBannerStoreCount: salespersons.reduce((sum, p) => sum + p.horizontalBannerStoreCount, 0),
+    cabinetHeaderStoreCount: salespersons.reduce((sum, p) => sum + p.cabinetHeaderStoreCount, 0),
+    pendingAnalyzeCount: salespersons.reduce((sum, p) => sum + p.pendingAnalyzeCount, 0),
+    analyzeFailedCount: salespersons.reduce((sum, p) => sum + p.analyzeFailedCount, 0)
+  }
+
+  return {
+    ok: true,
+    date: range.date,
+    totals,
+    salespersons
+  }
+}
+
+async function dailyReportHandler(req, res) {
+  try {
+    const rawDate = req.query.date != null ? String(req.query.date).trim() : ''
+    const rawIncludeAdmin = String(req.query.includeAdmin || '').trim().toLowerCase()
+    const includeAdmin = rawIncludeAdmin === '1' || rawIncludeAdmin === 'true'
+
+    const data = await buildDailyReportData({ dateStr: rawDate, includeAdmin })
+    if (!data.ok) {
+      return res.status(400).json({ success: false, error: data.error })
+    }
+    return res.json({
+      success: true,
+      date: data.date,
+      totals: data.totals,
+      salespersons: data.salespersons
+    })
+  } catch (err) {
+    console.error('[internal] dailyReportHandler 异常:', err)
+    return res.status(500).json({ success: false, error: '查询每日巡检汇总失败' })
+  }
+}
+
 module.exports = {
   requireInternalKey,
   customerSummaryHandler,
   overviewHandler,
+  dailyReportHandler,
   _internal: {
     isParseErrorReport,
     extractValidScore,
     extractSharePercent,
-    extractOwnFacingCount
+    extractOwnFacingCount,
+    parseShanghaiDayRange,
+    formatShanghaiHM,
+    buildDailyReportData
   }
 }

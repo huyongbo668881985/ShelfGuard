@@ -575,12 +575,13 @@ function buildCorrectedReport(baseReport, validatedFacts, ctx = {}) {
     }
   }
 
-  // 校正后的报告不再执行易混淆硬拦截（因管理员已亲手确认了哪些是我方产品）
+  // 校正后的报告不再执行易混淆硬拦截或启发式价签保底（因管理员已亲手确认了全部事实）
   const normalized = validateAndNormalizeReport(candidate, base.rawResponse || '', {
     activeMaterials,
     scoringRules: rules,
     ownBrandNames,
-    confusables: []
+    confusables: [],
+    isHumanCorrected: true
   })
 
   // 覆盖确定性 detail 文案与默认总结
@@ -684,6 +685,13 @@ function diffFacts(beforeFacts, afterFacts, userAnnotations = []) {
     }
   }
 
+  // 判断是否存在新增/补增的其他我方品规（用于区分「同系品规吞并混淆 sku_misclassified」与「纯纵深重计 depth_double_count」）
+  const hasAddedOrIncreasedOtherOwnSku = changes.some(c => c.type === 'missed_own' || c.type === 'own_as_competitor') ||
+    Array.from(afterOwnByKey.entries()).some(([k, aIt]) => {
+      const bIt = beforeOwnByKey.get(k)
+      return bIt && aIt.facingCount > bIt.facingCount
+    })
+
   // 3. 同一 slotKey 保留但我方品规或排面数发生变化
   for (const [key, aItem] of afterOwnByKey.entries()) {
     const bItem = beforeOwnByKey.get(key)
@@ -707,6 +715,9 @@ function diffFacts(beforeFacts, afterFacts, userAnnotations = []) {
     }
     if (bItem.facingCount !== aItem.facingCount) {
       const ann = findAnnotation(a => (a.slotKey === key || a.type === 'facing_count'))
+      const defaultFacingReason = aItem.facingCount < bItem.facingCount
+        ? (hasAddedOrIncreasedOtherOwnSku ? 'sku_misclassified' : 'depth_double_count')
+        : 'missed_facing'
       changes.push({
         type: 'facing_count',
         slotKey: key,
@@ -716,7 +727,7 @@ function diffFacts(beforeFacts, afterFacts, userAnnotations = []) {
         humanValue: aItem.facingCount,
         delta: aItem.facingCount - bItem.facingCount,
         aiConfidence: bItem.confidence != null ? bItem.confidence : null,
-        reason: (ann && ann.reason) || (aItem.facingCount < bItem.facingCount ? 'depth_double_count' : 'missed_facing'),
+        reason: (ann && ann.reason) || defaultFacingReason,
         actualProduct: '',
         photoIndex: (ann && Number.isFinite(Number(ann.photoIndex))) ? Number(ann.photoIndex) : 1
       })
@@ -739,34 +750,49 @@ function diffFacts(beforeFacts, afterFacts, userAnnotations = []) {
   }
 
   // 5. 细项变更：golden / label / price_tag / banner
+  // 过滤纯因我方总排面分母变化而被动同步裁剪（如 4/4 -> 3/3 占比同为 100%）的假性细项报错，避免污染复盘聚类
+  const beforeOwnTotal = (before.ownProducts || []).reduce((s, p) => s + (Number(p.facingCount) || 0), 0)
+  const afterOwnTotal = (after.ownProducts || []).reduce((s, p) => s + (Number(p.facingCount) || 0), 0)
   if (after.ownBrandPresent) {
     if (before.goldenFacings !== after.goldenFacings) {
       const ann = findAnnotation(a => a.type === 'golden')
-      changes.push({
-        type: 'golden',
-        productId: '',
-        sku: '',
-        aiValue: before.goldenFacings,
-        humanValue: after.goldenFacings,
-        aiConfidence: null,
-        reason: (ann && ann.reason) || 'layer_misjudged',
-        actualProduct: '',
-        photoIndex: 1
-      })
+      const sameGoldenRatio = !ann &&
+        beforeOwnTotal > 0 &&
+        afterOwnTotal > 0 &&
+        Math.abs((before.goldenFacings / beforeOwnTotal) - (after.goldenFacings / afterOwnTotal)) < 1e-6
+      if (!sameGoldenRatio) {
+        changes.push({
+          type: 'golden',
+          productId: '',
+          sku: '',
+          aiValue: before.goldenFacings,
+          humanValue: after.goldenFacings,
+          aiConfidence: null,
+          reason: (ann && ann.reason) || 'layer_misjudged',
+          actualProduct: '',
+          photoIndex: 1
+        })
+      }
     }
     if (before.frontLabelFacings !== after.frontLabelFacings) {
       const ann = findAnnotation(a => a.type === 'label')
-      changes.push({
-        type: 'label',
-        productId: '',
-        sku: '',
-        aiValue: before.frontLabelFacings,
-        humanValue: after.frontLabelFacings,
-        aiConfidence: null,
-        reason: (ann && ann.reason) || 'orientation_misjudged',
-        actualProduct: '',
-        photoIndex: 1
-      })
+      const sameLabelRatio = !ann &&
+        beforeOwnTotal > 0 &&
+        afterOwnTotal > 0 &&
+        Math.abs((before.frontLabelFacings / beforeOwnTotal) - (after.frontLabelFacings / afterOwnTotal)) < 1e-6
+      if (!sameLabelRatio) {
+        changes.push({
+          type: 'label',
+          productId: '',
+          sku: '',
+          aiValue: before.frontLabelFacings,
+          humanValue: after.frontLabelFacings,
+          aiConfidence: null,
+          reason: (ann && ann.reason) || 'orientation_misjudged',
+          actualProduct: '',
+          photoIndex: 1
+        })
+      }
     }
     if (before.priceTagTier !== after.priceTagTier) {
       const ann = findAnnotation(a => a.type === 'price_tag')

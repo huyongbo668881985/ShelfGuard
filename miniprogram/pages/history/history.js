@@ -41,6 +41,7 @@ Page({
     salesUsers: [],       // 在册业务员姓名列表（胶囊选择器数据源）
     filterReview: '',     // 管理员 AI 复核筛选：'' | 'low' | 'mid' | 'spot' | 'corrected' | 'confirmed'
     onlyUnreviewed: true, // 筛选低/中置信或抽检时，默认只看未复核记录
+    batchConfirmDate: '', // 按日批量确认默认日期（昨天）
     
     // 统计信息
     stats: {
@@ -59,6 +60,9 @@ Page({
   onLoad() {
     this._lastRefreshAt = 0
     this._seenListVersion = -1
+    const yest = new Date(Date.now() + 8 * 3600 * 1000 - 24 * 3600 * 1000)
+    const yStr = `${yest.getUTCFullYear()}-${String(yest.getUTCMonth() + 1).padStart(2, '0')}-${String(yest.getUTCDate()).padStart(2, '0')}`
+    this.setData({ batchConfirmDate: yStr })
     this.syncManagerFlag()
   },
 
@@ -511,6 +515,61 @@ Page({
 
   goReflection() {
     wx.navigateTo({ url: '/pages/reflection/reflection' })
+  },
+
+  // 管理员：选择某日后，将该日其余未修改的已分析记录一键标为「确认无误」正样本
+  async onBatchConfirmDatePick(e) {
+    const date = (e && e.detail && e.detail.value) || ''
+    if (!date) return
+    this.setData({ batchConfirmDate: date })
+    wx.showLoading({ title: '查询当日进度...', mask: true })
+    try {
+      const previewRes = await api.callFunction({
+        name: 'reviewReport',
+        data: { action: 'batchConfirmDate', date, dryRun: true }
+      })
+      wx.hideLoading()
+      const pr = previewRes && previewRes.result
+      if (!pr || !pr.success) {
+        wx.showToast({ title: (pr && pr.error) || '查询失败', icon: 'none' })
+        return
+      }
+      if (!pr.unreviewedCount) {
+        wx.showModal({
+          title: `${date} 无需批量确认`,
+          content: `当日已分析 ${pr.totalAnalyzed || 0} 条（已校正 ${pr.correctedCount || 0} 条、已确认 ${pr.alreadyConfirmedCount || 0} 条），没有剩余未复核记录。`,
+          showCancel: false
+        })
+        return
+      }
+      const modalRes = await new Promise(resolve => {
+        wx.showModal({
+          title: `批量确认 ${date}`,
+          content: `当日共已分析 ${pr.totalAnalyzed} 条（已校正 ${pr.correctedCount} 条、已确认 ${pr.alreadyConfirmedCount} 条）。确定将其余 ${pr.unreviewedCount} 条未改记录一键标为「确认无误」并沉淀为复盘正样本吗？`,
+          confirmText: '确认无误',
+          success: resolve
+        })
+      })
+      if (!modalRes || !modalRes.confirm) return
+
+      wx.showLoading({ title: '正在批量确认...', mask: true })
+      const applyRes = await api.callFunction({
+        name: 'reviewReport',
+        data: { action: 'batchConfirmDate', date }
+      })
+      wx.hideLoading()
+      const ar = applyRes && applyRes.result
+      if (!ar || !ar.success) {
+        wx.showToast({ title: (ar && ar.error) || '批量确认失败', icon: 'none' })
+        return
+      }
+      app.globalData.listVersion = ((app.globalData.listVersion) || 0) + 1
+      wx.showToast({ title: `已确认 ${ar.confirmedNowCount} 条`, icon: 'success' })
+      this.refreshList()
+    } catch (err) {
+      wx.hideLoading()
+      wx.showToast({ title: err.message || '操作失败', icon: 'none' })
+    }
   },
 
   // 「管理」入口：只有管理员 / 管理者能看到（页面里还会再按服务端角色拦一次）

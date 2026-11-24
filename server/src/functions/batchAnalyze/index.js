@@ -594,16 +594,39 @@ async function reclaimStuckRecords() {
   return res.data.length
 }
 
+function isTransientAnalyzeError(msg) {
+  const s = String(msg || '')
+  if (!s) return false
+  if (/未配置.*API Key|不属于该拜访记录|没有.*照片|原图已归档/.test(s)) return false
+  return /超时|未返回|未完成|ECONNABORTED|ETIMEDOUT|ECONNRESET|EAI_AGAIN|socket hang up|network|500|502|503|504|429|Throttling|RateLimit|ServiceUnavailable|InternalError/i.test(s)
+}
+
 async function markFailedIfNeeded(record, errorMsg) {
   try {
     const cur = await db.collection('inspections').doc(record._id).get()
-    // analyzeImage 已经写过终态就别覆盖，它的错误信息比这里的更具体
-    if (cur.data && cur.data.status === 'analyzing') {
+    if (!cur.data) return
+    const attempts = Math.max(Number(record.analyzeAttempts) || 0, Number(cur.data.analyzeAttempts) || 0)
+    // 1) analyzeImage 被进程硬杀或抛异常未落终态，仍停在 analyzing
+    if (cur.data.status === 'analyzing') {
       await db.collection('inspections').doc(record._id).update({
         data: {
-          status: record.analyzeAttempts >= MAX_ATTEMPTS ? 'analyze_failed' : 'pending',
+          status: attempts >= MAX_ATTEMPTS ? 'analyze_failed' : 'pending',
           analyzeError: errorMsg,
           analyzedAt: db.serverDate()
+        }
+      })
+      return
+    }
+    // 2) 自建后端 analyzeImage 内部捕获了偶发网络/140s超时并写成了 analyze_failed：未满最大重试次数时自动退回 pending 重试
+    if (
+      cur.data.status === 'analyze_failed' &&
+      attempts < MAX_ATTEMPTS &&
+      isTransientAnalyzeError(cur.data.analyzeError || errorMsg)
+    ) {
+      await db.collection('inspections').doc(record._id).update({
+        data: {
+          status: 'pending',
+          analyzeError: cur.data.analyzeError || errorMsg
         }
       })
     }
@@ -723,6 +746,8 @@ async function canManage(openid) {
 }
 
 exports._internal = {
+  isTransientAnalyzeError,
+  markFailedIfNeeded,
   getActiveJob: () => activeBatchJob,
   waitForActiveJob: async () => {
     if (activeBatchJob && activeBatchJob.promise) {

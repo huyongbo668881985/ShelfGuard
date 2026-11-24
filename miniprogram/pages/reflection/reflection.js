@@ -32,10 +32,14 @@ Page({
     selectedReportId: '',
     currentReport: null,
     changesList: [],
-    fixTypeLabels: FIX_TYPE_LABELS
+    fixTypeLabels: FIX_TYPE_LABELS,
+    batchConfirmDate: ''
   },
 
   onLoad(options) {
+    const yest = new Date(Date.now() + 8 * 3600 * 1000 - 24 * 3600 * 1000)
+    const yStr = `${yest.getUTCFullYear()}-${String(yest.getUTCMonth() + 1).padStart(2, '0')}-${String(yest.getUTCDate()).padStart(2, '0')}`
+    this.setData({ batchConfirmDate: yStr })
     this.loadOverviewAndList(options && options.id)
   },
 
@@ -260,5 +264,58 @@ Page({
 
   goProductsConfusables() {
     wx.navigateTo({ url: '/pages/products/products?tab=confusables' })
+  },
+
+  async onBatchConfirmDatePick(e) {
+    const date = (e && e.detail && e.detail.value) || ''
+    if (!date) return
+    this.setData({ batchConfirmDate: date })
+    wx.showLoading({ title: '查询当日进度...', mask: true })
+    try {
+      const previewRes = await api.callFunction({
+        name: 'reviewReport',
+        data: { action: 'batchConfirmDate', date, dryRun: true }
+      })
+      wx.hideLoading()
+      const pr = previewRes && previewRes.result
+      if (!pr || !pr.success) {
+        wx.showToast({ title: (pr && pr.error) || '查询失败', icon: 'none' })
+        return
+      }
+      if (!pr.unreviewedCount) {
+        wx.showModal({
+          title: `${date} 无需批量确认`,
+          content: `当日已分析 ${pr.totalAnalyzed || 0} 条（已校正 ${pr.correctedCount || 0} 条、已确认 ${pr.alreadyConfirmedCount || 0} 条），没有剩余未复核记录。`,
+          showCancel: false
+        })
+        return
+      }
+      const modalRes = await new Promise(resolve => {
+        wx.showModal({
+          title: `批量确认 ${date}`,
+          content: `当日共已分析 ${pr.totalAnalyzed} 条（已校正 ${pr.correctedCount} 条、已确认 ${pr.alreadyConfirmedCount} 条）。确定将其余 ${pr.unreviewedCount} 条未改记录标为「确认无误」正样本吗？`,
+          confirmText: '确认无误',
+          success: resolve
+        })
+      })
+      if (!modalRes || !modalRes.confirm) return
+
+      wx.showLoading({ title: '正在批量确认...', mask: true })
+      const applyRes = await api.callFunction({
+        name: 'reviewReport',
+        data: { action: 'batchConfirmDate', date }
+      })
+      wx.hideLoading()
+      const ar = applyRes && applyRes.result
+      if (!ar || !ar.success) {
+        wx.showToast({ title: (ar && ar.error) || '批量确认失败', icon: 'none' })
+        return
+      }
+      wx.showToast({ title: `已确认 ${ar.confirmedNowCount} 条`, icon: 'success' })
+      this.loadOverviewAndList(this.data.selectedReportId)
+    } catch (err) {
+      wx.hideLoading()
+      wx.showToast({ title: err.message || '操作失败', icon: 'none' })
+    }
   }
 })

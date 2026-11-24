@@ -526,6 +526,7 @@ let productsMain
 let analyzeImageMain
 let applyMod
 let schedulerMod
+let batchAnalyzeMod
 
 before(() => {
   const origLoad = Module._load
@@ -552,6 +553,7 @@ before(() => {
     productsMain = require('../src/functions/products/index').main
     applyMod = require('../src/functions/reflection/apply')
     schedulerMod = require('../src/scheduler')
+    batchAnalyzeMod = require('../src/functions/batchAnalyze/index')
   } finally {
     Module._load = origLoad
   }
@@ -914,4 +916,229 @@ test('端到端闭环：权限隔离 → 存量回填 → 复核筛选 → 人�
   })
   assert.equal(jobsMon.some(j => j.name === 'reviewMaintenance'), true)
   assert.equal(jobsMon.some(j => j.name === 'reflection'), true)
+})
+
+// ============================================================
+// 5. 针对 11-23 全量人工校对总结的新增护栏与闭环优化回归测试
+// ============================================================
+test('v2.3 校对提准套件：combo比例参考图、横签在架矛盾拦截、挂牌价签保底、diffFacts去伪归因、按日批量确认与超时自动重排', async () => {
+  // 1) selectProductRefs 支持第 4 槽位填充终端三品同框比例图(combo)，且 products.update 保留旧 combo
+  const threeSkusWithCombo = [
+    { _id: 'p_red', brandName: '永丰特8', productLine: '红标', photos: { front: 'sg://products/red.jpg' }, isActive: true },
+    { _id: 'p_blue', brandName: '永丰特8', productLine: '蓝标', photos: { front: 'sg://products/blue.jpg' }, isActive: true },
+    {
+      _id: 'p_small',
+      brandName: '永丰特8',
+      productLine: '小酒',
+      photos: { front: 'sg://products/small.jpg', combo: 'sg://products/combo.jpg' },
+      isActive: true
+    }
+  ]
+  const picked4 = selectProductRefs(threeSkusWithCombo, 4)
+  assert.equal(picked4.length, 4)
+  assert.deepEqual(picked4.map(r => r.slot), ['front', 'front', 'front', 'combo'])
+  assert.equal(picked4[3].photo, 'sg://products/combo.jpg')
+
+  // 2) 横签检出但误判未上柜（如阔阔超市挂卡挡圆印场景）-> 强制标记 banner_present_but_oos 且 reviewLevel='low'
+  const kuokuoLike = validateAndNormalizeReport({
+    hasShelfPhoto: true,
+    ownBrandPresent: false,
+    adMaterials: [
+      { name: '横签', category: '横签', isOwn: true, count: 1, condition: '完好', position: '货架层板' }
+    ],
+    facingMetrics: { ownFacingCount: 0, countingConfidence: 0.9 },
+    metadata: { imageQuality: 'good', framingType: 'panorama', photoRoles: ['门头照', '货架陈列照'] }
+  }, '{}', {
+    ownBrandNames: new Set(['永丰特8']),
+    activeMaterials: [{ materialName: '横签', category: '横签', isActive: true }]
+  })
+  assert.equal(kuokuoLike.ownBrandPresent, false)
+  assert.equal(kuokuoLike.metadata.needsReview, true)
+  assert.equal(kuokuoLike.metadata.qualityFlags.includes('banner_present_but_oos'), true)
+  assert.equal(computeReviewLevel(kuokuoLike), 'low')
+
+  // 3) 贴有换购横签且有红标/蓝标 >=3 面但漏检小酒 -> computeReviewLevel 从 high 降为 mid 待核
+  const missingMiniReport = {
+    hasShelfPhoto: true,
+    ownBrandPresent: true,
+    facingMetrics: { ownFacingCount: 4, countingConfidence: 0.9 },
+    productIdentification: [
+      { brand: '永丰特8', productLine: '红标', isOwn: true, facingCount: 3, confidence: 0.88 },
+      { brand: '永丰特8', productLine: '蓝标', isOwn: true, facingCount: 1, confidence: 0.86 }
+    ],
+    displayCompliance: {
+      horizontalBanner: { score: 10 }
+    },
+    metadata: { imageQuality: 'good', framingType: 'panorama', needsReview: false }
+  }
+  assert.equal(computeReviewLevel(missingMiniReport), 'mid')
+
+  // 4) 远景/fair 画质且无横签锚点、置信 <0.7 -> 降为 low
+  const distantWeak = {
+    hasShelfPhoto: true,
+    ownBrandPresent: true,
+    facingMetrics: { ownFacingCount: 2, countingConfidence: 0.65 },
+    productIdentification: [{ brand: '永丰特8', productLine: '红标', isOwn: true, facingCount: 2, confidence: 0.65 }],
+    displayCompliance: { horizontalBanner: { score: 0 } },
+    metadata: { imageQuality: 'fair', framingType: 'panorama', needsReview: false }
+  }
+  assert.equal(computeReviewLevel(distantWeak), 'low')
+
+  // 5) 制式颈挂价签保底：shelfObservations 已写明挂 35/40 价签牌，但 priceTag 误给 5 分且无破损 -> 自动校准为 10 分
+  const ptCalibrated = validateAndNormalizeReport({
+    hasShelfPhoto: true,
+    ownBrandPresent: true,
+    shelfObservations: {
+      photoFacings: [
+        { photoIndex: 1, role: '货架陈列照', layerSummary: '第2层可见永丰特8红标2面(挂35黄圆牌)、蓝标1面(挂40价签)', ownFacingsInPhoto: 3, overlapWithPrevious: 0 }
+      ]
+    },
+    productIdentification: [
+      { brand: '永丰特8', productLine: '红标', isOwn: true, facingCount: 2, confidence: 0.85 },
+      { brand: '永丰特8', productLine: '蓝标', isOwn: true, facingCount: 1, confidence: 0.85 }
+    ],
+    displayCompliance: {
+      facingCount: { observedFacings: 3, score: 15 },
+      goldenPosition: { goldenFacings: 3, totalOwnFacings: 3, score: 20 },
+      labelOrientation: { frontLabelFacings: 3, totalOwnFacings: 3, score: 10 },
+      priceTag: { score: 5, detail: '距离较远数字不够清晰' },
+      horizontalBanner: { score: 10 }
+    },
+    metadata: { imageQuality: 'fair', framingType: 'panorama' }
+  }, '{}', { ownBrandNames: new Set(['永丰特8']) })
+  assert.equal(ptCalibrated.displayCompliance.priceTag.score, 10)
+
+  // 6) diffFacts：红标 2->1 同时补增小酒 0->1 归因为 sku_misclassified，且黄金位/正标 100% 占比随分母同步变化时不产生假报错
+  const bf = {
+    hasShelfPhoto: true,
+    ownBrandPresent: true,
+    ownProducts: [
+      { slotKey: 'own_0', productId: 'p_red', brand: '永丰特8', productLine: '红标', facingCount: 2, position: '黄金位', confidence: 0.82 },
+      { slotKey: 'own_1', productId: 'p_blue', brand: '永丰特8', productLine: '蓝标', facingCount: 2, position: '黄金位', confidence: 0.85 }
+    ],
+    competitorProducts: [],
+    goldenFacings: 4,
+    frontLabelFacings: 4,
+    priceTagTier: 'good',
+    bannerTier: 'good',
+    totalShelfFacingCount: 20
+  }
+  const afSameRatio = {
+    ...bf,
+    ownProducts: [
+      { slotKey: 'own_0', productId: 'p_red', brand: '永丰特8', productLine: '红标', facingCount: 1, position: '黄金位', confidence: 0.82 },
+      { slotKey: 'own_1', productId: 'p_blue', brand: '永丰特8', productLine: '蓝标', facingCount: 1, position: '黄金位', confidence: 0.85 },
+      { slotKey: 'added_1', productId: 'p_small', brand: '永丰特8', productLine: '小酒', facingCount: 1, position: '黄金位', confidence: 1 }
+    ],
+    goldenFacings: 3,     // 3/3 仍为 100%
+    frontLabelFacings: 3  // 3/3 仍为 100%
+  }
+  const cleanChanges = diffFacts(bf, afSameRatio, [])
+  const redFacingChange = cleanChanges.find(c => c.type === 'facing_count' && c.sku === '永丰特8 红标')
+  assert.ok(redFacingChange)
+  assert.equal(redFacingChange.reason, 'sku_misclassified')
+  assert.equal(cleanChanges.some(c => c.type === 'golden'), false, '同为100%黄金位不应误报 layer_misjudged')
+  assert.equal(cleanChanges.some(c => c.type === 'label'), false, '同为100%正标不应误报 orientation_misjudged')
+
+  // 7) reviewReport.batchConfirmDate：按日预览并批量确认未改记录，不触碰已校正与其他日期
+  mockDb._reset()
+  await mockDb.collection('users').add({
+    data: { _id: 'u_admin', _openid: 'admin_1', role: 'admin', approved: true, nickName: '胡管理' }
+  })
+  await mockDb.collection('inspections').add({
+    data: {
+      _id: 'd23_corr',
+      _openid: 's1',
+      storeName: '已校正店',
+      status: 'analyzed',
+      reviewStatus: 'corrected',
+      createdAt: '2026-11-23T02:00:00.000Z',
+      aiReport: { hasShelfPhoto: true, ownBrandPresent: true, score: 75, facingMetrics: { ownFacingCount: 5 } }
+    }
+  })
+  await mockDb.collection('inspections').add({
+    data: {
+      _id: 'd23_unrev_1',
+      _openid: 's1',
+      storeName: '未改店1',
+      status: 'analyzed',
+      reviewStatus: 'unreviewed',
+      createdAt: '2026-11-23T06:00:00.000Z',
+      aiReport: { hasShelfPhoto: true, ownBrandPresent: true, score: 80, facingMetrics: { ownFacingCount: 6 } }
+    }
+  })
+  await mockDb.collection('inspections').add({
+    data: {
+      _id: 'd22_unrev_other',
+      _openid: 's1',
+      storeName: '前一日未改店',
+      status: 'analyzed',
+      reviewStatus: 'unreviewed',
+      createdAt: '2026-11-22T06:00:00.000Z',
+      aiReport: { hasShelfPhoto: true, ownBrandPresent: true, score: 70, facingMetrics: { ownFacingCount: 4 } }
+    }
+  })
+
+  currentOpenid = 'admin_1'
+  const dryBatch = await reviewReportMain({ action: 'batchConfirmDate', date: '2026-11-23', dryRun: true })
+  assert.equal(dryBatch.success, true)
+  assert.equal(dryBatch.totalAnalyzed, 2)
+  assert.equal(dryBatch.correctedCount, 1)
+  assert.equal(dryBatch.unreviewedCount, 1)
+
+  const applyBatch = await reviewReportMain({ action: 'batchConfirmDate', date: '2026-11-23' })
+  assert.equal(applyBatch.success, true)
+  assert.equal(applyBatch.confirmedNowCount, 1)
+
+  const afterUnrev1 = (await mockDb.collection('inspections').doc('d23_unrev_1').get()).data
+  const afterOtherDay = (await mockDb.collection('inspections').doc('d22_unrev_other').get()).data
+  assert.equal(afterUnrev1.reviewStatus, 'confirmed')
+  assert.equal(afterUnrev1.keepOriginal, true)
+  assert.equal(afterOtherDay.reviewStatus, 'unreviewed')
+
+  // 8) batchAnalyze：首次 140s 超时写成的 analyze_failed 自动退回 pending 重试，满 3 次或缺 API Key 不重排
+  await mockDb.collection('inspections').add({
+    data: {
+      _id: 'timeout_attempt_1',
+      status: 'analyze_failed',
+      analyzeAttempts: 1,
+      analyzeError: 'AI 响应超过 140 秒未返回，已中止。建议减少单次照片数量或适当调小 DASHSCOPE_THINKING_BUDGET'
+    }
+  })
+  await batchAnalyzeMod._internal.markFailedIfNeeded(
+    { _id: 'timeout_attempt_1', analyzeAttempts: 1 },
+    'AI 响应超过 140 秒未返回'
+  )
+  const retriedDoc = (await mockDb.collection('inspections').doc('timeout_attempt_1').get()).data
+  assert.equal(retriedDoc.status, 'pending')
+
+  await mockDb.collection('inspections').add({
+    data: {
+      _id: 'timeout_attempt_3',
+      status: 'analyze_failed',
+      analyzeAttempts: 3,
+      analyzeError: 'AI 响应超过 140 秒未返回'
+    }
+  })
+  await batchAnalyzeMod._internal.markFailedIfNeeded(
+    { _id: 'timeout_attempt_3', analyzeAttempts: 3 },
+    'AI 响应超过 140 秒未返回'
+  )
+  const exhaustedDoc = (await mockDb.collection('inspections').doc('timeout_attempt_3').get()).data
+  assert.equal(exhaustedDoc.status, 'analyze_failed')
+
+  await mockDb.collection('inspections').add({
+    data: {
+      _id: 'nokey_attempt_1',
+      status: 'analyze_failed',
+      analyzeAttempts: 1,
+      analyzeError: '未配置 AI API Key，未生成真实分析报告'
+    }
+  })
+  await batchAnalyzeMod._internal.markFailedIfNeeded(
+    { _id: 'nokey_attempt_1', analyzeAttempts: 1 },
+    '未配置 AI API Key'
+  )
+  const noKeyDoc = (await mockDb.collection('inspections').doc('nokey_attempt_1').get()).data
+  assert.equal(noKeyDoc.status, 'analyze_failed')
 })
